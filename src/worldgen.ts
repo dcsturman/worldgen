@@ -1,11 +1,15 @@
+export const FAR_ORBIT = 20;
+export const PRIMARY_ORBIT = -1;
+
 export class System {
   name: string;
   star: Star = new Star();
   secondary: System | null = null;
   tertiary: System | null = null;
-  orbit: number = 0;
+  orbit: number = -1;
   max_orbits: number = 0;
-  main_world_index: number = 0;
+  main_world: World | null = null;
+
   // Orbits can be 1) System itself, 2) a World 3) Planetoid 4) GasGiant
   // 5) Empty (intentionally empty and cannot be filled)
   // 6) null (not yet assigned)
@@ -78,6 +82,19 @@ enum Facility {
   Military,
 }
 
+enum TradeClass {
+  Agricultural,
+  NonAgricultural,
+  Industrial,
+  NonIndustrial,
+  Rich,
+  Poor,
+  WaterWorld,
+  DesertWorld,
+  VacuumWorld,
+  Icecapped,
+}
+
 export class World {
   name: string;
   orbit: number = 0;
@@ -93,6 +110,7 @@ export class World {
   is_mainworld: boolean = false;
   facilities: Facility[] = [];
   satellites: World[] = [];
+  trade_classes: TradeClass[] = [];
 
   constructor(
     name: string,
@@ -133,10 +151,6 @@ export class World {
   to_upp(): string {
     let size_digit = "0";
 
-    if (this.size < -1) {
-      console.error("BAD BAD SIZE");
-    }
-
     if (
       (this.is_satellite && this.size === -1) ||
       (!this.is_mainworld && !this.is_satellite && this.size <= 0)
@@ -148,12 +162,6 @@ export class World {
       size_digit = "0";
     } else {
       size_digit = decimalToHex(this.size);
-    }
-
-    if (size_digit === "0") {
-      console.log(
-        `SIZE DIGIT: ${this.size} is_sat ${this.is_satellite} is_main ${this.is_mainworld}`
-      );
     }
 
     return `${PortCode[this.port]}${size_digit}${decimalToHex(
@@ -244,6 +252,10 @@ export class World {
     return this.facilities.map((x) => Facility[x]).join(", ");
   }
 
+  trade_classes_string(): string {
+    return this.trade_classes.map((x) => TradeClass[x]).join(", ");
+  }
+
   // Methods that have to be in common with Gas Giants for satellite generation
   get_orbit(): number {
     return this.orbit;
@@ -314,7 +326,7 @@ function genNumStars(): number {
   let roll = roll2D();
   if (roll <= 7) {
     return 1;
-  } else if (roll <= 12) {
+  } else if (roll < 12) {
     return 2;
   } else {
     return 3;
@@ -401,11 +413,9 @@ function genCompanionStarSize(roll: number): StarSize {
   }
 }
 
-export const FAR_ORBIT = 20;
-
 function genCompanionOrbit(roll: number): number {
   if (roll <= 3) {
-    return 0;
+    return -1;
   } else if (roll <= 6) {
     return roll - 3;
   } else if (roll <= 11) {
@@ -455,7 +465,7 @@ function genCompanionSystem(
     0
   );
 
-  companion.setMaxOrbits(genMaxOrbits(companion.star));
+  companion.setMaxOrbits(Math.min(Math.floor(orbit / 2), genMaxOrbits(companion.star)));
 
   // If secondary is Far then may need to generate companions.
   if (companion.orbit === FAR_ORBIT) {
@@ -470,6 +480,7 @@ function genCompanionSystem(
         orbit
       );
       companion.orbits[orbit] = companion.secondary;
+
       if (orbit === FAR_ORBIT) {
         companion.secondary.setMaxOrbits(
           genMaxOrbits(companion.secondary.star)
@@ -492,9 +503,8 @@ function emptyOrbitsNearCompanion(system: System, orbit: number) {
     system.orbits[i] = new Empty(i);
   }
 
-  for (let i = orbit + 2; i < system.max_orbits; i++) {
-    system.orbits[i] = new Empty(i);
-  }
+  system.orbits[orbit + 1] = new Empty(orbit + 1);
+  system.orbits[orbit + 2] = new Empty(orbit + 2);
 }
 
 function genEmptyOrbits(system: System) {
@@ -521,7 +531,7 @@ function genEmptyOrbits(system: System) {
         return -1;
       }
     })
-    .filter((x) => x > 0);
+    .filter((x) => x >= 0);
 
   while (valid_orbits.length > 0 && num_empty > 0) {
     let pos = Math.floor(Math.random() * valid_orbits.length);
@@ -536,7 +546,6 @@ function genEmptyOrbits(system: System) {
 function genStars(
   world_mod: number,
   companions_possible: boolean,
-  is_companion: boolean
 ): System {
   let num_stars = 1;
   if (companions_possible) {
@@ -554,7 +563,7 @@ function genStars(
     star_subtype
   );
 
-  let system = new System(star_type, star_subtype, star_size, 0, 0);
+  let system = new System(star_type, star_subtype, star_size, PRIMARY_ORBIT, 0);
 
   system.setMaxOrbits(genMaxOrbits(system.star));
 
@@ -569,7 +578,7 @@ function genStars(
       orbit
     );
 
-    if (orbit > 0) {
+    if (orbit >= 0) {
       system.orbits[orbit] = system.secondary;
     }
     emptyOrbitsNearCompanion(system, orbit);
@@ -587,7 +596,7 @@ function genStars(
       orbit
     );
 
-    if (orbit > 0) {
+    if (orbit >= 0) {
       system.orbits[orbit] = system.tertiary;
     }
     emptyOrbitsNearCompanion(system, orbit);
@@ -642,7 +651,7 @@ function genGasGiants(system: System): number {
         return -1;
       }
     })
-    .filter((x) => x > 0);
+    .filter((x) => x >= 0);
 
   let viable_inner_orbits = system.orbits
     .map((body, index) => {
@@ -652,7 +661,7 @@ function genGasGiants(system: System): number {
         return -1;
       }
     })
-    .filter((x) => x > 0);
+    .filter((x) => x >= 0);
 
   while (
     viable_outer_orbits.length + viable_inner_orbits.length > 0 &&
@@ -724,7 +733,7 @@ function genPlanetoids(system: System, num_giants: number, main_world: World) {
         return -1;
       }
     })
-    .filter((x) => x > 0);
+    .filter((x) => x >= 0);
 
   let viable_other_orbits = system.orbits
     .map((body, index) => {
@@ -734,7 +743,7 @@ function genPlanetoids(system: System, num_giants: number, main_world: World) {
         return -1;
       }
     })
-    .filter((x) => x > 0);
+    .filter((x) => x >= 0);
 
   while (
     viable_giants.length + viable_other_orbits.length > 0 &&
@@ -783,6 +792,8 @@ function genPlanetoids(system: System, num_giants: number, main_world: World) {
 }
 
 function placeMainWorld(system: System, world: World) {
+  system.main_world = world;
+
   let requires_habitable =
     world.atmosphere > 1 && world.atmosphere < 10 && world.size > 0;
 
@@ -790,21 +801,28 @@ function placeMainWorld(system: System, world: World) {
 
   // Error check if there is no habitable zone and requires_habitable
   if (
-    (habitable === 0 || habitable === getZone(system).inner) &&
+    (habitable === -1 || habitable === getZone(system).inner) &&
     requires_habitable
   ) {
     console.warn(
       "No habitable zone for main world for system: " +
         JSON.stringify(system) +
-        ". Using orbit 1."
+        ". Habitable = " +
+        habitable +
+        ". Inner = " +
+        getZone(system).inner +
+        ". Using orbit 0."
     );
-    habitable = Math.max(getZone(system).inner, 1);
+    habitable = Math.max(getZone(system).inner, 0);
   }
 
   if (requires_habitable) {
     // Just place in the habitable
     let body = system.orbits[habitable];
-    if (body instanceof GasGiant) {
+    if (body instanceof System) {
+      // If there happens to be a star in the habitable zone, place it in orbit there.
+      placeMainWorld(body, world);
+    } else if (body instanceof GasGiant) {
       world.orbit = genSatelliteOrbit(body, world.size === 0);
       body.satellites.push(world);
     } else {
@@ -845,7 +863,9 @@ function genWorld(
   main_world: World
 ): World {
   let mod = 0;
-  if (orbit === 1) {
+  if (orbit === 0) {
+    mod = -5;
+  } else if (orbit === 1) {
     mod = -4;
   } else if (orbit === 2) {
     mod = -2;
@@ -915,6 +935,11 @@ function genWorld(
     population = main_world.population - 1;
   }
 
+  // Give a real name to populated planets.
+  if (population > 0) {
+    name = planetNames[Math.floor(Math.random() * planetNames.length)];
+  }
+
   let world = new World(
     name,
     orbit,
@@ -959,7 +984,7 @@ function clean_satellites(world: World | GasGiant) {
         return -1;
       }
     })
-    .filter((x) => x > 0);
+    .filter((x) => x >= 0).sort((a, b) => a - b);
   if (ring_indices.length > 0) {
     for (let i = 1; i < ring_indices.length; i++) {
       world.satellites.splice(ring_indices[i], 1);
@@ -1032,8 +1057,17 @@ function genSatellite(
     size = -1;
   }
 
+
   let orbit = genSatelliteOrbit(primary, size === 0);
 
+  // Size 0 is a ring so nothing else can be 0.
+  if (size === 0) {
+    let ring = new World("Ring System", orbit, 0, 0, 0, 0, true, false);  
+    ring.port = PortCode.Y;
+    primary.satellites.push(ring);
+    return;
+  }
+  
   let atmosphere = 0;
   let roll = roll2D();
   atmosphere =
@@ -1111,7 +1145,13 @@ function genSubordinateFacilities(
   orbit: number,
   main_world: World
 ) {
-  // TODO: Add mining facility.  Need more details in main world (trade classifications and facilities)
+  // Mining?
+  if (
+    main_world.trade_classes.includes(TradeClass.Industrial) &&
+    world.population >= 2
+  ) {
+    world.facilities.push(Facility.Mining);
+  }
   // Farming?
   if (
     orbit === getZone(system).habitable &&
@@ -1136,10 +1176,14 @@ function genSubordinateFacilities(
     roll2D() + (main_world.tech_level >= 10 ? 2 : 0) >= 12
   ) {
     world.facilities.push(Facility.Lab);
+    // Fix tech level if there is a lab.  Not ideal but we need to gen most of a world/satellite
+    // before facilities, but tech level is impacted by having a lab.
+    if (world.tech_level === main_world.tech_level -1) {
+      world.tech_level = main_world.tech_level;
+    }
   }
 
   // Military Base?
-  // TODO: Cannot happen if main world is poor.
   let mod =
     (main_world.get_population() >= 8 ? 1 : 0) +
     (main_world.atmosphere === world.atmosphere ? 2 : 0) +
@@ -1149,8 +1193,7 @@ function genSubordinateFacilities(
       : 0);
 
   let roll = roll2D();
-  if (roll + mod >= 12) {
-    console.log(`Add military base for world ${world.name} with roll ${roll} mod ${mod}`);
+  if (!main_world.trade_classes.includes(TradeClass.Poor) && roll + mod >= 12) {
     world.facilities.push(Facility.Military);
   }
 }
@@ -1240,16 +1283,74 @@ function genSubordinateStats(world: World, main_world: World) {
 }
 
 function genPlanetName(system: System, orbit: number): string {
-  return `${system.name} ${arabicToRoman(orbit)}`;
+  return `${system.name} ${arabicToRoman(orbit + 1)}`;
 }
 
+function genTradeClasses(world: World) {
+  if (
+    world.atmosphere >= 4 &&
+    world.atmosphere <= 9 &&
+    world.hydro >= 4 &&
+    world.hydro <= 8 &&
+    world.population >= 5 &&
+    world.population <= 7
+  ) {
+    world.trade_classes.push(TradeClass.Agricultural);
+  }
+
+  if (world.atmosphere <= 3 && world.hydro <= 3 && world.population >= 6) {
+    world.trade_classes.push(TradeClass.NonAgricultural);
+  }
+
+  if ([0, 1, 2, 4, 7, 9].includes(world.atmosphere) && world.population >= 9) {
+    world.trade_classes.push(TradeClass.Industrial);
+  }
+
+  if (world.population > 0 && world.population <= 6) {
+    world.trade_classes.push(TradeClass.NonIndustrial);
+  }
+
+  if (
+    [6, 8].includes(world.atmosphere) &&
+    [6, 7, 8].includes(world.population) &&
+    world.government >= 4 &&
+    world.government <= 9
+  ) {
+    world.trade_classes.push(TradeClass.Rich);
+  }
+
+  if (
+    world.population >= 0 &&
+    world.atmosphere >= 2 &&
+    world.atmosphere <= 5 &&
+    world.hydro <= 3
+  ) {
+    world.trade_classes.push(TradeClass.Poor);
+  }
+
+  if (world.hydro >= 10) {
+    world.trade_classes.push(TradeClass.WaterWorld);
+  }
+  if (world.hydro <= 0 && world.atmosphere > 1) {
+    world.trade_classes.push(TradeClass.DesertWorld);
+  }
+  /*
+  if (world.atmosphere <= 0) {
+    world.trade_classes.push(TradeClass.VacuumWorld);
+  }
+  */
+  if (world.atmosphere <= 1 && world.hydro >= 10) {
+    world.trade_classes.push(TradeClass.Icecapped);
+  }
+}
 export function generateSystem(main_world: World): System {
   let star_mod =
     (main_world.atmosphere >= 4 && main_world.atmosphere <= 9) ||
     main_world.population >= 8
       ? 2
       : 0;
-  let system = genStars(star_mod, true, false);
+  let system = genStars(star_mod, true);
+  genTradeClasses(main_world);
 
   fillSystem(system, main_world, true);
   return system;
@@ -1263,7 +1364,10 @@ function fillSystem(system: System, main_world: World, is_primary: boolean) {
     placeMainWorld(system, main_world);
   }
 
-  for (let i = 1; i <= system.max_orbits; i++) {
+  for (let i = 0; i <= getZone(system).hot; i++) {
+    system.orbits[i] = new Empty(i);
+  }
+  for (let i = getZone(system).hot + 1; i <= system.max_orbits; i++) {
     if (system.orbits[i] === null) {
       let name = genPlanetName(system, i);
       system.orbits[i] = genWorld(name, system, i, main_world);
@@ -1281,16 +1385,16 @@ function fillSystem(system: System, main_world: World, is_primary: boolean) {
     }
   }
 
-  if (system.secondary !== null) {
+  if (system.secondary !== null && system.secondary.orbit > 0) {
     fillSystem(system.secondary, main_world, false);
   }
-  if (system.tertiary !== null) {
+  if (system.tertiary !== null && system.tertiary.orbit > 0) {
     fillSystem(system.tertiary, main_world, false);
   }
 }
 
 export function arabicToRoman(num: number): string {
-  if (num < 1 || num > 20 || !Number.isInteger(num)) {
+  if (num < 0 || num > 20 || !Number.isInteger(num)) {
     throw new Error("Input must be an integer between 0 and 20");
   }
 
@@ -1315,6 +1419,7 @@ export function arabicToRoman(num: number): string {
     [3, "III"],
     [2, "II"],
     [1, "I"],
+    [0, "N"],
   ];
 
   for (const [value, symbol] of romanNumerals) {
@@ -1539,18 +1644,18 @@ const zoneTables: { [key in StarSize]: ZoneTable } = {
     },
     [StarType.A]: {
       0: { inside: 0, hot: 0, inner: 6, habitable: 7, outer: 13 },
-      5: { inside: 0, hot: 0, inner: 5, habitable: 6, outer: 13 },
+      5: { inside: -1, hot: -1, inner: 5, habitable: 6, outer: 13 },
     },
     [StarType.F]: {
-      0: { inside: 0, hot: 0, inner: 5, habitable: 6, outer: 13 },
-      5: { inside: 0, hot: 0, inner: 4, habitable: 5, outer: 13 },
+      0: { inside: -1, hot: -1, inner: 5, habitable: 6, outer: 13 },
+      5: { inside: -1, hot: -1, inner: 4, habitable: 5, outer: 13 },
     },
     [StarType.G]: {
-      0: { inside: 0, hot: 0, inner: 4, habitable: 5, outer: 13 },
-      5: { inside: 0, hot: 0, inner: 4, habitable: 5, outer: 13 },
+      0: { inside: -1, hot: -1, inner: 4, habitable: 5, outer: 13 },
+      5: { inside: -1, hot: -1, inner: 4, habitable: 5, outer: 13 },
     },
     [StarType.K]: {
-      0: { inside: 0, hot: 0, inner: 3, habitable: 4, outer: 13 },
+      0: { inside: -1, hot: -1, inner: 3, habitable: 4, outer: 13 },
       5: { inside: 0, hot: 0, inner: 0, habitable: 0, outer: 0 },
     },
     [StarType.M]: {
@@ -1568,24 +1673,24 @@ const zoneTables: { [key in StarSize]: ZoneTable } = {
       5: { inside: 0, hot: 2, inner: 8, habitable: 9, outer: 14 },
     },
     [StarType.A]: {
-      0: { inside: 0, hot: 0, inner: 6, habitable: 7, outer: 14 },
-      5: { inside: 0, hot: 0, inner: 5, habitable: 6, outer: 14 },
+      0: { inside: -1, hot: -1, inner: 6, habitable: 7, outer: 14 },
+      5: { inside: -1, hot: -1, inner: 5, habitable: 6, outer: 14 },
     },
     [StarType.F]: {
-      0: { inside: 0, hot: 0, inner: 4, habitable: 5, outer: 14 },
-      5: { inside: 0, hot: 0, inner: 3, habitable: 4, outer: 14 },
+      0: { inside: -1, hot: -1, inner: 4, habitable: 5, outer: 14 },
+      5: { inside: -1, hot: -1, inner: 3, habitable: 4, outer: 14 },
     },
     [StarType.G]: {
-      0: { inside: 0, hot: 0, inner: 2, habitable: 3, outer: 14 },
-      5: { inside: 0, hot: 0, inner: 2, habitable: 3, outer: 14 },
+      0: { inside: -1, hot: -1, inner: 2, habitable: 3, outer: 14 },
+      5: { inside: -1, hot: -1, inner: 2, habitable: 3, outer: 14 },
     },
     [StarType.K]: {
-      0: { inside: 0, hot: 0, inner: 0, habitable: 0, outer: 14 },
-      5: { inside: 0, hot: 0, inner: 0, habitable: 0, outer: 14 },
+      0: { inside: -1, hot: -1, inner: -1, habitable: 0, outer: 14 },
+      5: { inside: -1, hot: -1, inner: -1, habitable: 0, outer: 14 },
     },
     [StarType.M]: {
-      0: { inside: 0, hot: 0, inner: 0, habitable: 0, outer: 14 },
-      5: { inside: 0, hot: 0, inner: 0, habitable: 0, outer: 14 },
+      0: { inside: -1, hot: -1, inner: -1, habitable: -1, outer: 14 },
+      5: { inside: -1, hot: -1, inner: -1, habitable: -1, outer: 14 },
     },
   },
   [StarSize.VI]: {
@@ -1603,19 +1708,19 @@ const zoneTables: { [key in StarSize]: ZoneTable } = {
     },
     [StarType.F]: {
       0: { inside: 0, hot: 0, inner: 0, habitable: 0, outer: 0 },
-      5: { inside: 0, hot: 0, inner: 2, habitable: 3, outer: 4 },
+      5: { inside: -1, hot: -1, inner: 2, habitable: 3, outer: 4 },
     },
     [StarType.G]: {
-      0: { inside: 0, hot: 0, inner: 1, habitable: 2, outer: 4 },
-      5: { inside: 0, hot: 0, inner: 0, habitable: 1, outer: 4 },
+      0: { inside: -1, hot: -1, inner: 1, habitable: 2, outer: 4 },
+      5: { inside: -1, hot: -1, inner: 0, habitable: 1, outer: 4 },
     },
     [StarType.K]: {
-      0: { inside: 0, hot: 0, inner: 0, habitable: 1, outer: 4 },
-      5: { inside: 0, hot: 0, inner: 0, habitable: 0, outer: 4 },
+      0: { inside: -1, hot: -1, inner: -1, habitable: 1, outer: 4 },
+      5: { inside: -1, hot: -1, inner: -1, habitable: -1, outer: 4 },
     },
     [StarType.M]: {
-      0: { inside: 0, hot: 0, inner: 0, habitable: 0, outer: 4 },
-      5: { inside: 0, hot: 0, inner: 0, habitable: 0, outer: 4 },
+      0: { inside: -1, hot: -1, inner: -1, habitable: -1, outer: 4 },
+      5: { inside: -1, hot: -1, inner: -1, habitable: -1, outer: 4 },
     },
   },
   [StarSize.D]: {
@@ -1624,28 +1729,28 @@ const zoneTables: { [key in StarSize]: ZoneTable } = {
       5: { inside: 0, hot: 0, inner: 0, habitable: 0, outer: 0 },
     },
     [StarType.B]: {
-      0: { inside: 0, hot: 0, inner: 0, habitable: 0, outer: 4 },
-      5: { inside: 0, hot: 0, inner: 0, habitable: 0, outer: 4 },
+      0: { inside: -1, hot: -1, inner: -1, habitable: 0, outer: 4 },
+      5: { inside: -1, hot: -1, inner: -1, habitable: 0, outer: 4 },
     },
     [StarType.A]: {
-      0: { inside: 0, hot: 0, inner: 0, habitable: 0, outer: 4 },
-      5: { inside: 0, hot: 0, inner: 0, habitable: 0, outer: 4 },
+      0: { inside: -1, hot: -1, inner: -1, habitable: -1, outer: 4 },
+      5: { inside: -1, hot: -1, inner: -1, habitable: -1, outer: 4 },
     },
     [StarType.F]: {
-      0: { inside: 0, hot: 0, inner: 0, habitable: 0, outer: 4 },
-      5: { inside: 0, hot: 0, inner: 0, habitable: 0, outer: 4 },
+      0: { inside: -1, hot: -1, inner: -1, habitable: -1, outer: 4 },
+      5: { inside: -1, hot: -1, inner: -1, habitable: -1, outer: 4 },
     },
     [StarType.G]: {
-      0: { inside: 0, hot: 0, inner: 0, habitable: 0, outer: 4 },
-      5: { inside: 0, hot: 0, inner: 0, habitable: 0, outer: 4 },
+      0: { inside: -1, hot: -1, inner: -1, habitable: -1, outer: 4 },
+      5: { inside: -1, hot: -1, inner: -1, habitable: -1, outer: 4 },
     },
     [StarType.K]: {
-      0: { inside: 0, hot: 0, inner: 0, habitable: 0, outer: 4 },
-      5: { inside: 0, hot: 0, inner: 0, habitable: 0, outer: 4 },
+      0: { inside: -1, hot: -1, inner: -1, habitable: -1, outer: 4 },
+      5: { inside: -1, hot: -1, inner: -1, habitable: -1, outer: 4 },
     },
     [StarType.M]: {
-      0: { inside: 0, hot: 0, inner: 0, habitable: 0, outer: 4 },
-      5: { inside: 0, hot: 0, inner: 0, habitable: 0, outer: 4 },
+      0: { inside: -1, hot: -1, inner: -1, habitable: -1, outer: 4 },
+      5: { inside: -1, hot: -1, inner: -1, habitable: -1, outer: 4 },
     },
   },
 };
@@ -2092,4 +2197,407 @@ const moonNames: string[] = [
   "Xena",
   "Ymir",
   "Zephyr",
+];
+
+const planetNames: string[] = [
+  "Zephyria",
+  "Novacron",
+  "Lumina",
+  "Aethoria",
+  "Celestis",
+  "Thalassia",
+  "Chronos",
+  "Nebulos",
+  "Helixia",
+  "Quasar",
+  "Vortexia",
+  "Stellaris",
+  "Novalux",
+  "Astralis",
+  "Galaxia",
+  "Pulsara",
+  "Cosmora",
+  "Novastra",
+  "Solara",
+  "Lunara",
+  "Auroris",
+  "Nebulox",
+  "Heliosia",
+  "Quantara",
+  "Novatron",
+  "Stellara",
+  "Pulsaris",
+  "Galaxara",
+  "Chronara",
+  "Vortexis",
+  "Aetheron",
+  "Celestara",
+  "Thalassos",
+  "Novastria",
+  "Luminara",
+  "Nebulon",
+  "Helixara",
+  "Quasara",
+  "Stellarix",
+  "Pulsaron",
+  "Galaxora",
+  "Chronosia",
+  "Vortexara",
+  "Aethorix",
+  "Celestron",
+  "Thalassara",
+  "Novastra",
+  "Luminaris",
+  "Nebulara",
+  "Helixion",
+  "Quasaris",
+  "Stellaron",
+  "Pulsaria",
+  "Galaxion",
+  "Chronara",
+  "Vortexion",
+  "Aethoron",
+  "Celestara",
+  "Thalassion",
+  "Novastron",
+  "Luminara",
+  "Nebuloris",
+  "Helixara",
+  "Quasaron",
+  "Stellaris",
+  "Pulsarion",
+  "Galaxara",
+  "Chronorix",
+  "Vortexara",
+  "Aethoris",
+  "Celestris",
+  "Thalassara",
+  "Novastris",
+  "Luminaris",
+  "Nebularis",
+  "Helixoris",
+  "Quasaris",
+  "Stellaron",
+  "Pulsara",
+  "Galaxoris",
+  "Chronara",
+  "Vortexaris",
+  "Aethoron",
+  "Celestara",
+  "Thalassion",
+  "Novastron",
+  "Luminara",
+  "Nebuloris",
+  "Helixara",
+  "Quasaron",
+  "Stellaris",
+  "Pulsarion",
+  "Galaxara",
+  "Chronorix",
+  "Vortexara",
+  "Aethoris",
+  "Celestris",
+  "Thalassara",
+  "Novastris",
+  "Luminaris",
+  "Zephyros",
+  "Novacrys",
+  "Luminos",
+  "Aethoros",
+  "Celestos",
+  "Thalassos",
+  "Chronos",
+  "Nebulos",
+  "Helixos",
+  "Quasaros",
+  "Vortexos",
+  "Stellaros",
+  "Novaluxos",
+  "Astralos",
+  "Galaxos",
+  "Pulsaros",
+  "Cosmoros",
+  "Novastros",
+  "Solaros",
+  "Lunaros",
+  "Auroros",
+  "Nebuloxos",
+  "Heliosios",
+  "Quantaros",
+  "Novatronos",
+  "Stellaros",
+  "Pulsaros",
+  "Galaxaros",
+  "Chronaros",
+  "Vortexos",
+  "Aetheronos",
+  "Celestaros",
+  "Thalassos",
+  "Novastrios",
+  "Luminaros",
+  "Nebulonos",
+  "Helixaros",
+  "Quasaros",
+  "Stellarixos",
+  "Pulsaronos",
+  "Galaxoros",
+  "Chronosios",
+  "Vortexaros",
+  "Aethorixos",
+  "Celestronos",
+  "Thalassaros",
+  "Novastros",
+  "Luminaros",
+  "Nebularos",
+  "Helixionos",
+  "Quasaris",
+  "Stellaronos",
+  "Pulsarios",
+  "Galaxionos",
+  "Chronaros",
+  "Vortexionos",
+  "Aethoronos",
+  "Celestaros",
+  "Thalassionos",
+  "Novastronos",
+  "Luminaros",
+  "Nebuloris",
+  "Helixaros",
+  "Quasaronos",
+  "Stellaris",
+  "Pulsarionos",
+  "Galaxaros",
+  "Chronorixos",
+  "Vortexaros",
+  "Aethoris",
+  "Celestris",
+  "Thalassaros",
+  "Novastris",
+  "Luminaros",
+  "Nebularis",
+  "Helixoris",
+  "Quasaris",
+  "Stellaronos",
+  "Pulsaros",
+  "Galaxoris",
+  "Chronaros",
+  "Vortexaris",
+  "Aethoronos",
+  "Celestaros",
+  "Thalassionos",
+  "Novastronos",
+  "Luminaros",
+  "Nebuloris",
+  "Helixaros",
+  "Quasaronos",
+  "Stellaris",
+  "Pulsarionos",
+  "Galaxaros",
+  "Chronorixos",
+  "Vortexaros",
+  "Aethoris",
+  "Celestris",
+  "Thalassaros",
+  "Novastris",
+  "Luminaros",
+  "Zephyria",
+  "Novacronia",
+  "Luminara",
+  "Aethoria",
+  "Celestia",
+  "Thalassia",
+  "Chronia",
+  "Nebulia",
+  "Helixia",
+  "Quasaria",
+  "Vortexia",
+  "Stellaria",
+  "Novaluxia",
+  "Astralia",
+  "Galaxia",
+  "Pulsaria",
+  "Cosmoria",
+  "Novastria",
+  "Solaria",
+  "Lunaria",
+  "Auroria",
+  "Nebuloxia",
+  "Heliosia",
+  "Quantaria",
+  "Novatronia",
+  "Stellaria",
+  "Pulsaria",
+  "Galaxaria",
+  "Chronia",
+  "Vortexia",
+  "Aetheronia",
+  "Celestaria",
+  "Thalassia",
+  "Novastria",
+  "Luminaria",
+  "Nebulia",
+  "Helixaria",
+  "Quasaria",
+  "Stellarixia",
+  "Pulsaronia",
+  "Galaxoria",
+  "Chronosia",
+  "Vortexaria",
+  "Aethorixia",
+  "Celestronia",
+  "Thalassaria",
+  "Novastria",
+  "Luminaria",
+  "Nebularia",
+  "Helixionia",
+  "Quasaria",
+  "Stellaronia",
+  "Pulsaria",
+  "Galaxionia",
+  "Chronaria",
+  "Vortexionia",
+  "Aethoronia",
+  "Celestaria",
+  "Thalassionia",
+  "Novastronia",
+  "Luminaria",
+  "Nebuloris",
+  "Helixaria",
+  "Quasaronia",
+  "Stellaria",
+  "Pulsarionia",
+  "Galaxaria",
+  "Chronorixia",
+  "Vortexaria",
+  "Aethoria",
+  "Celestria",
+  "Thalassaria",
+  "Novastria",
+  "Luminaria",
+  "Nebularia",
+  "Helixoria",
+  "Quasaria",
+  "Stellaronia",
+  "Pulsaria",
+  "Galaxoria",
+  "Chronaria",
+  "Vortexaria",
+  "Aethoronia",
+  "Celestaria",
+  "Thalassionia",
+  "Novastronia",
+  "Luminaria",
+  "Nebuloris",
+  "Helixaria",
+  "Quasaronia",
+  "Stellaria",
+  "Pulsarionia",
+  "Galaxaria",
+  "Chronorixia",
+  "Vortexaria",
+  "Aethoria",
+  "Celestria",
+  "Thalassaria",
+  "Novastria",
+  "Luminaria",
+  "Zephyron",
+  "Novacron",
+  "Luminon",
+  "Aethoron",
+  "Celeston",
+  "Thalassion",
+  "Chronon",
+  "Nebulon",
+  "Helixon",
+  "Quasaron",
+  "Vortexon",
+  "Stellaron",
+  "Novaluxon",
+  "Astralon",
+  "Galaxon",
+  "Pulsaron",
+  "Cosmoron",
+  "Novastron",
+  "Solaron",
+  "Lunaron",
+  "Auroron",
+  "Nebuloxon",
+  "Heliosion",
+  "Quantaron",
+  "Novatronon",
+  "Stellaron",
+  "Pulsaron",
+  "Galaxaron",
+  "Chronaron",
+  "Vortexon",
+  "Aetheron",
+  "Celestaron",
+  "Thalassion",
+  "Novastrion",
+  "Luminaron",
+  "Nebulon",
+  "Helixaron",
+  "Quasaron",
+  "Stellarixon",
+  "Pulsaron",
+  "Galaxoron",
+  "Chronosion",
+  "Vortexaron",
+  "Aethorixon",
+  "Celestronon",
+  "Thalassaron",
+  "Novastron",
+  "Luminaron",
+  "Nebularon",
+  "Helixionon",
+  "Quasaron",
+  "Stellaron",
+  "Pulsarion",
+  "Galaxionon",
+  "Chronaron",
+  "Vortexionon",
+  "Aethoron",
+  "Celestaron",
+  "Thalassionon",
+  "Novastronon",
+  "Luminaron",
+  "Nebuloron",
+  "Helixaron",
+  "Quasaron",
+  "Stellaron",
+  "Pulsarionon",
+  "Galaxaron",
+  "Chronorixon",
+  "Vortexaron",
+  "Aethoron",
+  "Celestron",
+  "Thalassaron",
+  "Novastron",
+  "Luminaron",
+  "Nebularon",
+  "Helixoron",
+  "Quasaron",
+  "Stellaron",
+  "Pulsaron",
+  "Galaxoron",
+  "Chronaron",
+  "Vortexaron",
+  "Aethoron",
+  "Celestaron",
+  "Thalassionon",
+  "Novastronon",
+  "Luminaron",
+  "Nebuloron",
+  "Helixaron",
+  "Quasaron",
+  "Stellaron",
+  "Pulsarionon",
+  "Galaxaron",
+  "Chronorixon",
+  "Vortexaron",
+  "Aethoron",
+  "Celestron",
+  "Thalassaron",
+  "Novastron",
+  "Luminaron",
 ];
