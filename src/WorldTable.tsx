@@ -1,16 +1,15 @@
 import React from "react";
-import { World, GasGiant, GasGiantSize, System, Empty, StarType, StarSize, FAR_ORBIT } from "./worldgen";
+import { World, GasGiant, GasGiantSize, System, Empty, StarType, StarSize, FAR_ORBIT, PRIMARY_ORBIT } from "./worldgen";
 
 const SHOW_EMPTY: boolean = false;
 
 type WorldTableProps = {
   primary: System;
   worlds: (World | GasGiant | System | Empty)[];
-  is_companion: boolean;
 };
 
-const WorldTable: React.FunctionComponent<WorldTableProps> = ({ primary, worlds, is_companion }) => (
-  <table className="world-table">
+const WorldTable: React.FunctionComponent<WorldTableProps> = ({ primary, worlds }) => (
+  <table className="world-table" key={primary.name + "-table"}>
     <thead>
       <tr>
         <th>Orbit</th>
@@ -21,7 +20,7 @@ const WorldTable: React.FunctionComponent<WorldTableProps> = ({ primary, worlds,
       </tr>
     </thead>
     <tbody>
-      <PrimaryRow primary={primary} orbit_name={is_companion ? "Companion" : "Primary"} />
+      <PrimaryRow primary={primary} orbit_name={primary.orbit === PRIMARY_ORBIT ? "Primary" : "Companion"} />
       {worlds.map((world, index) => {
         if (world instanceof GasGiant || world instanceof World ) {
           return <WorldView key={world.name + index} world={world} satellite={false} />;
@@ -29,6 +28,8 @@ const WorldTable: React.FunctionComponent<WorldTableProps> = ({ primary, worlds,
           return <WorldView key={"empty" + index} world={world} satellite={false} />;
         } else if (world instanceof System) {
           return <PrimaryRow key={world.name + index} primary={world} orbit_name={world.orbit.toString()} />;
+        } else {
+          return <></>;
         }
       })}
     </tbody>
@@ -72,7 +73,7 @@ const WorldView: React.FunctionComponent<WorldViewProps> = ({
        world instanceof GasGiant && world.size === GasGiantSize.Small ? "Small GG" :
        world instanceof GasGiant && world.size === GasGiantSize.Large ? "Large GG" :
        ""}</td>
-      <td>{world instanceof World ? world.facilities_string() : ""}</td>
+      <td>{world instanceof World ? [world.facilities_string(),world.trade_classes_string()].filter((s) => s.length > 0).join("; ") : ""}</td>
     </tr>
     {!(world instanceof Empty) && world.satellites.length > 0 &&
       world.satellites.map((satellite: World | GasGiant, index: number) => (
