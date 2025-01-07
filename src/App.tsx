@@ -4,15 +4,14 @@ import SystemView from "./SystemView";
 import { useReactToPrint } from "react-to-print";
 
 const DEBUG = false;
+const INITIAL_UPP = "A788899-A";
+const INITIAL_NAME = "Main World";
 
 function App() {
   const contentRef = useRef<HTMLDivElement>(null);
   const reactToPrintFn = useReactToPrint({ contentRef });
 
-  const [system, setSystem] = useState(() => {
-    const initialWorld = World.from_upp("Main World", "A788899-A", false, true);
-    return generateSystem(initialWorld);
-  });
+  const [system, setSystem] = useState<System | null>(null);
 
   const handleNewSystem = (newSystem: System) => {
     setSystem(newSystem);
@@ -26,7 +25,7 @@ function App() {
         printFn={reactToPrintFn}
         system={system}
       />
-      <SystemView system={system} ref={contentRef} />
+      {system !== null ? <SystemView system={system} ref={contentRef} />: <></>}
     </div>
   );
 }
@@ -34,7 +33,7 @@ function App() {
 type WorldEntryProps = {
   onGenerateSystem: (system: System) => void;
   printFn: () => void;
-  system: System;
+  system: System | null;
 };
 
 const WorldEntryForm: React.FunctionComponent<WorldEntryProps> = ({
@@ -42,8 +41,8 @@ const WorldEntryForm: React.FunctionComponent<WorldEntryProps> = ({
   printFn,
   system,
 }) => {
-  const [worldName, setWorldName] = useState("");
-  const [upp, setUpp] = useState("");
+  const [worldName, setWorldName] = useState(INITIAL_NAME);
+  const [upp, setUpp] = useState(INITIAL_UPP);
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
