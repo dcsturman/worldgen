@@ -127,7 +127,7 @@ export class World {
   constructor(
     name: string,
     orbit: number,
-    star_oribt: number,
+    star_orbit: number,
     size: number,
     atmosphere: number,
     hydro: number,
@@ -141,7 +141,7 @@ export class World {
     this.hydro = hydro;
     this.satellites = [];
     this.orbit = orbit;
-    this.star_orbit = star_oribt;
+    this.star_orbit = star_orbit;
     this.population = population;
     this.is_satellite = is_satellite;
     this.is_mainworld = is_mainworld;

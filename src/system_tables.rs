@@ -1,19 +1,19 @@
-use crate::worldgen::{System, StarSize, StarSubType, StarType};
+use crate::worldgen::{Star, StarSize, StarSubType, StarType};
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 use log::debug;
 
-pub fn get_zone(system: &System) -> ZoneTable {
-    debug!("get_zone: {:?} as {:?}", system.star, ZONE_TABLE.get(&(system.star.size, system.star.star_type, round_subtype(system.star.subtype))));
+pub fn get_zone(star: &Star) -> ZoneTable {
+    debug!("get_zone: {:?} as {:?}", star, ZONE_TABLE.get(&(star.size, star.star_type, round_subtype(star.subtype))));
     ZONE_TABLE
-        .get(&(system.star.size, system.star.star_type, round_subtype(system.star.subtype)))
+        .get(&(star.size, star.star_type, round_subtype(star.subtype)))
         .unwrap()
         .clone()
 }
 
-pub fn get_habitable(system: &System) -> i32 {
-    let habitable = get_zone(system).habitable;
-    if habitable > get_zone(system).inner {
+pub fn get_habitable(star: &Star) -> i32 {
+    let habitable = get_zone(star).habitable;
+    if habitable > get_zone(star).inner {
         habitable
     } else {
         -1
@@ -26,6 +26,20 @@ pub fn round_subtype(subtype: StarSubType) -> u8 {
         5..=9 => 5,
         _ => panic!("Invalid subtype"),
     }
+}
+
+pub (crate) fn get_luminosity(star: &Star) -> f32 {
+    LUMINOSITY_TABLE
+        .get(&(star.star_type, round_subtype(star.subtype), star.size))
+        .unwrap()
+        .clone()
+}
+
+pub (crate) fn get_solar_mass(star: &Star) -> f32 {
+    MASS_TABLE
+        .get(&(star.star_type, round_subtype(star.subtype), star.size))
+        .unwrap()
+        .clone()
 }
 
 pub (crate) fn get_orbital_distance(orbit: i32) -> f32 {
@@ -178,7 +192,7 @@ lazy_static! {
 }
 
 lazy_static! {
-    static ref LUMINOSITY_TABLES: HashMap<(StarType, u8, StarSize), f32> = HashMap::from_iter(vec![
+    static ref LUMINOSITY_TABLE: HashMap<(StarType, u8, StarSize), f32> = HashMap::from_iter(vec![
         ((StarType::O, 0, StarSize::Ia), 0.0),
         ((StarType::O, 0, StarSize::Ib), 0.0),
         ((StarType::O, 0, StarSize::II), 0.0),
@@ -295,7 +309,7 @@ lazy_static! {
 }
 
 lazy_static! {
-    static ref MASS_TABLES: HashMap<(StarType, u8, StarSize), f32> = HashMap::from_iter(vec![
+    static ref MASS_TABLE: HashMap<(StarType, u8, StarSize), f32> = HashMap::from_iter(vec![
         ((StarType::O, 0, StarSize::Ia), 0.0),
         ((StarType::O, 0, StarSize::Ib), 0.0),
         ((StarType::O, 0, StarSize::II), 0.0),
@@ -414,7 +428,7 @@ lazy_static! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::worldgen::Star;
+    use crate::worldgen::{Star, System};
 
     #[test_log::test]
     fn test_get_zone() {
@@ -429,7 +443,7 @@ mod tests {
             ..Default::default()
         };
 
-        let zone1 = get_zone(&system1);
+        let zone1 = get_zone(&system1.star);
         debug!("zone1: {:?} for star {:?}", zone1, system1.star);
         assert_eq!(zone1.inside, 0);
         assert_eq!(zone1.hot, 7);
@@ -447,7 +461,7 @@ mod tests {
             ..Default::default()
         };
 
-        let zone2 = get_zone(&system2);
+        let zone2 = get_zone(&system2.star);
         debug!("zone2: {:?} for star {:?}", zone2, system2.star);
         assert_eq!(zone2.inside, 0);
         assert_eq!(zone2.hot, 1);

@@ -1,10 +1,12 @@
-use crate::name_tables::{MOON_NAMES, STAR_SYSTEM_NAMES};
-use crate::system_tables::{get_zone, ZoneTable};
 use log::{debug, error, warn};
 use rand::seq::SliceRandom;
 use rand::Rng;
 use std::fmt::Display;
 use reactive_stores::Store;
+
+use crate::name_tables::{MOON_NAMES, PLANET_NAMES, STAR_SYSTEM_NAMES};
+use crate::system_tables::{get_zone, ZoneTable};
+use crate::astrodata::AstroData;
 
 #[derive(Debug, Clone, Store)]
 pub struct System {
@@ -23,13 +25,13 @@ pub struct System {
 pub struct World {
     pub name: String,
     pub orbit: usize,
-    position_in_system: usize,
+    pub(crate) position_in_system: usize,
     is_satellite: bool,
     is_mainworld: bool,
     port: PortCode,
-    size: i32,
-    atmosphere: i32,
-    hydro: i32,
+    pub(crate) size: i32,
+    pub(crate) atmosphere: i32,
+    pub(crate) hydro: i32,
     population: i32,
     law_level: i32,
     government: i32,
@@ -37,7 +39,7 @@ pub struct World {
     facilities: Vec<Facility>,
     pub satellites: Satellites,
     trade_classes: Vec<TradeClass>,
-    // astro_data: AstroData,
+    pub astro_data: AstroData,
 }
 
 #[derive(Debug, Clone, Store)]
@@ -158,10 +160,8 @@ pub struct Satellites{
 
 // Traits
 pub trait HasSatellites {
-    fn get_position_in_system(&self) -> usize;
     fn get_num_satellites(&self) -> usize;
     fn get_satellite(&self, orbit: usize) -> Option<&World>;
-    fn get_satellites(&self) -> Satellites;
     fn get_satellites_mut(&mut self) -> &mut Satellites;
     fn sort_satellites(&mut self) {
         self.get_satellites_mut().sats
@@ -227,9 +227,7 @@ impl System {
     }
 
     pub fn set_max_orbits(&mut self, max_orbits: usize) {
-        for i in self.orbit_slots.len()..=max_orbits {
-            self.orbit_slots.push(None);
-        }
+        self.orbit_slots.resize(max_orbits+1, None);
     }
 
     pub fn get_max_orbits(&self) -> usize {
@@ -284,7 +282,7 @@ impl Default for System {
 impl Display for System {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} is a {} star.", self.name, self.star)?;
-        write!(f, " Zones for {} are {:?}. ", self.name, get_zone(self))?;
+        write!(f, " Zones for {} are {:?}. ", self.name, get_zone(&self.star))?;
         if let Some(secondary) = &self.secondary {
             if let StarOrbit::Primary = secondary.orbit {
                 write!(f, "It has a secondary contact star {}:\n{}\n", secondary.name, secondary)?;
@@ -371,6 +369,14 @@ impl World {
             facilities: Vec::new(),
             satellites: Satellites{ sats: Vec::new() },
             trade_classes: Vec::new(),
+            astro_data: AstroData::new(),
+        }
+    }
+    fn gen_name(&mut self, system_name: &str, orbit: usize) {
+        if self.population > 0 {
+            self.name = PLANET_NAMES[rand::thread_rng().gen_range(0..PLANET_NAMES.len())].to_string()
+        } else {
+            self.name = format!("{} {}", system_name, arabic_to_roman(orbit + 1))
         }
     }
     pub fn set_subordinate_stats(
@@ -439,16 +445,177 @@ impl World {
         world
     }
 
+    fn gen_subordinate_facilities(&mut self, system_zones: &ZoneTable, orbit: usize, main_world: &World) {
+        // Mining?
+        if main_world.trade_classes.contains(&TradeClass::Industrial) && self.population >= 2 {
+            self.facilities.push(Facility::Mining);
+        }
+
+        // Farming?
+        if orbit as i32 == system_zones.habitable
+            && orbit as i32 > system_zones.inner
+            && self.atmosphere >= 4
+            && self.atmosphere <= 9
+            && self.hydro >= 4 && self.hydro <= 8
+            && self.population >= 2
+        {
+            self.facilities.push(Facility::Farming);
+        }
+    
+        // Colony?
+        if self.government == 6 && self.get_population() >= 5 {
+            self.facilities.push(Facility::Colony);
+        }
+    
+        // Research Lab?
+        if main_world.population > 0
+            && main_world.tech_level > 8
+            && roll_2d6()
+                + if main_world.tech_level >= 10 { 2 } else { 0 }
+                + if self.population == 0 { -2 } else { 0 }
+                >= 12
+        {
+            self.facilities.push(Facility::Lab);
+            // Fix tech level if there is a lab.  Not ideal but we need to gen most of a world/satellite
+            // before facilities, but tech level is impacted by having a lab.
+            if self.tech_level == main_world.tech_level - 1 {
+                self.tech_level = main_world.tech_level;
+            }
+        }
+    
+        // Military Base?
+        let modifier = if main_world.get_population() >= 8 {
+            1
+        } else {
+            0
+        } + if main_world.atmosphere == self.atmosphere {
+            2
+        } else {
+            0
+        } + if main_world.facilities.contains(&Facility::Naval)
+            || main_world.facilities.contains(&Facility::Scout)
+        {
+            1
+        } else {
+            0
+        };
+        if !main_world.trade_classes.contains(&TradeClass::Poor)
+            && self.get_population() > 0
+            && roll_2d6() + modifier >= 12
+        {
+            self.facilities.push(Facility::Military);
+        }
+    }
+    
+    fn gen_subordinate_stats(&mut self, main_world: &World) {
+        let population = self.get_population();
+        let modifier = if main_world.government == 6 {
+            population
+        } else if main_world.government >= 7 {
+            1
+        } else {
+            0
+        };
+    
+        let government = if population <= 0 {
+            0
+        } else {
+            match roll_1d6() + modifier {
+                1 => 0,
+                2 => 1,
+                3 => 2,
+                4 => 3,
+                _ => 6,
+            }
+        };
+    
+        let law_level = if population <= 0 {
+            0
+        } else {
+            (roll_1d6() - 3 + main_world.law_level).max(0)
+        };
+    
+        let tech_level = if population <= 0 {
+            0
+        } else if population > 0 && ![5, 6, 8].contains(&self.atmosphere) && main_world.tech_level <= 7
+        {
+            7
+        } else {
+            (main_world.tech_level - 1).max(0)
+        };
+    
+        let roll = roll_1d6()
+            + match population {
+                0 => -3,
+                1 => -2,
+                2..=5 => 0,
+                _ => 2,
+            };
+    
+        let port = match roll {
+            -2..=2 => PortCode::Y,
+            3 => PortCode::H,
+            4..=5 => PortCode::G,
+            _ => PortCode::F,
+        };
+        self.set_subordinate_stats(port, government, law_level, tech_level, Vec::new());
+    }
+
+    fn gen_trade_classes(&mut self) {
+        if self.atmosphere >= 4
+            && self.atmosphere <= 9
+            && self.hydro >= 4
+            && self.hydro <= 8
+            && self.population >= 5
+            && self.population <= 7
+        {
+            self.trade_classes.push(TradeClass::Agricultural);
+        }
+        if self.atmosphere <= 3 && self.hydro <= 3 && self.population >= 6 {
+            self.trade_classes.push(TradeClass::NonAgricultural);
+        }
+        if [0, 1, 2, 4, 7, 9].contains(&self.atmosphere) && self.population >= 9 {
+            self.trade_classes.push(TradeClass::Industrial);
+        }
+        if (1..=6).contains(&self.population) {
+            self.trade_classes.push(TradeClass::NonIndustrial);
+        }
+        if [6, 8].contains(&self.atmosphere)
+            && [6, 7, 8].contains(&self.population)
+            && self.government >= 4
+            && self.government <= 9
+        {
+            self.trade_classes.push(TradeClass::Rich);
+        }
+        if self.population > 0
+            && self.atmosphere >= 2
+            && self.atmosphere <= 5
+            && self.hydro <= 3
+        {
+            self.trade_classes.push(TradeClass::Poor);
+        }
+        if self.hydro >= 10 {
+            self.trade_classes.push(TradeClass::WaterWorld);
+        }
+        if self.hydro <= 0 && self.atmosphere > 1 {
+            self.trade_classes.push(TradeClass::DesertWorld);
+        }
+
+        if self.atmosphere <= 1 && self.hydro >= 10 {
+            self.trade_classes.push(TradeClass::Icecapped);
+        }
+        if self.atmosphere <= 0 && self.population > 1 {
+            self.trade_classes.push(TradeClass::VacuumWorld);
+        }
+    }
+
     pub fn get_population(&self) -> i32 {
         self.population
     }
 
+    #[allow(dead_code)]
     pub fn set_facilities(&mut self, facilities: Vec<Facility>) {
         self.facilities = facilities;
-    }
-
-    pub fn get_facilities(&self) -> Vec<Facility> {
-        self.facilities.clone()
     }
 
     pub fn facilities_string(&self) -> String {
@@ -467,9 +634,9 @@ impl World {
             .join(", ")
     }
 
-    pub fn compute_astro_data(&mut self, _system: &System) {
-        // self.astro_data.compute(system, self);
-        unimplemented!("compute_astro_data");
+    pub fn compute_astro_data(&mut self, star: &Star) {
+        let astro = AstroData::compute(star, &self);
+        self.astro_data = astro;
     }
 }
 
@@ -514,20 +681,12 @@ impl HasSatellites for World {
         self.satellites.sats.len()
     }
 
-    fn get_satellites(&self) -> Satellites {
-        self.satellites.clone()
-    }
-
     fn get_satellites_mut(&mut self) -> &mut Satellites {
         &mut self.satellites
     }
 
     fn get_satellite(&self, orbit: usize) -> Option<&World> {
         self.satellites.sats.iter().find(|&x| x.orbit == orbit)
-    }
-
-    fn get_position_in_system(&self) -> usize {
-        self.position_in_system
     }
 
     fn gen_satellite_orbit(&self, is_ring: bool) -> usize {
@@ -656,20 +815,31 @@ impl HasSatellites for World {
             true,
             false,
         );
-        gen_subordinate_stats(&mut satellite, main_world);
-        gen_subordinate_facilities(system_zones, &mut satellite, orbit, main_world);
-        // TODO: Astro data
-        //satellite.compute_astro_data(system);
+        satellite.gen_subordinate_stats(main_world);
+        satellite.gen_trade_classes();
+        satellite.gen_subordinate_facilities(system_zones, orbit, main_world);
         self.satellites.sats.push(satellite);
     }
 }
 impl GasGiant {
-    pub fn new(name: String, size: GasGiantSize, orbit: usize) -> GasGiant {
+    pub fn new(size: GasGiantSize, orbit: usize) -> GasGiant {
         GasGiant {
-            name,
+            name: "".to_string(),
             size,
             satellites: Satellites{ sats: Vec::new() },
             orbit,
+        }
+    }
+
+    pub fn gen_name(&mut self, system_name: &str, orbit: usize) {
+        // Gas giants with more than 100,000 residents in their system get a name. 
+        // i.e. if you're not just a remote outpost with mining, etc, you get a name.
+        let pop = self.satellites.sats.iter().any(|x| x.population >= 5);
+
+        if pop {
+            self.name = PLANET_NAMES[rand::thread_rng().gen_range(0..PLANET_NAMES.len())].to_string()
+        } else {
+            self.name = format!("{} {}", system_name, arabic_to_roman(orbit + 1))
         }
     }
 }
@@ -683,16 +853,8 @@ impl HasSatellites for GasGiant {
         self.satellites.sats.iter().find(|&x| x.orbit == orbit)
     }
 
-    fn get_satellites(&self) -> Satellites {
-        self.satellites.clone()
-    }
-
     fn get_satellites_mut(&mut self) -> &mut Satellites {
         &mut self.satellites
-    }
-
-    fn get_position_in_system(&self) -> usize {
-        self.orbit
     }
 
     fn gen_satellite_orbit(&self, is_ring: bool) -> usize {
@@ -826,10 +988,9 @@ impl HasSatellites for GasGiant {
             false,
         );
 
-        gen_subordinate_stats(&mut satellite, main_world);
-        gen_subordinate_facilities(system_zones, &mut satellite, self.orbit, main_world);
-        // TODO: Astro data
-        //satellite.compute_astro_data(system);
+        satellite.gen_subordinate_stats(main_world);
+        satellite.gen_trade_classes();
+        satellite.gen_subordinate_facilities(system_zones, self.orbit, main_world);
         self.satellites.sats.push(satellite);
     }
 }
@@ -1115,7 +1276,8 @@ fn gen_stars(world_mod: i32, companions_possible: bool) -> System {
     let star_size = gen_primary_star_size(primary_size_roll, star_type, star_subtype);
 
     let mut system = System::new(star_type, star_subtype, star_size, StarOrbit::Primary, 0);
-    system.set_max_orbits(gen_max_orbits(&system.star));
+    let star = system.star.clone();
+    system.set_max_orbits(gen_max_orbits(&star));
 
     // Do this for a secondary, which we have with 2 or 3 stars.
     if num_stars >= 2 {
@@ -1129,7 +1291,7 @@ fn gen_stars(world_mod: i32, companions_possible: bool) -> System {
                 )));
             }
             // If the companion has an orbit, but its inside the primary star, just treat it as the primary orbit.
-            StarOrbit::System(position) if position as i32 <= get_zone(&system).inside => {
+            StarOrbit::System(position) if position as i32 <= get_zone(&star).inside => {
                 system.secondary = Some(Box::new(gen_companion_system(
                     primary_type_roll,
                     primary_size_roll,
@@ -1160,7 +1322,7 @@ fn gen_stars(world_mod: i32, companions_possible: bool) -> System {
                     orbit,
                 )));
             }
-            StarOrbit::System(position) if position as i32 <= get_zone(&system).inside => {
+            StarOrbit::System(position) if position as i32 <= get_zone(&star).inside => {
                 system.tertiary = Some(Box::new(gen_companion_system(
                     primary_type_roll,
                     primary_size_roll,
@@ -1206,7 +1368,7 @@ fn gen_gas_giants(system: &mut System) -> i32 {
     num_giants = num_giants.min(count_open_orbits(system));
     let original_num_giants = num_giants;
 
-    let habitable = get_zone(system).habitable;
+    let habitable = get_zone(&system.star).habitable;
 
     let mut viable_outer_orbits: Vec<i32> = system
         .orbit_slots
@@ -1257,7 +1419,6 @@ fn gen_gas_giants(system: &mut System) -> i32 {
             system.set_orbit_slot(
                 orbit,
                 OrbitContent::GasGiant(GasGiant::new(
-                    gen_planet_name(system, orbit),
                     GasGiantSize::Small,
                     orbit,
                 )),
@@ -1266,7 +1427,6 @@ fn gen_gas_giants(system: &mut System) -> i32 {
             system.set_orbit_slot(
                 orbit,
                 OrbitContent::GasGiant(GasGiant::new(
-                    gen_planet_name(system, orbit),
                     GasGiantSize::Large,
                     orbit,
                 )),
@@ -1334,12 +1494,12 @@ fn gen_planetoids(system: &mut System, num_giants: i32, main_world: &World) {
         };
 
         let population = (roll_2d6() - 2
-            + if orbit as i32 <= get_zone(system).inner {
+            + if orbit as i32 <= get_zone(&system.star).inner {
                 -5
             } else {
                 0
             }
-            + if orbit as i32 > get_zone(system).habitable {
+            + if orbit as i32 > get_zone(&system.star).habitable {
                 -5
             } else {
                 0
@@ -1358,8 +1518,10 @@ fn gen_planetoids(system: &mut System, num_giants: i32, main_world: &World) {
             false,
         );
 
-        gen_subordinate_stats(&mut planetoid, main_world);
-        gen_subordinate_facilities(&get_zone(system), &mut planetoid, orbit, main_world);
+        planetoid.gen_subordinate_stats(main_world);
+        planetoid.gen_trade_classes();
+        planetoid.gen_subordinate_facilities(&get_zone(&system.star), orbit, main_world);
+        planetoid.compute_astro_data(&system.star);
         system.set_orbit_slot(orbit, OrbitContent::World(planetoid));
         num_planetoids -= 1;
     }
@@ -1368,10 +1530,10 @@ fn gen_planetoids(system: &mut System, num_giants: i32, main_world: &World) {
 fn place_main_world(system: &mut System, mut main_world: World) {
     let requires_habitable =
         main_world.atmosphere > 1 && main_world.atmosphere < 10 && main_world.size > 0;
-    let mut habitable = get_zone(system).habitable;
-    if (habitable < 0 || habitable == get_zone(system).inner) && requires_habitable {
-        warn!("No habitable zone for main world for system: {:?}. Habitable = {}. Inner = {}. Using orbit 0.", system, habitable, get_zone(system).inner);
-        habitable = get_zone(system).inner.max(0);
+    let mut habitable = get_zone(&system.star).habitable;
+    if (habitable < 0 || habitable == get_zone(&system.star).inner) && requires_habitable {
+        warn!("No habitable zone for main world for system: {:?}. Habitable = {}. Inner = {}. Using orbit 0.", system, habitable, get_zone(&system.star).inner);
+        habitable = get_zone(&system.star).inner.max(0);
     }
 
     debug!("(place_main_world) habitable = {}, max_orbits = {}, requires_habitable = {}, star = {}", habitable, system.get_max_orbits(), requires_habitable, system.star);
@@ -1426,7 +1588,7 @@ fn place_main_world(system: &mut System, mut main_world: World) {
     }
 }
 
-pub fn generate_system(main_world: World) -> System {
+pub fn generate_system(mut main_world: World) -> System {
     let star_mod = if (main_world.atmosphere >= 4 && main_world.atmosphere <= 9)
         || main_world.population >= 8
     {
@@ -1434,18 +1596,15 @@ pub fn generate_system(main_world: World) -> System {
     } else {
         0
     };
-    debug!("(generate_system) star_mod = {}. Now generate stars.", star_mod);
     let mut system = gen_stars(star_mod, true);
-    debug!("(generate_system) Generated stars. Now fill system.");
+    main_world.gen_trade_classes();
+    main_world.compute_astro_data(&system.star);
     fill_system(&mut system, main_world, true);
-    debug!("(generate_system) Filled system. Now compute astro data.");
-    // TODO: add astro data
-    //main_world.compute_astro_data(&system);
-    debug!("(generate_system) All complete. Return system: {:?}", system);
+
     system
 }
 
-pub fn gen_world(name: String, system: &System, orbit: usize, main_world: &World) -> World {
+pub fn gen_world(star: &Star, orbit: usize, main_world: &World) -> World {
     let mut modifier = if orbit == 0 {
         -5
     } else if orbit == 1 {
@@ -1456,7 +1615,7 @@ pub fn gen_world(name: String, system: &System, orbit: usize, main_world: &World
         0
     };
 
-    if system.star.star_type == StarType::M {
+    if star.star_type == StarType::M {
         modifier -= 2;
     }
 
@@ -1466,12 +1625,12 @@ pub fn gen_world(name: String, system: &System, orbit: usize, main_world: &World
     let signed_orbit = orbit as i32;
     let mut atmosphere = (roll_2d6() - 7
         + size
-        + if signed_orbit <= get_zone(system).inner {
+        + if signed_orbit <= get_zone(star).inner {
             -2
         } else {
             0
         }
-        + if signed_orbit > get_zone(system).habitable {
+        + if signed_orbit > get_zone(star).habitable {
             -2
         } else {
             0
@@ -1479,13 +1638,13 @@ pub fn gen_world(name: String, system: &System, orbit: usize, main_world: &World
     .clamp(0, 10);
 
     // Special case for a type A atmosphere.
-    if roll == 12 && signed_orbit > get_zone(system).habitable {
+    if roll == 12 && signed_orbit > get_zone(star).habitable {
         atmosphere = 10;
     }
 
     let mut hydro = (roll_2d6() - 7
         + size
-        + if signed_orbit > get_zone(system).habitable {
+        + if signed_orbit > get_zone(star).habitable {
             -4
         } else {
             0
@@ -1496,17 +1655,17 @@ pub fn gen_world(name: String, system: &System, orbit: usize, main_world: &World
             0
         })
     .clamp(0, 10);
-    if size <= 0 || signed_orbit <= get_zone(system).inner {
+    if size <= 0 || signed_orbit <= get_zone(star).inner {
         hydro = 0;
     }
 
     let population = (roll_2d6() - 2
-        + if signed_orbit <= get_zone(system).inner {
+        + if signed_orbit <= get_zone(star).inner {
             -5
         } else {
             0
         }
-        + if signed_orbit > get_zone(system).habitable {
+        + if signed_orbit > get_zone(star).habitable {
             -5
         } else {
             0
@@ -1519,17 +1678,19 @@ pub fn gen_world(name: String, system: &System, orbit: usize, main_world: &World
     .clamp(0, main_world.population - 1);
 
     let mut world = World::new(
-        name, orbit, orbit, size, atmosphere, hydro, population, false, false,
+        "Unknown".to_string(), orbit, orbit, size, atmosphere, hydro, population, false, false,
     );
-    gen_subordinate_stats(&mut world, main_world);
-    gen_subordinate_facilities(&get_zone(system), &mut world, orbit, main_world);
+    world.gen_name(&main_world.name, orbit);
+    world.gen_subordinate_stats(main_world);
+    world.gen_trade_classes();
+    world.gen_subordinate_facilities(&get_zone(star), orbit, main_world);
     world
 }
 
 fn fill_system(system: &mut System, main_world: World, is_primary: bool) {
     gen_blocked_orbits(system);
     let main_world_copy = main_world.clone();
-    let system_zones = get_zone(system);
+    let system_zones = get_zone(&system.star);
     let num_gas_giants = gen_gas_giants(system);
 
     gen_planetoids(system, num_gas_giants, &main_world_copy);
@@ -1540,22 +1701,22 @@ fn fill_system(system: &mut System, main_world: World, is_primary: bool) {
         debug!("(fill_system) Placed main world.");
     }
 
-    for i in 0..=get_zone(system).hot {
+    for i in 0..=get_zone(&system.star).hot {
         system.set_orbit_slot(i as usize, OrbitContent::Blocked);
     }
 
-    for i in (get_zone(system).hot + 1)..system.get_max_orbits() as i32 {
+    for i in (get_zone(&system.star).hot + 1)..system.get_max_orbits() as i32 {
         debug!("(fill_system) Fill orbit {}", i);
         let i = i as usize;
         if system.is_slot_empty(i) {
-            let name = gen_planet_name(system, i);
-            let new_world = gen_world(name, system, i, &main_world_copy);
-            //new_world.compute_astro_data(system);
+            let mut new_world = gen_world(&system.star, i, &main_world_copy);
+            new_world.gen_name(&system.name, i);
+            new_world.compute_astro_data(&system.star);
             system.set_orbit_slot(i, OrbitContent::World(new_world));
         }
     }
 
-    let zone_table = get_zone(system).clone();
+    let zone_table = get_zone(&system.star).clone();
     for i in 0..system.get_max_orbits() {
         match &mut system.orbit_slots[i] {
             Some(OrbitContent::World(world)) => {
@@ -1571,6 +1732,7 @@ fn fill_system(system: &mut System, main_world: World, is_primary: bool) {
                     gas_giant.gen_satellite(&system_zones, &main_world_copy);
                 }
                 gas_giant.clean_satellites();
+                gas_giant.gen_name(&system.name, i);
             }
             _ => continue,
         }
@@ -1591,131 +1753,8 @@ fn fill_system(system: &mut System, main_world: World, is_primary: bool) {
     debug!("(fill_system) System filled.");
 }
 
-fn gen_subordinate_facilities(
-    system_zones: &ZoneTable,
-    world: &mut World,
-    orbit: usize,
-    main_world: &World,
-) {
-    // Mining?
-    if main_world.trade_classes.contains(&TradeClass::Industrial) && world.population >= 2 {
-        world.facilities.push(Facility::Mining);
-    }
-
-    // Farming?
-    if orbit as i32 == system_zones.habitable
-        && orbit as i32 > system_zones.inner
-        && world.atmosphere >= 4
-        && world.atmosphere <= 9
-        && world.hydro >= 4        && world.hydro <= 8
-        && world.population >= 2
-    {
-        world.facilities.push(Facility::Farming);
-    }
-
-    // Colony?
-    if world.government == 6 && world.get_population() >= 5 {
-        world.facilities.push(Facility::Colony);
-    }
-
-    // Research Lab?
-    if main_world.population > 0
-        && main_world.tech_level > 8
-        && roll_2d6()
-            + if main_world.tech_level >= 10 { 2 } else { 0 }
-            + if world.population == 0 { -2 } else { 0 }
-            >= 12
-    {
-        world.facilities.push(Facility::Lab);
-        // Fix tech level if there is a lab.  Not ideal but we need to gen most of a world/satellite
-        // before facilities, but tech level is impacted by having a lab.
-        if world.tech_level == main_world.tech_level - 1 {
-            world.tech_level = main_world.tech_level;
-        }
-    }
-
-    // Military Base?
-    let modifier = if main_world.get_population() >= 8 {
-        1
-    } else {
-        0
-    } + if main_world.atmosphere == world.atmosphere {
-        2
-    } else {
-        0
-    } + if main_world.facilities.contains(&Facility::Naval)
-        || main_world.facilities.contains(&Facility::Scout)
-    {
-        1
-    } else {
-        0
-    };
-    if !main_world.trade_classes.contains(&TradeClass::Poor)
-        && world.get_population() > 0
-        && roll_2d6() + modifier >= 12
-    {
-        world.facilities.push(Facility::Military);
-    }
-}
-
-fn gen_subordinate_stats(world: &mut World, main_world: &World) {
-    let population = world.get_population();
-    let modifier = if main_world.government == 6 {
-        population
-    } else if main_world.government >= 7 {
-        1
-    } else {
-        0
-    };
-
-    let government = if population <= 0 {
-        0
-    } else {
-        match roll_1d6() + modifier {
-            1 => 0,
-            2 => 1,
-            3 => 2,
-            4 => 3,
-            _ => 6,
-        }
-    };
-
-    let law_level = if population <= 0 {
-        0
-    } else {
-        (roll_1d6() - 3 + main_world.law_level).max(0)
-    };
-
-    let tech_level = if population <= 0 {
-        0
-    } else if population > 0 && ![5, 6, 8].contains(&world.atmosphere) && main_world.tech_level <= 7
-    {
-        7
-    } else {
-        (main_world.tech_level - 1).max(0)
-    };
-
-    let roll = roll_1d6()
-        + match population {
-            0 => -3,
-            1 => -2,
-            2..=5 => 0,
-            _ => 2,
-        };
-
-    let port = match roll {
-        -2..=2 => PortCode::Y,
-        3 => PortCode::H,
-        4..=5 => PortCode::G,
-        _ => PortCode::F,
-    };
-    world.set_subordinate_stats(port, government, law_level, tech_level, Vec::new());
-}
-
 // Implement other functions...
-fn gen_planet_name(system: &System, orbit: usize) -> String {
-    format!("{} {}", system.name, arabic_to_roman(orbit + 1))
-}
+
 
 fn arabic_to_roman(num: usize) -> String {
     if num > 20 {

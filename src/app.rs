@@ -1,5 +1,4 @@
 use leptos::prelude::*;
-use leptos::logging::log;
 use reactive_stores::Store;
 
 use crate::worldgen::{System, World, generate_system};
@@ -34,9 +33,7 @@ fn WorldEntryForm(main_world_name: RwSignal<String>, set_has_gen: WriteSignal<bo
     let upp = RwSignal::new(INITIAL_UPP.to_string());
 
     let handle_submit = move |_e| {
-        log!("(WorldEntryForm) Handle submit, generating {}", main_world_name.get());
         let new_system = generate_system(World::from_upp(main_world_name.get(), &upp.get(), false, true));
-        log!("(WorldEntryForm) Generated system: {:?}", new_system);
         set_has_gen.set(true);
         state.set(new_system);
     };

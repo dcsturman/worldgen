@@ -1,14 +1,14 @@
 use itertools::Itertools;
 use leptos::prelude::*;
 use leptos::context::Provider;
-use reactive_stores::{Field, OptionStoreExt, Store};
+use reactive_stores::Store;
 
 use crate::system_tables::get_habitable;
 use crate::worldgen::{HasSatellites, OrbitContent, StarOrbit, System, SystemStoreFields};
 use crate::worldtable::WorldTable;
 
 fn habitable_clause(system: &System) -> String {
-    let habitable = get_habitable(system);
+    let habitable = get_habitable(&system.star);
     if habitable > -1 && habitable <= system.get_max_orbits() as i32 {
         format!(" with a habitable zone at orbit {}", habitable)
     } else {
@@ -37,7 +37,7 @@ pub fn SystemView(main_world_name: RwSignal<String>) -> impl IntoView {
             <SystemPreamble />
             <br />
             <br />
-            <SystemMain is_companion=false />
+            <SystemMain />
         </div>
     }
 }
@@ -187,7 +187,7 @@ pub fn SystemPreamble() -> impl IntoView {
 }
 
 #[component]
-pub fn SystemMain(is_companion: bool) -> impl IntoView {
+pub fn SystemMain() -> impl IntoView {
     let system = expect_context::<Store<System>>();
 
     view! {
@@ -200,7 +200,7 @@ pub fn SystemMain(is_companion: bool) -> impl IntoView {
                     view! {
                         {system.read().name.clone()}"'s secondary star "{secondary.name().get()}:<br />
                         <Provider value=secondary>
-                            <SystemMain is_companion=true />
+                            <SystemMain />
                         </Provider>
                         <br />
                     }.into_any()
@@ -214,7 +214,7 @@ pub fn SystemMain(is_companion: bool) -> impl IntoView {
                     view! {
                         {system.read().name.clone()}"'s tertiary star "{tertiary.name().get()}:<br />
                         <Provider value=tertiary>
-                            <SystemMain is_companion=true />
+                            <SystemMain />
                         </Provider>
                         <br />
                     }.into_any()
