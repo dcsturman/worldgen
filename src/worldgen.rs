@@ -1,52 +1,55 @@
-mod name_tables;
-mod system_tables;
-
 use crate::name_tables::{MOON_NAMES, STAR_SYSTEM_NAMES};
 use crate::system_tables::{get_zone, ZoneTable};
 use log::{debug, error, warn};
 use rand::seq::SliceRandom;
 use rand::Rng;
 use std::fmt::Display;
+use reactive_stores::Store;
 
-// Traits
+#[derive(Debug, Clone, Store)]
+pub struct System {
+    pub name: String,
+    pub star: Star,
+    #[store]
+    pub secondary: Option<Box<System>>,
+    #[store]
+    pub tertiary: Option<Box<System>>,
+    pub orbit: StarOrbit,
+    #[store]
+    pub orbit_slots: Vec<Option<OrbitContent>>,
+}
 
-trait HasSatellites {
-    fn get_position_in_system(&self) -> usize;
-    fn get_num_satellites(&self) -> usize;
-    fn get_satellite(&self, orbit: usize) -> Option<&World>;
-    fn get_satellites_mut(&mut self) -> &mut Satellites;
-    fn sort_satellites(&mut self) {
-        self.get_satellites_mut()
-            .sort_by(|a, b| a.orbit.cmp(&b.orbit));
-    }
+#[derive(Debug, Clone, Store)]
+pub struct World {
+    pub name: String,
+    pub orbit: usize,
+    position_in_system: usize,
+    is_satellite: bool,
+    is_mainworld: bool,
+    port: PortCode,
+    size: i32,
+    atmosphere: i32,
+    hydro: i32,
+    population: i32,
+    law_level: i32,
+    government: i32,
+    tech_level: i32,
+    facilities: Vec<Facility>,
+    pub satellites: Satellites,
+    trade_classes: Vec<TradeClass>,
+    // astro_data: AstroData,
+}
 
-    fn clean_satellites(&mut self) {
-        self.sort_satellites();
-        let ring_indices: Vec<usize> = self
-            .get_satellites_mut()
-            .iter()
-            .enumerate()
-            .filter(|(_, satellite)| satellite.size == 0)
-            .map(|(index, _)| index)
-            .collect();
-
-        if ring_indices.len() > 0 {
-            for i in 1..ring_indices.len() {
-                self.get_satellites_mut().remove(ring_indices[i]);
-            }
-            self.get_satellites_mut()[ring_indices[0]].name = "Ring System".to_string();
-        }
-    }
-
-    fn determine_num_satellites(&self) -> i32;
-
-    fn gen_satellite_orbit(&self, is_ring: bool) -> usize;
-
-    fn gen_satellite(&mut self, system_zones: &ZoneTable, main_world: &World);
+#[derive(Debug, Clone, Store)]
+pub struct GasGiant {
+    pub name: String,
+    pub size: GasGiantSize,
+    satellites: Satellites,
+    pub orbit: usize,
 }
 
 // Enums
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Hash)]
+#[derive(Debug, Store, Clone, Copy, PartialEq, Eq, PartialOrd, Hash)]
 pub enum StarType {
     O,
     B,
@@ -59,7 +62,7 @@ pub enum StarType {
 
 pub type StarSubType = u8;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Hash)]
+#[derive(Debug, Store, Clone, Copy, PartialEq, Eq, PartialOrd, Hash)]
 pub enum StarSize {
     Ia,
     Ib,
@@ -71,7 +74,7 @@ pub enum StarSize {
     D,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Store, Clone, Copy, PartialEq, Eq)]
 pub enum StarOrbit {
     Primary,
     Far,
@@ -124,65 +127,69 @@ pub enum GasGiantSize {
 }
 
 // Structs
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Store, Clone, Copy, PartialEq, Eq)]
 pub struct Star {
-    star_type: StarType,
-    subtype: StarSubType,
-    size: StarSize,
-}
-#[derive(Debug)]
-pub struct System {
-    name: String,
-    star: Star,
-    secondary: Option<Box<System>>,
-    tertiary: Option<Box<System>>,
-    orbit: StarOrbit,
-    orbit_slots: Vec<Option<OrbitContent>>,
+    pub star_type: StarType,
+    pub subtype: StarSubType,
+    pub size: StarSize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Store, Clone)]
 pub enum OrbitContent {
     // This orbit contains the secondary star system of the primary.
     Secondary,
     // This orbit contains the tertiary star system of the primary.
     Tertiary,
     // This orbit contains a world
+    #[store]
     World(World),
     // This orbit contains a gas giant
+    #[store]
     GasGiant(GasGiant),
     // This orbit is intentionally empty and cannot be filled.
     Blocked,
 }
 
-type Satellites = Vec<World>;
-
-#[derive(Debug, Clone)]
-pub struct World {
-    name: String,
-    orbit: usize,
-    position_in_system: usize,
-    is_satellite: bool,
-    is_mainworld: bool,
-    port: PortCode,
-    size: i32,
-    atmosphere: i32,
-    hydro: i32,
-    population: i32,
-    law_level: i32,
-    government: i32,
-    tech_level: i32,
-    facilities: Vec<Facility>,
-    satellites: Satellites,
-    trade_classes: Vec<TradeClass>,
-    // astro_data: AstroData,
+#[derive(Debug, Clone, Store)]
+pub struct Satellites{    
+    #[store(key: String = |world| world.name.clone())]
+    pub sats: Vec<World>
 }
 
-#[derive(Debug, Clone)]
-pub struct GasGiant {
-    name: String,
-    size: GasGiantSize,
-    satellites: Satellites,
-    orbit: usize,
+// Traits
+pub trait HasSatellites {
+    fn get_position_in_system(&self) -> usize;
+    fn get_num_satellites(&self) -> usize;
+    fn get_satellite(&self, orbit: usize) -> Option<&World>;
+    fn get_satellites(&self) -> Satellites;
+    fn get_satellites_mut(&mut self) -> &mut Satellites;
+    fn sort_satellites(&mut self) {
+        self.get_satellites_mut().sats
+            .sort_by(|a, b| a.orbit.cmp(&b.orbit));
+    }
+
+    fn clean_satellites(&mut self) {
+        self.sort_satellites();
+        let ring_indices: Vec<usize> = self.get_satellites_mut().sats
+            .iter()
+            .enumerate()
+            .filter(|(_, satellite)| satellite.size == 0)
+            .map(|(index, _)| index)
+            .collect();
+
+        if ring_indices.len() > 0 {
+            for i in 1..ring_indices.len() {
+                self.get_satellites_mut().sats.remove(ring_indices[i]);
+            }
+            self.get_satellites_mut().sats[ring_indices[0]].name = "Ring System".to_string();
+        }
+    }
+
+    fn determine_num_satellites(&self) -> i32;
+
+    fn gen_satellite_orbit(&self, is_ring: bool) -> usize;
+
+    fn gen_satellite(&mut self, system_zones: &ZoneTable, main_world: &World);
 }
 
 impl System {
@@ -207,8 +214,22 @@ impl System {
             orbit_slots: vec![None; max_orbits],
         }
     }
+
+    pub fn count_stars(&self) -> i32 {
+        let mut count = 1;
+        if let Some(secondary) = &self.secondary {
+            count += secondary.count_stars();
+        }
+        if let Some(tertiary) = &self.tertiary {
+            count += tertiary.count_stars();
+        }
+        count
+    }
+
     pub fn set_max_orbits(&mut self, max_orbits: usize) {
-        self.orbit_slots.resize(max_orbits, None);
+        for i in self.orbit_slots.len()..=max_orbits {
+            self.orbit_slots.push(None);
+        }
     }
 
     pub fn get_max_orbits(&self) -> usize {
@@ -216,7 +237,7 @@ impl System {
     }
 
     pub fn is_slot_empty(&self, orbit: usize) -> bool {
-        self.orbit_slots.get(orbit as usize).is_none()
+        self.orbit_slots.get(orbit).map(|body| body.is_none()).unwrap_or(true)
     }
 
     pub fn get_unused_orbits(&self) -> Vec<usize> {
@@ -237,7 +258,7 @@ impl System {
 
     pub fn set_orbit_slot(&mut self, orbit: usize, content: OrbitContent) {
         if orbit >= self.orbit_slots.len() {
-            self.orbit_slots.resize(orbit + 1, None);
+            self.set_max_orbits(orbit);
         }
         self.orbit_slots[orbit] = Some(content);
     }
@@ -348,7 +369,7 @@ impl World {
             government: 0,
             tech_level: 0,
             facilities: Vec::new(),
-            satellites: Vec::new(),
+            satellites: Satellites{ sats: Vec::new() },
             trade_classes: Vec::new(),
         }
     }
@@ -462,7 +483,7 @@ impl Display for World {
             self.to_upp(),
             self.facilities_string()
         )?;
-        for satellite in self.satellites.iter() {
+        for satellite in self.satellites.sats.iter() {
             write!(f, "\t{}\n", satellite)?;
         }
         Ok(())
@@ -481,7 +502,7 @@ impl Display for GasGiantSize {
 impl Display for GasGiant {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:<7}{:<24}{:<12}\n", self.orbit, self.name, self.size)?;
-        for satellite in self.satellites.iter() {
+        for satellite in self.satellites.sats.iter() {
             write!(f, "\t{}\n", satellite)?;
         }
         Ok(())
@@ -490,7 +511,11 @@ impl Display for GasGiant {
 
 impl HasSatellites for World {
     fn get_num_satellites(&self) -> usize {
-        self.satellites.len()
+        self.satellites.sats.len()
+    }
+
+    fn get_satellites(&self) -> Satellites {
+        self.satellites.clone()
     }
 
     fn get_satellites_mut(&mut self) -> &mut Satellites {
@@ -498,7 +523,7 @@ impl HasSatellites for World {
     }
 
     fn get_satellite(&self, orbit: usize) -> Option<&World> {
-        self.satellites.iter().find(|&x| x.orbit == orbit)
+        self.satellites.sats.iter().find(|&x| x.orbit == orbit)
     }
 
     fn get_position_in_system(&self) -> usize {
@@ -564,7 +589,7 @@ impl HasSatellites for World {
                 false,
             );
             ring.port = PortCode::Y;
-            self.satellites.push(ring);
+            self.satellites.sats.push(ring);
             return;
         }
 
@@ -635,7 +660,7 @@ impl HasSatellites for World {
         gen_subordinate_facilities(system_zones, &mut satellite, orbit, main_world);
         // TODO: Astro data
         //satellite.compute_astro_data(system);
-        self.satellites.push(satellite);
+        self.satellites.sats.push(satellite);
     }
 }
 impl GasGiant {
@@ -643,7 +668,7 @@ impl GasGiant {
         GasGiant {
             name,
             size,
-            satellites: Vec::new(),
+            satellites: Satellites{ sats: Vec::new() },
             orbit,
         }
     }
@@ -651,11 +676,15 @@ impl GasGiant {
 
 impl HasSatellites for GasGiant {
     fn get_num_satellites(&self) -> usize {
-        self.satellites.len()
+        self.satellites.sats.len()
     }
 
     fn get_satellite(&self, orbit: usize) -> Option<&World> {
-        self.satellites.iter().find(|&x| x.orbit == orbit)
+        self.satellites.sats.iter().find(|&x| x.orbit == orbit)
+    }
+
+    fn get_satellites(&self) -> Satellites {
+        self.satellites.clone()
     }
 
     fn get_satellites_mut(&mut self) -> &mut Satellites {
@@ -729,7 +758,7 @@ impl HasSatellites for GasGiant {
                 false,
             );
             ring.port = PortCode::Y;
-            self.satellites.push(ring);
+            self.satellites.sats.push(ring);
             return;
         }
 
@@ -801,7 +830,7 @@ impl HasSatellites for GasGiant {
         gen_subordinate_facilities(system_zones, &mut satellite, self.orbit, main_world);
         // TODO: Astro data
         //satellite.compute_astro_data(system);
-        self.satellites.push(satellite);
+        self.satellites.sats.push(satellite);
     }
 }
 
@@ -1156,7 +1185,7 @@ fn count_open_orbits(system: &System) -> i32 {
     system
         .orbit_slots
         .iter()
-        .filter(|&body| body.is_none())
+        .filter(|body| body.is_none())
         .count() as i32
 }
 
@@ -1368,7 +1397,7 @@ fn place_main_world(system: &mut System, mut main_world: World) {
             Some(OrbitContent::GasGiant(gas_giant)) => {
                 main_world.orbit = gas_giant.gen_satellite_orbit(main_world.size == 0);
                 main_world.position_in_system = habitable as usize;
-                gas_giant.satellites.push(main_world);
+                gas_giant.satellites.sats.push(main_world);
             }
             Some(OrbitContent::Blocked) => {
                 main_world.position_in_system = habitable as usize;

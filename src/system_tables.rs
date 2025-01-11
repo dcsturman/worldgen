@@ -1,9 +1,9 @@
-use crate::{StarSize, StarSubType, StarType, System};
+use crate::worldgen::{System, StarSize, StarSubType, StarType};
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 use log::debug;
 
-pub(crate) fn get_zone(system: &System) -> ZoneTable {
+pub fn get_zone(system: &System) -> ZoneTable {
     debug!("get_zone: {:?} as {:?}", system.star, ZONE_TABLE.get(&(system.star.size, system.star.star_type, round_subtype(system.star.subtype))));
     ZONE_TABLE
         .get(&(system.star.size, system.star.star_type, round_subtype(system.star.subtype)))
@@ -11,7 +11,16 @@ pub(crate) fn get_zone(system: &System) -> ZoneTable {
         .clone()
 }
 
-pub(crate) fn round_subtype(subtype: StarSubType) -> u8 {
+pub fn get_habitable(system: &System) -> i32 {
+    let habitable = get_zone(system).habitable;
+    if habitable > get_zone(system).inner {
+        habitable
+    } else {
+        -1
+    }
+}
+
+pub fn round_subtype(subtype: StarSubType) -> u8 {
     match subtype {
         0..=4 => 0,
         5..=9 => 5,
@@ -405,7 +414,7 @@ lazy_static! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Star;
+    use crate::worldgen::Star;
 
     #[test_log::test]
     fn test_get_zone() {
