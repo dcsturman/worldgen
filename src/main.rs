@@ -1,4 +1,5 @@
 mod worldgen;
+mod astrodata;
 mod name_tables;
 mod system_tables;
 mod app;

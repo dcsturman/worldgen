@@ -1,9 +1,10 @@
 use leptos::prelude::*;
 use reactive_stores::{Field, OptionStoreExt, Store, StoreFieldIterator};
+use itertools::Itertools;
 
 use crate::worldgen::{
     GasGiant, GasGiantStoreFields, OrbitContent, OrbitContentStoreFields, Satellites,
-    SatellitesStoreFields, Star, StarOrbit, System, SystemStoreFields, World, WorldStoreFields,
+    SatellitesStoreFields, StarOrbit, System, SystemStoreFields, World, WorldStoreFields,
 };
 
 #[component]
@@ -24,54 +25,61 @@ pub fn WorldTable() -> impl IntoView {
             </thead>
             <tbody>
                 <StarRow system=primary />
-                {move ||
-                    (0..primary.orbit_slots().read().len()).map(
-                        |index| {
-                            primary.orbit_slots().at_unkeyed(index).with(
-                                |body| match body {
+                {move || {
+                    (0..primary.orbit_slots().read().len())
+                        .map(|index| {
+                            primary
+                                .orbit_slots()
+                                .at_unkeyed(index)
+                                .with(|body| match body {
                                     Some(OrbitContent::World(_world)) => {
-                                        let my_field = primary.orbit_slots().at_unkeyed(index).unwrap().world_0().unwrap();
-                                        view! {
-                                            <WorldView world=my_field satellite=false />
-                                        }
+                                        let my_field = primary
+                                            .orbit_slots()
+                                            .at_unkeyed(index)
+                                            .unwrap()
+                                            .world_0()
+                                            .unwrap();
+                                        view! { <WorldView world=my_field satellite=false /> }
                                             .into_any()
-                                    },
+                                    }
                                     Some(OrbitContent::GasGiant(_gas_giant)) => {
-                                        let my_field = primary.orbit_slots().at_unkeyed(index).unwrap().gas_giant_0().unwrap();
-                                        view! {
-                                            <GiantView world=my_field />
-                                        }
-                                            .into_any()
-                                    },
+                                        let my_field = primary
+                                            .orbit_slots()
+                                            .at_unkeyed(index)
+                                            .unwrap()
+                                            .gas_giant_0()
+                                            .unwrap();
+                                        view! { <GiantView world=my_field /> }.into_any()
+                                    }
                                     Some(OrbitContent::Secondary) => {
+                                        let secondary = Store::new(
+                                            *primary.secondary().unwrap().get(),
+                                        );
                                         // Terrible that we have to clone here!
-                                        let secondary = Store::new(*primary.secondary().unwrap().get());
-                                        view! { 
-                                            <StarRow system=secondary />
-                                        }
+                                        view! { <StarRow system=secondary /> }
                                             .into_any()
-                                    },
+                                    }
                                     Some(OrbitContent::Tertiary) => {
+                                        let tertiary = Store::new(
+                                            *primary.tertiary().unwrap().get(),
+                                        );
                                         // Terrible that we have to clone here!
-                                        let tertiary = Store::new(*primary.tertiary().unwrap().get());
-                                        view! { 
-                                            <StarRow system=tertiary />
-                                        }
+                                        view! { <StarRow system=tertiary /> }
                                             .into_any()
-                                    },
+                                    }
                                     _ => view! { <></> }.into_any(),
-                                }
-                            )
-                        }
-                    ).collect::<Vec<_>>().into_view()
-                }
+                                })
+                        })
+                        .collect::<Vec<_>>()
+                        .into_view()
+                }}
             </tbody>
         </table>
     }
 }
 
 #[component]
-pub fn StarRow(#[prop(into)] system: Store<System>) -> impl IntoView {
+pub fn StarRow(#[prop(into)] system: Field<System>) -> impl IntoView {
     view! {
         <tr>
             <td>
@@ -99,8 +107,20 @@ pub fn WorldView(#[prop(into)] world: Field<World>, satellite: bool) -> impl Int
                 <Show when=move || !satellite>{move || view! { <td></td> }}</Show>
                 <td>{move || world.read().name.clone()}</td>
                 <td>{move || world.with(|world| world.to_upp())}</td>
-                <td>{move || world.with(|world| world.facilities_string())}</td>
-                <td>{move || world.with(|world| world.trade_classes_string())}</td>
+                <td>
+                    {move || {
+                        world
+                            .with(|world| {
+                                vec![world.facilities_string(), world.trade_classes_string()]
+                                    .iter()
+                                    .filter(|s| s.len() > 0)
+                                    .cloned()
+                                    .intersperse("; ".to_string())
+                                    .collect::<String>()
+                            })
+                    }}
+                </td>
+                <td>{move || world.with(|world| world.astro_data.describe(world))}</td>
             </tr>
             <SatelliteView satellites=world.satellites() />
         }
@@ -124,9 +144,14 @@ pub fn GiantView(#[prop(into)] world: Field<GasGiant>) -> impl IntoView {
 #[component]
 pub fn SatelliteView(#[prop(into)] satellites: Field<Satellites>) -> impl IntoView {
     view! {
-        {move || (0..satellites.sats().read().len()).map(|index| {
-            let satellite = satellites.sats().at_unkeyed(index);
-            view! { <WorldView world=satellite satellite=true /> }
-        }).collect::<Vec<_>>().into_view()}
+        {move || {
+            (0..satellites.sats().read().len())
+                .map(|index| {
+                    let satellite = satellites.sats().at_unkeyed(index);
+                    view! { <WorldView world=satellite satellite=true /> }
+                })
+                .collect::<Vec<_>>()
+                .into_view()
+        }}
     }
 }
