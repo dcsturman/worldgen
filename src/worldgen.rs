@@ -1058,7 +1058,7 @@ impl Facility {
             Facility::Farming => "Farming".to_string(),
             Facility::Mining => "Mining".to_string(),
             Facility::Colony => "Colony".to_string(),
-            Facility::Lab => "Research Lab".to_string(),
+            Facility::Lab => "Lab".to_string(),
             Facility::Military => "Military Base".to_string(),
         }
     }
@@ -1067,16 +1067,16 @@ impl Facility {
 impl TradeClass {
     pub fn to_string(&self) -> String {
         match self {
-            TradeClass::Agricultural => "Agricultural".to_string(),
-            TradeClass::NonAgricultural => "Non-Agricultural".to_string(),
-            TradeClass::Industrial => "Industrial".to_string(),
-            TradeClass::NonIndustrial => "Non-Industrial".to_string(),
-            TradeClass::Rich => "Rich".to_string(),
-            TradeClass::Poor => "Poor".to_string(),
-            TradeClass::WaterWorld => "Water World".to_string(),
-            TradeClass::DesertWorld => "Desert World".to_string(),
-            TradeClass::VacuumWorld => "Vacuum World".to_string(),
-            TradeClass::Icecapped => "Icecapped".to_string(),
+            TradeClass::Agricultural => "Ag".to_string(),
+            TradeClass::NonAgricultural => "Na".to_string(),
+            TradeClass::Industrial => "In".to_string(),
+            TradeClass::NonIndustrial => "Ni".to_string(),
+            TradeClass::Rich => "Ri".to_string(),
+            TradeClass::Poor => "Po".to_string(),
+            TradeClass::WaterWorld => "Wa".to_string(),
+            TradeClass::DesertWorld => "De".to_string(),
+            TradeClass::VacuumWorld => "Va".to_string(),
+            TradeClass::Icecapped => "Ic".to_string(),
         }
     }
 }

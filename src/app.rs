@@ -16,7 +16,7 @@ pub fn App() -> impl IntoView {
 
     view! {
         <div class:App>
-            <h1>Solar System Generator</h1>
+            <h1 class="d-print-none">Solar System Generator</h1>
             <WorldEntryForm main_world_name set_has_gen />
             <Show when=move || {
                 has_gen.get()
@@ -24,6 +24,10 @@ pub fn App() -> impl IntoView {
             <br />
         </div>
     }
+}
+
+fn print() {
+    leptos::leptos_dom::helpers::window().print().unwrap_or_else(|e| log::error!("Error printing: {:?}", e));
 }
 
 #[component]
@@ -39,22 +43,22 @@ fn WorldEntryForm(main_world_name: RwSignal<String>, set_has_gen: WriteSignal<bo
     };
 
     view! {
-        <div class:world-entry-form>
+        <div class="d-print-none world-entry-form">
             <div id:entry-data>
                 <div class:world-entry-element>
                     <label for:worldName>"World Name:"</label>
-                    <input id="worldName" type="text" bind:value=main_world_name />
+                    <input id="worldName" class:entry-input type="text" bind:value=main_world_name />
                 </div>
                 <div class:world-entry-element>
                     <label for:upp>"UPP:"</label>
-                    <input type="text" id="upp" bind:value=upp />
+                    <input class:entry-input type="text" id="upp" bind:value=upp />
                 </div>
             </div>
             <div id:entry-buttons>
                 <button class:blue-button type="button" on:click=handle_submit>
                     "Generate"
                 </button>
-                <button class:blue-button type="button" on:click=handle_submit>
+                <button class:blue-button type="button" on:click=|_| print() >
                     "Print"
                 </button>
             </div>

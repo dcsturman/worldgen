@@ -1,3 +1,5 @@
+@import "bootstrap/scss/utilities";
+
 /* latin */
 @font-face {
   font-family: 'Orbitron';
@@ -80,9 +82,19 @@ body {
   -moz-osx-font-smoothing: grayscale;
   font-size: 12pt;
 }
-
 h1 {
   margin-left: 20px;
+}
+
+@media print {
+  .output-region {
+    font-size: 9pt !important;
+    overflow: visible !important;
+    border: none !important;
+  }
+  .world-table {
+    font-size: 9pt !important;
+  }
 }
 
 .world-table {
@@ -116,6 +128,19 @@ h1 {
   padding: 10px;
   display: flex;
   flex-direction: column;
+  font-family: "Space Mono", sans-serif;
+  font-weight: 400;
+ }
+
+ .entry-input {
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  width: 150px;
+  font-family: "Space Mono", sans-serif;
+  font-weight: 400;
+  font-size: 12pt;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
  }
 
  #entry-data {
@@ -148,7 +173,10 @@ h1 {
   margin: 20px;
   padding: 10px;
   overflow: auto;
-  
+ }
+
+ .table-entry{
+  padding-left: 1em;
  }
 
  .blue-button {
