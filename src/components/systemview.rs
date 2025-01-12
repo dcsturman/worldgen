@@ -5,7 +5,7 @@ use reactive_stores::Store;
 
 use crate::system_tables::get_habitable;
 use crate::worldgen::{HasSatellites, OrbitContent, StarOrbit, System, SystemStoreFields};
-use crate::worldtable::WorldTable;
+use crate::components::worldtable::WorldTable;
 
 fn habitable_clause(system: &System) -> String {
     let habitable = get_habitable(&system.star);
