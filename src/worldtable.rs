@@ -8,23 +8,37 @@ use crate::worldgen::{
 };
 
 #[component]
-pub fn WorldTable() -> impl IntoView {
+pub fn WorldTable(#[prop(default=false)] is_companion: bool) -> impl IntoView {
     let primary = expect_context::<Store<System>>();
 
     view! {
         <table class="world-table">
             <thead>
                 <tr>
-                    <th>"Orbit"</th>
-                    <th></th>
-                    <th>"Name"</th>
-                    <th>"UPP"</th>
-                    <th>"Remarks"</th>
-                    <th>"Astro Data"</th>
+                    <th class="table-entry">"Orbit"</th>
+                    <th class="table-entry"></th>
+                    <th class="table-entry">"Name"</th>
+                    <th class="table-entry">"UPP"</th>
+                    <th class="table-entry">"Remarks"</th>
+                    <th class="table-entry">"Astro Data"</th>
                 </tr>
             </thead>
             <tbody>
-                <StarRow system=primary />
+                <StarRow system=primary is_companion=is_companion />
+                {move || [primary.secondary(), primary.tertiary()].into_iter().map(|companion| {
+                    if let Some(companion) = companion.get() {
+                        let companion = Store::new(*companion);
+                        if companion.orbit().get() == StarOrbit::Primary {
+                            // TODO: Get rid of this clone.
+                            view! { <StarRow system=companion is_companion=true /> }
+                                .into_any()
+                        } else {
+                            view! { <></> }.into_any()
+                        }
+                    } else {
+                        view! { <></> }.into_any()
+                    }
+                }).collect::<Vec<_>>().into_view()}
                 {move || {
                     (0..primary.orbit_slots().read().len())
                         .map(|index| {
@@ -55,16 +69,16 @@ pub fn WorldTable() -> impl IntoView {
                                         let secondary = Store::new(
                                             *primary.secondary().unwrap().get(),
                                         );
-                                        // Terrible that we have to clone here!
-                                        view! { <StarRow system=secondary /> }
+                                        // TODO: Get rid of this clone.
+                                        view! { <StarRow system=secondary is_companion=false /> }
                                             .into_any()
                                     }
                                     Some(OrbitContent::Tertiary) => {
                                         let tertiary = Store::new(
                                             *primary.tertiary().unwrap().get(),
                                         );
-                                        // Terrible that we have to clone here!
-                                        view! { <StarRow system=tertiary /> }
+                                        // TODO: Get rid of this clone.
+                                        view! { <StarRow system=tertiary is_companion=false /> }
                                             .into_any()
                                     }
                                     _ => view! { <></> }.into_any(),
@@ -73,25 +87,45 @@ pub fn WorldTable() -> impl IntoView {
                         .collect::<Vec<_>>()
                         .into_view()
                 }}
+                {move || [primary.secondary(), primary.tertiary()].into_iter().map(|companion| {
+                    if let Some(companion) = companion.get() {
+                        let companion = Store::new(*companion);
+                        if companion.orbit().get() == StarOrbit::Far {
+                            // TODO: Get rid of this clone.
+                            view! { <StarRow system=companion is_companion=false /> }
+                                .into_any()
+                        } else {
+                            view! { <></> }.into_any()
+                        }
+                    } else {
+                        view! { <></> }.into_any()
+                    }
+                }).collect::<Vec<_>>().into_view()}
             </tbody>
         </table>
     }
 }
 
 #[component]
-pub fn StarRow(#[prop(into)] system: Field<System>) -> impl IntoView {
+pub fn StarRow(#[prop(into)] system: Field<System>, #[prop(default=false)] is_companion: bool) -> impl IntoView {
     view! {
         <tr>
-            <td>
-                {move || match system.orbit().get() {
-                    StarOrbit::Primary => "Primary".to_string(),
-                    StarOrbit::Far => "Far".to_string(),
-                    StarOrbit::System(orbit) => orbit.to_string(),
+            <td class="table-entry">
+                {move || {
+                    if is_companion {
+                        "Companion".to_string()
+                    } else {
+                        match system.orbit().get() {
+                            StarOrbit::Primary => "Primary".to_string(),
+                            StarOrbit::Far => "Far".to_string(),
+                            StarOrbit::System(orbit) => orbit.to_string(),
+                        }
+                    }
                 }}
             </td>
-            <td></td>
-            <td>{move || system.name().get()}</td>
-            <td>{move || system.star().get().to_string()}</td>
+            <td class="table-entry"></td>
+            <td class="table-entry">{move || system.name().get()}</td>
+            <td class="table-entry">{move || system.star().get().to_string()}</td>
         </tr>
     }
 }
@@ -103,11 +137,11 @@ pub fn WorldView(#[prop(into)] world: Field<World>, satellite: bool) -> impl Int
             <tr>
                 // Add an indent for satellite orbit number
                 <Show when=move || satellite>{move || view! { <td></td> }}</Show>
-                <td>{move || world.read().orbit.to_string()}</td>
+                <td class="table-entry">{move || world.read().orbit.to_string()}</td>
                 <Show when=move || !satellite>{move || view! { <td></td> }}</Show>
-                <td>{move || world.read().name.clone()}</td>
-                <td>{move || world.with(|world| world.to_upp())}</td>
-                <td>
+                <td class="table-entry">{move || world.read().name.clone()}</td>
+                <td class="table-entry">{move || world.with(|world| world.to_upp())}</td>
+                <td class="table-entry">
                     {move || {
                         world
                             .with(|world| {
@@ -120,7 +154,9 @@ pub fn WorldView(#[prop(into)] world: Field<World>, satellite: bool) -> impl Int
                             })
                     }}
                 </td>
-                <td>{move || world.with(|world| world.astro_data.describe(world))}</td>
+                <td class="table-entry">
+                    {move || world.with(|world| world.astro_data.describe(world))}
+                </td>
             </tr>
             <SatelliteView satellites=world.satellites() />
         }
@@ -132,10 +168,10 @@ pub fn WorldView(#[prop(into)] world: Field<World>, satellite: bool) -> impl Int
 pub fn GiantView(#[prop(into)] world: Field<GasGiant>) -> impl IntoView {
     view! {
         <tr>
-            <td>{move || world.read().orbit.to_string()}</td>
-            <td></td>
-            <td>{move || world.read().name.clone()}</td>
-            <td>{move || world.with(|world| format!("{}", world.size))}</td>
+            <td class="table-entry">{move || world.read().orbit.to_string()}</td>
+            <td class="table-entry"></td>
+            <td class="table-entry">{move || world.read().name.clone()}</td>
+            <td class="table-entry">{move || world.with(|world| format!("{}", world.size))}</td>
         </tr>
         <SatelliteView satellites=world.satellites() />
     }

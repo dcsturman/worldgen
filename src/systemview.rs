@@ -31,9 +31,7 @@ pub fn SystemView(main_world_name: RwSignal<String>) -> impl IntoView {
             {move || system.star().get().to_string()}
             " star"
             {move || habitable_clause(&system.read())}
-            "."
-            <br />
-            <br />
+            ". "
             <SystemPreamble />
             <br />
             <br />
@@ -187,12 +185,12 @@ pub fn SystemPreamble() -> impl IntoView {
 }
 
 #[component]
-pub fn SystemMain() -> impl IntoView {
+pub fn SystemMain(#[prop(default=false)] is_companion: bool) -> impl IntoView {
     let system = expect_context::<Store<System>>();
 
     view! {
         <div>
-            <WorldTable />
+            <WorldTable is_companion=is_companion />
             <br />
             {move || {
                 if let Some(secondary) = system.secondary().get() {
@@ -200,7 +198,7 @@ pub fn SystemMain() -> impl IntoView {
                     view! {
                         {system.read().name.clone()}"'s secondary star "{secondary.name().get()}:<br />
                         <Provider value=secondary>
-                            <SystemMain />
+                            <SystemMain is_companion=true />
                         </Provider>
                         <br />
                     }.into_any()
@@ -214,7 +212,7 @@ pub fn SystemMain() -> impl IntoView {
                     view! {
                         {system.read().name.clone()}"'s tertiary star "{tertiary.name().get()}:<br />
                         <Provider value=tertiary>
-                            <SystemMain />
+                            <SystemMain is_companion=true />
                         </Provider>
                         <br />
                     }.into_any()
