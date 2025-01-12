@@ -5,6 +5,8 @@
   "dependencies": {
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
+    "ajv": "^8.17.1",
+    "ajv-keywords": "^5.1.0",
     "cra-template": "1.2.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
