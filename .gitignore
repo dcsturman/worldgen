@@ -29,3 +29,5 @@ yarn-error.log*
 *.js
 *.wasm
 /dist
+/javascript/node_modules
+/dist
