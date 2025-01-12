@@ -2,7 +2,7 @@ use leptos::prelude::*;
 use reactive_stores::Store;
 
 use crate::worldgen::{System, World, generate_system};
-use crate::systemview::SystemView;
+use crate::components::systemview::SystemView;
 
 const INITIAL_UPP: &str = "A788899-A";
 const INITIAL_NAME: &str = "Main World";
