@@ -1,5 +1,5 @@
 import React from "react";
-import { System, GasGiant, World, StarType, StarSize, FAR_ORBIT } from "./worldgen";
+import { System, GasGiant, World, StarType, StarSize, FAR_ORBIT, getHabitable } from "./worldgen";
 import WorldTable from "./WorldTable";
 
 // type ComponentProps = React.PropsWithChildren<{
@@ -18,19 +18,20 @@ type SystemViewProps = {
   ref: React.Ref<HTMLDivElement>;
 };
 
+function habitableClause(system: System): string {
+  let habitable = getHabitable(system);
+  return habitable > -1 && habitable <= system.max_orbits ? ` with a habitable zone at orbit ${habitable}` : "";
+}
+
 const SystemView: React.FunctionComponent<SystemViewProps> = ({
   system,
   ref,
 }) => {
-  let primary_desc = system.main_world
-    ? " whose primary world is " + system.main_world.name
-    : "";
-
   return (
     <div className="output-region" ref={ref}>
-      <h2>The {system.name} System</h2>
-      <b>{system.name}</b> is a {StarType[system.star.star_type]}
-      {system.star.subtype} {StarSize[system.star.size]} star{primary_desc}.
+      <h2>The {system.main_world?.name} System</h2>
+      The primary star of the {system.main_world?.name} system is <b>{system.name}</b>, a {StarType[system.star.star_type]}
+      {system.star.subtype} {StarSize[system.star.size]} star{habitableClause(system)}.
       <SystemPreamble system={system} />
       <br />
       <br />
@@ -48,26 +49,27 @@ const SystemPreamble: React.FunctionComponent<SystemPreambleProps> = ({
 }) => {
   let secondary_lead = <></>;
   if (system.secondary !== null) {
+    let secondary = system.secondary;
     if (system.secondary.orbit === 0) {
       secondary_lead = (
         <>
-          &nbsp; It has a secondary contact star {system.secondary.name}, which is a {StarType[system.star.star_type]}
-          {system.star.subtype} {StarSize[system.star.size]} star.&nbsp;
+          &nbsp; It has a secondary contact star {secondary.name}, which is a {StarType[secondary.star.star_type]}
+          {secondary.star.subtype} {StarSize[secondary.star.size]} star.&nbsp;
         </>
       );
     } else if (system.secondary.orbit < FAR_ORBIT) {
       secondary_lead = (
         <>
-          &nbsp; It has a secondary star {system.secondary.name} at orbit{" "}
-          {system.secondary.orbit}, which is a {StarType[system.star.star_type]}
-          {system.star.subtype} {StarSize[system.star.size]} star.&nbsp;
+          &nbsp; It has a secondary star {secondary.name} at orbit{" "}
+          {secondary.orbit}, which is a {StarType[secondary.star.star_type]}
+          {secondary.star.subtype} {StarSize[secondary.star.size]} star{habitableClause(secondary)}.&nbsp;
         </>
       );
     } else {
       secondary_lead = (
         <>
-          &nbsp; It has a secondary star {system.secondary.name} in far orbit, which is a {StarType[system.star.star_type]}
-          {system.star.subtype} {StarSize[system.star.size]} star.
+          &nbsp; It has a secondary star {secondary.name} in far orbit, which is a {StarType[secondary.star.star_type]}
+          {secondary.star.subtype} {StarSize[secondary.star.size]} star{habitableClause(secondary)}.
           &nbsp;
         </>
       );
@@ -76,26 +78,27 @@ const SystemPreamble: React.FunctionComponent<SystemPreambleProps> = ({
 
   let tertiary_lead = <></>;
   if (system.tertiary !== null) {
-    if (system.tertiary.orbit === 0) {
+    let tertiary = system.tertiary;
+    if (tertiary.orbit === 0) {
       tertiary_lead = (
         <>
-          It has a tertiary contact star {system.tertiary.name}, which is a {StarType[system.star.star_type]}
-          {system.star.subtype} {StarSize[system.star.size]} star.&nbsp;
+          It has a tertiary contact star {system.tertiary.name}, which is a {StarType[tertiary.star.star_type]}
+          {tertiary.star.subtype} {StarSize[tertiary.star.size]} star.&nbsp;
         </>
       );
-    } else if (system.tertiary.orbit < FAR_ORBIT) {
+    } else if (tertiary.orbit < FAR_ORBIT) {
       tertiary_lead = (
         <>
-          It has a tertiary star {system.tertiary.name} at orbit{" "}
-          {system.tertiary.orbit}, which is a {StarType[system.star.star_type]}
-          {system.star.subtype} {StarSize[system.star.size]} star.&nbsp;
+          It has a tertiary star {tertiary.name} at orbit{" "}
+          {tertiary.orbit}, which is a {StarType[tertiary.star.star_type]}
+          {tertiary.star.subtype} {StarSize[tertiary.star.size]} star{habitableClause(tertiary)}.&nbsp;
         </>
       );
     } else {
       tertiary_lead = (
         <>
-          It has a tertiary star {system.tertiary.name} in far orbit, which is a {StarType[system.star.star_type]}
-          {system.star.subtype} {StarSize[system.star.size]} star..&nbsp;
+          It has a tertiary star {tertiary.name} in far orbit, which is a {StarType[tertiary.star.star_type]}
+          {tertiary.star.subtype} {StarSize[tertiary.star.size]} star{habitableClause(tertiary)}.&nbsp;
         </>
       );
     }
