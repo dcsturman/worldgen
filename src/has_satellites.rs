@@ -1,5 +1,6 @@
 use crate::system_tables::ZoneTable;
 use crate::world::{Satellites, World};
+use crate::system::Star;
 
 pub trait HasSatellites {
     fn get_num_satellites(&self) -> usize;
@@ -26,7 +27,7 @@ pub trait HasSatellites {
         if ring_indices.is_empty() {
             return;
         }
-        
+
         for ring in ring_indices.iter().skip(1) {
             self.get_satellites_mut().sats.remove(*ring);
         }
@@ -37,5 +38,5 @@ pub trait HasSatellites {
 
     fn gen_satellite_orbit(&self, is_ring: bool) -> usize;
 
-    fn gen_satellite(&mut self, system_zones: &ZoneTable, main_world: &World);
+    fn gen_satellite(&mut self, system_zones: &ZoneTable, main_world: &World, star: &Star);
 }

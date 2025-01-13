@@ -72,7 +72,12 @@ impl AstroData {
         // Mass in Earth equivalents.
         self.mass = (size as f32 / 8.0).powi(3);
         // G = M(8/SIZE)^2
-        self.gravity = self.mass / (size as f32 / 8.0).powi(2);
+        // TODO: Validate this math is right!
+        self.gravity = if size <= 0 {
+            0.0
+        } else {
+            (size as f32 / 8.0)
+        };
     }
 
     fn compute_albedo_temp(&mut self, atmosphere: i32, hydro: i32, star: &Star) {
