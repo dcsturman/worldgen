@@ -1,10 +1,13 @@
-mod worldgen;
-mod astrodata;
-mod name_tables;
-mod system_tables;
+mod astro;
 mod components;
+mod gas_giant;
+mod has_satellites;
+mod name_tables;
+mod system;
+mod system_tables;
+mod util;
+mod world;
 
-use console_error_panic_hook;
 use leptos::prelude::*;
 
 use crate::components::app::App;

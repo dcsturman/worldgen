@@ -1,5 +1,8 @@
-use crate::system_tables::{get_cloudiness, get_greenhouse, get_luminosity, get_orbital_distance, get_solar_mass};
-use crate::worldgen::{World, Star};
+use crate::system::Star;
+use crate::system_tables::{
+    get_cloudiness, get_greenhouse, get_luminosity, get_orbital_distance, get_solar_mass,
+};
+use crate::world::World;
 
 const WATER_ALBEDO: f32 = 0.02;
 const LAND_ALBEDO: f32 = 0.1;
@@ -52,7 +55,7 @@ impl AstroData {
         // 0.5 = -0.03*273 + b
         // b = 0.5 + (-0.03*273) = 0.5 + 8.19 = 8.69
         // y = -0.03x + 8.69
-        astro.ice_cap_percent = (2.0 * world.hydro as f32 / 10.0 * (-0.03 * astro.temp + 8.69)).max(0.0).min(1.0);
+        astro.ice_cap_percent = (2.0 * world.hydro as f32 / 10.0 * (-0.03 * astro.temp + 8.69)).clamp(0.0, 1.0);
         astro.compute_albedo_temp(world.atmosphere, world.hydro, star);
         astro
     }
@@ -91,16 +94,16 @@ impl AstroData {
             land_percent = 0.0;
         }
 
-        ice_percent = ice_percent * cloud_percent;
-        water_percent = water_percent * cloud_percent;
-        land_percent = land_percent * cloud_percent;
+        ice_percent *= cloud_percent;
+        water_percent *= cloud_percent;
+        land_percent *= cloud_percent;
 
         self.albedo = cloud_percent * CLOUD_ALBEDO
             + water_percent * WATER_ALBEDO
             + land_percent * LAND_ALBEDO
             + ice_percent * ICE_ALBEDO;
 
-        // T = KG(1-A)(L^0.25)/D^0.5 where 
+        // T = KG(1-A)(L^0.25)/D^0.5 where
         // K = 374.02
         // G = 1 + greenhouse effect
         // A = Albedo (0-0.99)
@@ -110,16 +113,22 @@ impl AstroData {
         let gh_impact = 1.0 + get_greenhouse(atmosphere);
         let luminosity = get_luminosity(star);
 
-        self.temp = k * gh_impact * (1.0 - self.albedo) * luminosity.powf(0.25) / self.orbit_distance.powf(0.5);
+        self.temp = k * gh_impact * (1.0 - self.albedo) * luminosity.powf(0.25)
+            / self.orbit_distance.powf(0.5);
     }
 
     pub fn describe(&self, world: &World) -> String {
-        if world.atmosphere <= 1 {  
+        if world.atmosphere <= 1 {
             return "".to_string();
         }
-    
+
         let temp_diff = self.temp - EARTH_TEMP;
-        format!("{:+0.2} °K, {:2.2}% ice, {:0.1}G, {:0.1} yrs", temp_diff, (self.ice_cap_percent * 100.0).round(), self.gravity, self.orbital_period)
+        format!(
+            "{:+0.2} °K, {:2.2}% ice, {:0.1}G, {:0.1} yrs",
+            temp_diff,
+            (self.ice_cap_percent * 100.0).round(),
+            self.gravity,
+            self.orbital_period
+        )
     }
 }
-

@@ -1,11 +1,12 @@
 use itertools::Itertools;
-use leptos::prelude::*;
 use leptos::context::Provider;
+use leptos::prelude::*;
 use reactive_stores::Store;
 
+use crate::components::world_list::WorldList;
+use crate::has_satellites::HasSatellites;
+use crate::system::{OrbitContent, StarOrbit, System, SystemStoreFields};
 use crate::system_tables::get_habitable;
-use crate::worldgen::{HasSatellites, OrbitContent, StarOrbit, System, SystemStoreFields};
-use crate::components::worldtable::WorldTable;
 
 fn habitable_clause(system: &System) -> String {
     let habitable = get_habitable(&system.star);
@@ -40,10 +41,10 @@ pub fn SystemView(main_world_name: RwSignal<String>) -> impl IntoView {
     }
 }
 
-fn lead_builder<'a>(
+fn lead_builder(
     system: reactive_stores::Subfield<Store<System>, System, Option<Box<System>>>,
-    kind: &'a str,
-) -> impl 'a + Fn() -> String {
+    kind: &str,
+) -> impl '_ + Fn() -> String {
     move || {
         system.with(|subsystem| {
             if let Some(subsystem) = subsystem {
@@ -53,7 +54,7 @@ fn lead_builder<'a>(
                             " It has a {} contact star {}, which is a {} star.",
                             kind,
                             subsystem.name.clone(),
-                            subsystem.star.to_string()
+                            subsystem.star
                         )
                     }
 
@@ -62,8 +63,8 @@ fn lead_builder<'a>(
                             " It has a {} star {} in far orbit, which is a {} star{}.",
                             kind,
                             subsystem.name.clone(),
-                            subsystem.star.to_string(),
-                            habitable_clause(&subsystem)
+                            subsystem.star,
+                            habitable_clause(subsystem)
                         )
                     }
                     StarOrbit::System(orbit) => {
@@ -72,8 +73,8 @@ fn lead_builder<'a>(
                             kind,
                             subsystem.name.clone(),
                             orbit,
-                            subsystem.star.to_string(),
-                            habitable_clause(&subsystem)
+                            subsystem.star,
+                            habitable_clause(subsystem)
                         )
                     }
                 }
@@ -88,7 +89,7 @@ fn quantity_suffix(quantity: usize, singular: &str) -> String {
     if quantity == 0 {
         "".to_string()
     } else if quantity == 1 {
-        format!("1 {}",singular)
+        format!("1 {}", singular)
     } else {
         format!("{} {}s", quantity, singular)
     }
@@ -137,7 +138,7 @@ pub fn SystemPreamble() -> impl IntoView {
                             {system.read().name.clone()}
                             " has "
                             {move || {
-                                vec![
+                                [
                                     quantity_suffix(num_stars(), "star"),
                                     {
                                         if num_gas_giants() >= 2 {
@@ -168,7 +169,7 @@ pub fn SystemPreamble() -> impl IntoView {
                                     },
                                 ]
                                     .iter()
-                                    .filter(|x| x.len() > 0)
+                                    .filter(|x| !x.is_empty())
                                     .cloned()
                                     .intersperse(", ".to_string())
                                     .collect::<String>()
@@ -185,12 +186,12 @@ pub fn SystemPreamble() -> impl IntoView {
 }
 
 #[component]
-pub fn SystemMain(#[prop(default=false)] is_companion: bool) -> impl IntoView {
+pub fn SystemMain(#[prop(default = false)] is_companion: bool) -> impl IntoView {
     let system = expect_context::<Store<System>>();
 
     view! {
         <div>
-            <WorldTable is_companion=is_companion />
+            <WorldList is_companion=is_companion />
             <br />
             {move || {
                 if let Some(secondary) = system.secondary().get() {

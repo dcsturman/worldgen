@@ -1,8 +1,9 @@
 use leptos::prelude::*;
 use reactive_stores::Store;
 
-use crate::worldgen::{System, World, generate_system};
-use crate::components::systemview::SystemView;
+use crate::components::system_view::SystemView;
+use crate::system::{generate_system, System};
+use crate::world::World;
 
 const INITIAL_UPP: &str = "A788899-A";
 const INITIAL_NAME: &str = "Main World";
@@ -27,17 +28,27 @@ pub fn App() -> impl IntoView {
 }
 
 fn print() {
-    leptos::leptos_dom::helpers::window().print().unwrap_or_else(|e| log::error!("Error printing: {:?}", e));
+    leptos::leptos_dom::helpers::window()
+        .print()
+        .unwrap_or_else(|e| log::error!("Error printing: {:?}", e));
 }
 
 #[component]
-fn WorldEntryForm(main_world_name: RwSignal<String>, set_has_gen: WriteSignal<bool>) -> impl IntoView {
+fn WorldEntryForm(
+    main_world_name: RwSignal<String>,
+    set_has_gen: WriteSignal<bool>,
+) -> impl IntoView {
     let state = expect_context::<Store<System>>();
 
     let upp = RwSignal::new(INITIAL_UPP.to_string());
 
     let handle_submit = move |_e| {
-        let new_system = generate_system(World::from_upp(main_world_name.get(), &upp.get(), false, true));
+        let new_system = generate_system(World::from_upp(
+            main_world_name.get(),
+            &upp.get(),
+            false,
+            true,
+        ));
         set_has_gen.set(true);
         state.set(new_system);
     };
@@ -64,5 +75,4 @@ fn WorldEntryForm(main_world_name: RwSignal<String>, set_has_gen: WriteSignal<bo
             </div>
         </div>
     }
-
 }
