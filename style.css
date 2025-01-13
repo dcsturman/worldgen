@@ -1,0 +1,230 @@
+@import "bootstrap/scss/utilities";
+
+/* latin */
+@font-face {
+  font-family: 'Orbitron';
+  font-style: normal;
+  font-weight: 400 900;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/orbitron/v31/yMJRMIlzdpvBhQQL_Qq7dy1biN15.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Sono';
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/sono/v6/aFTO7PNiY3U2Cqf_aYEN64CYaK18YUhHma9UZrHlF80.woff2) format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Sono';
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/sono/v6/aFTO7PNiY3U2Cqf_aYEN64CYaK18YUhGma9UZrHlF80.woff2) format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Sono';
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/sono/v6/aFTO7PNiY3U2Cqf_aYEN64CYaK18YUhIma9UZrHl.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* latin */
+@font-face {
+  font-family: 'Space Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/spacemono/v14/i7dPIFZifjKcF5UAWdDRYEF8RXi4EwQ.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Space Mono';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/spacemono/v14/i7dMIFZifjKcF5UAWdDRaPpZUFqaHi6WZ3S_Yg.woff2) format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Space Mono';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/spacemono/v14/i7dMIFZifjKcF5UAWdDRaPpZUFuaHi6WZ3S_Yg.woff2) format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Space Mono';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/spacemono/v14/i7dMIFZifjKcF5UAWdDRaPpZUFWaHi6WZ3Q.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+body {
+  margin: 0;
+  font-family: "Space Mono", sans-serif;
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-size: 12pt;
+}
+h1 {
+  margin-left: 20px;
+}
+
+@media print {
+  .output-region {
+    font-size: 9pt !important;
+    overflow: visible !important;
+    border: none !important;
+  }
+  .world-table {
+    font-size: 9pt !important;
+  }
+}
+
+.world-table {
+  color: inherit;
+  text-align: left;
+  padding: 10px;
+  border-spacing: 20px 0px;
+}
+
+.App {
+  background-image: url("galaxy1.png");
+  background-size: cover;
+  background-repeat: repeat;
+  display: flex;
+  flex-direction: column;
+  background-color: black;
+  align-items: left;
+  height: 100vh;
+  width: 100vw;
+  color: white;
+  font-family: "Space Mono", sans-serif;
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.world-entry-form {
+  border: 1px solid #ccc;
+  border-radius: 5px;
+  margin: 20px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  font-family: "Space Mono", sans-serif;
+  font-weight: 400;
+ }
+
+ .entry-input {
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  width: 150px;
+  font-family: "Space Mono", sans-serif;
+  font-weight: 400;
+  font-size: 12pt;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+ }
+
+ #entry-data {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  width: 270px;
+ }
+
+ #entry-buttons {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  justify-content: right;
+  width: 270px;
+ }
+
+ .world-entry-element {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  width: 270px;
+  margin: 2px;
+  
+ }
+
+ .output-region {
+  border: 1px solid #ccc;
+  border-radius: 5px;
+  margin: 20px;
+  padding: 10px;
+  overflow: auto;
+ }
+
+ .table-entry{
+  padding-left: 1em;
+ }
+
+ .blue-button {
+  background-image: linear-gradient(#42A1EC, #0070C9);
+  border: 1px solid #0077CC;
+  border-radius: 4px;
+  box-sizing: border-box;
+  color: #FFFFFF;
+  cursor: pointer;
+  direction: ltr;
+  letter-spacing: -.022em;
+  line-height: 1.47059;
+  overflow: visible;
+  margin: 2px;
+  text-align: center;
+  vertical-align: baseline;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+  white-space: nowrap;
+  font-family: "Orbitron", sans-serif;
+  font-weight: 600;
+  font-size: 12pt;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  flex-grow: 1;
+
+}
+
+.blue-button:disabled {
+  cursor: default;
+  opacity: .3;
+}
+
+.blue-button:hover {
+  background-image: linear-gradient(#51A9EE, #147BCD);
+  border-color: #1482D0;
+  text-decoration: none;
+}
+
+.blue-button:active {
+  background-image: linear-gradient(#3D94D9, #0067B9);
+  border-color: #006DBC;
+  outline: none;
+}
+
+.blue-button:focus {
+  box-shadow: rgba(131, 192, 253, 0.5) 0 0 0 3px;
+  outline: none;
+}

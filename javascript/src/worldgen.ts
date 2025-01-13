@@ -1,3 +1,5 @@
+import { AstroData } from "./astrodata";
+
 export const FAR_ORBIT = 20;
 export const PRIMARY_ORBIT = -1;
 
@@ -97,7 +99,16 @@ enum TradeClass {
 
 export class World {
   name: string;
+  // Orbits out from the primary, if a world in orbit, or orbit around a world/gas giant
+  // if a satellite
   orbit: number = 0;
+  // Orbits out from the primary star (even if a satellite)
+  star_orbit: number = 0;
+
+  is_satellite: boolean = false;
+  is_mainworld: boolean = false;
+
+  // UPP Data
   port: PortCode = PortCode.A;
   size: number = 0;
   atmosphere: number = 0;
@@ -106,15 +117,17 @@ export class World {
   law_level: number = 0;
   government: number = 0;
   tech_level: number = 0;
-  is_satellite: boolean = false;
-  is_mainworld: boolean = false;
+
   facilities: Facility[] = [];
   satellites: World[] = [];
   trade_classes: TradeClass[] = [];
 
+  astro_data: AstroData = new AstroData();
+
   constructor(
     name: string,
     orbit: number,
+    star_orbit: number,
     size: number,
     atmosphere: number,
     hydro: number,
@@ -128,6 +141,7 @@ export class World {
     this.hydro = hydro;
     this.satellites = [];
     this.orbit = orbit;
+    this.star_orbit = star_orbit;
     this.population = population;
     this.is_satellite = is_satellite;
     this.is_mainworld = is_mainworld;
@@ -153,7 +167,7 @@ export class World {
 
     if (
       (this.is_satellite && this.size === -1) ||
-      (!this.is_mainworld && !this.is_satellite && this.size <= 0)
+      (this.size <= 0 && !this.is_mainworld && !this.is_satellite && !this.name.includes("Planetoid"))
     ) {
       size_digit = "S";
     } else if (this.is_satellite && this.size === 0) {
@@ -225,6 +239,7 @@ export class World {
     let world = new World(
       name,
       0,
+      0,
       size,
       atmosphere,
       hydro,
@@ -254,6 +269,12 @@ export class World {
 
   trade_classes_string(): string {
     return this.trade_classes.map((x) => TradeClass[x]).join(", ");
+  }
+
+  compute_astro_data(system: System) {
+    // TODO: This is not really correct as we need to take into account all stars in the system
+    this.astro_data.compute(system, this);
+    console.log(`${this.name} has astro data: ${JSON.stringify(this.astro_data)}`);
   }
 
   // Methods that have to be in common with Gas Giants for satellite generation
@@ -557,8 +578,10 @@ function genStars(
 
   let star_type = genPrimaryStarType(primary_type_roll + world_mod);
   let star_subtype = roll10();
+  
+  // EDITORIAL: Take out world mod for size of star, to shift away from size D a bit.
   let star_size = genPrimaryStarSize(
-    primary_size_roll + world_mod,
+    primary_size_roll,
     star_type,
     star_subtype
   );
@@ -777,6 +800,7 @@ function genPlanetoids(system: System, num_giants: number, main_world: World) {
     let planetoid = new World(
       "Planetoid Belt",
       orbit,
+      orbit,
       0,
       0,
       0,
@@ -821,13 +845,18 @@ function placeMainWorld(system: System, world: World) {
     let body = system.orbits[habitable];
     if (body instanceof System) {
       // If there happens to be a star in the habitable zone, place it in orbit there.
+      // Note the orbit of the main world in terms of primary first
+      // TODO: Is this correct when we have multiple stars?
+      world.star_orbit = habitable;
       placeMainWorld(body, world);
     } else if (body instanceof GasGiant) {
       world.orbit = genSatelliteOrbit(body, world.size === 0);
+      world.star_orbit = habitable;
       body.satellites.push(world);
     } else {
       // Just overwrite whatever is there in this case.
       system.orbits[habitable] = world;
+      world.star_orbit = habitable;
       world.orbit = habitable;
     }
   } else {
@@ -943,6 +972,7 @@ function genWorld(
   let world = new World(
     name,
     orbit,
+    orbit,
     size,
     atmosphere,
     hydro,
@@ -960,12 +990,12 @@ function numSatellites(system: System, primary: World | GasGiant) {
   if (primary instanceof World && primary.size <= 0) {
     return 0;
   } else if (primary instanceof World) {
-    return roll1D() - 3;
+    return Math.max(0,roll1D() - 3);
   } else if (
     primary instanceof GasGiant &&
     primary.size === GasGiantSize.Small
   ) {
-    return roll2D() - 4;
+    return Math.max(0,roll2D() - 4);
   } else {
     return roll2D();
   }
@@ -1062,7 +1092,7 @@ function genSatellite(
 
   // Size 0 is a ring so nothing else can be 0.
   if (size === 0) {
-    let ring = new World("Ring System", orbit, 0, 0, 0, 0, true, false);  
+    let ring = new World("Ring System", orbit, primary.orbit,0, 0, 0, 0, true, false);  
     ring.port = PortCode.Y;
     primary.satellites.push(ring);
     return;
@@ -1117,6 +1147,7 @@ function genSatellite(
   let satellite = new World(
     satellite_name,
     orbit,
+    primary.orbit,
     size,
     atmosphere,
     hydro,
@@ -1126,7 +1157,7 @@ function genSatellite(
   );
   genSubordinateStats(satellite, main_world);
   genSubordinateFacilities(system, satellite, orbit, main_world);
-
+  satellite.compute_astro_data(system);
   primary.satellites.push(satellite);
 }
 
@@ -1170,10 +1201,12 @@ function genSubordinateFacilities(
   }
 
   // Research Lab?
+  // EDITORIAL: reduce likelihood of pop is 0.
   if (
     main_world.population > 0 &&
     main_world.tech_level > 8 &&
-    roll2D() + (main_world.tech_level >= 10 ? 2 : 0) >= 12
+    roll2D() + (main_world.tech_level >= 10 ? 2 : 0) 
+    + (world.population === 0 ? -2: 0) >= 12
   ) {
     world.facilities.push(Facility.Lab);
     // Fix tech level if there is a lab.  Not ideal but we need to gen most of a world/satellite
@@ -1193,7 +1226,7 @@ function genSubordinateFacilities(
       : 0);
 
   let roll = roll2D();
-  if (!main_world.trade_classes.includes(TradeClass.Poor) && roll + mod >= 12) {
+  if (!main_world.trade_classes.includes(TradeClass.Poor) && (world.population > 0) && roll + mod >= 12) {
     world.facilities.push(Facility.Military);
   }
 }
@@ -1347,12 +1380,13 @@ export function generateSystem(main_world: World): System {
   let star_mod =
     (main_world.atmosphere >= 4 && main_world.atmosphere <= 9) ||
     main_world.population >= 8
-      ? 2
+      ? 4
       : 0;
   let system = genStars(star_mod, true);
   genTradeClasses(main_world);
 
   fillSystem(system, main_world, true);
+  main_world.compute_astro_data(system);
   return system;
 }
 
@@ -1370,7 +1404,9 @@ function fillSystem(system: System, main_world: World, is_primary: boolean) {
   for (let i = getZone(system).hot + 1; i <= system.max_orbits; i++) {
     if (system.orbits[i] === null) {
       let name = genPlanetName(system, i);
-      system.orbits[i] = genWorld(name, system, i, main_world);
+      let new_world = genWorld(name, system, i, main_world);
+      new_world.compute_astro_data(system);
+      system.orbits[i] = new_world;
     }
   }
 
@@ -1495,7 +1531,7 @@ function roll12(): number {
 }
 
 // ZoneTable and support for them
-function roundSubType(subtype: number): 0 | 5 {
+export function roundSubType(subtype: number): 0 | 5 {
   switch (Math.floor(subtype / 5) * 5) {
     case 0:
       return 0;
@@ -1509,6 +1545,39 @@ function roundSubType(subtype: number): 0 | 5 {
 function getZone(system: System): ZoneLimits {
   return zoneTables[system.star.size][system.star.star_type][
     roundSubType(system.star.subtype)
+  ];
+}
+
+export function getHabitable(system: System): number {
+  let habitable = getZone(system).habitable;
+  if (habitable > getZone(system).inner) {
+    return habitable;
+  } else {
+    return -1;
+  }
+}
+
+export function getCloudiness(atmosphere: number): number {
+  return cloudiness[atmosphere];
+}
+
+export function getGreenhouse(atmosphere: number): number {
+  return greenhouse[atmosphere];
+}
+
+export function getOrbitalDistance(orbit: number): number {
+  return orbitalDistance[orbit];
+}
+
+export function getSolarMass(system: System): number {
+  return massTables[system.star.star_type][roundSubType(system.star.subtype)][
+    system.star.size
+  ];
+}
+
+export function getLuminosity(system: System): number {
+  return luminosityTables[system.star.star_type][roundSubType(system.star.subtype)][
+    system.star.size
   ];
 }
 
@@ -1751,6 +1820,333 @@ const zoneTables: { [key in StarSize]: ZoneTable } = {
     [StarType.M]: {
       0: { inside: -1, hot: -1, inner: -1, habitable: -1, outer: 4 },
       5: { inside: -1, hot: -1, inner: -1, habitable: -1, outer: 4 },
+    },
+  },
+};
+
+const orbitalDistance: number[] = [
+  29.9, 59.8, 104.7, 149.6, 239.3, 418.9, 777.9, 1495.9, 2932, 5804, 11548,
+  23038, 46016, 91972, 183885, 367711, 735363, 1470666, 2941274, 5882488,
+];
+
+const cloudiness: number[] = [0, 0, 10, 10, 20, 30, 40, 50, 60, 70, 70];
+
+const greenhouse: number[] = [0, 0, 0, 0, 0.05, 0.05, 0.1, 0.1, 0.15, 0.15, 0.5, 0.5, 0.5, 0.15, 0.10, 0];
+
+const luminosityTables: {
+  [key in StarType]: { [key in 0 | 5]: { [key in StarSize]: number } };
+} = {
+    [StarType.O]: {
+        0: {
+            [StarSize.Ia]: 0,
+            [StarSize.Ib]: 0,
+            [StarSize.II]: 0,
+            [StarSize.III]: 0,
+            [StarSize.IV]: 0,
+            [StarSize.V]: 0,
+            [StarSize.VI]: 0,
+            [StarSize.D]: 0,
+        },
+        5: {
+            [StarSize.Ia]: 0,
+            [StarSize.Ib]: 0,
+            [StarSize.II]: 0,
+            [StarSize.III]: 0,
+            [StarSize.IV]: 0,
+            [StarSize.V]: 0,
+            [StarSize.VI]: 0,
+            [StarSize.D]: 0,
+        },
+    },
+    [StarType.B]: {
+        0: {
+            [StarSize.Ia]: 560_000,
+            [StarSize.Ib]: 270_000,
+            [StarSize.II]: 170_000,
+            [StarSize.III]: 107_000,
+            [StarSize.IV]: 81_000,
+            [StarSize.V]: 56_000,
+            [StarSize.VI]: 0,
+            [StarSize.D]: 0.46,
+        },
+        5: {
+            [StarSize.Ia]: 204_000,
+            [StarSize.Ib]: 46_700,
+            [StarSize.II]: 18_600,
+            [StarSize.III]: 6_700,
+            [StarSize.IV]: 2_000,
+            [StarSize.V]: 1_400,
+            [StarSize.VI]: 0,
+            [StarSize.D]: 0.46,
+        },
+    },
+    [StarType.A]: {
+        0: {
+            [StarSize.Ia]: 107_000,
+            [StarSize.Ib]: 15_000,
+            [StarSize.II]: 2_200,
+            [StarSize.III]: 280,
+            [StarSize.IV]: 156,
+            [StarSize.V]: 90,
+            [StarSize.VI]: 0,
+            [StarSize.D]: 0.005,
+        },
+        5: {
+            [StarSize.Ia]: 81_000,
+            [StarSize.Ib]: 11_700,
+            [StarSize.II]: 850,
+            [StarSize.III]: 90,
+            [StarSize.IV]: 37,
+            [StarSize.V]: 16,
+            [StarSize.VI]: 0,
+            [StarSize.D]: 0.005,
+        },
+    },
+    [StarType.F]: {
+        0: {
+            [StarSize.Ia]: 61_000,
+            [StarSize.Ib]: 7_400,
+            [StarSize.II]: 600,
+            [StarSize.III]: 53,
+            [StarSize.IV]: 19,
+            [StarSize.V]: 8.1,
+            [StarSize.VI]: 0,
+            [StarSize.D]: 0.0003,
+        },
+        5: {
+            [StarSize.Ia]: 51_000,
+            [StarSize.Ib]: 5_100,
+            [StarSize.II]: 510,
+            [StarSize.III]: 43,
+            [StarSize.IV]: 12,
+            [StarSize.V]: 3.5,
+            [StarSize.VI]: 0.977,
+            [StarSize.D]: 0.0003,
+        },
+    },
+    [StarType.G]: {
+        0: {
+            [StarSize.Ia]: 67_000,
+            [StarSize.Ib]: 6_100,
+            [StarSize.II]: 560,
+            [StarSize.III]: 50,
+            [StarSize.IV]: 6.5,
+            [StarSize.V]: 1.21,
+            [StarSize.VI]: 0.322,
+            [StarSize.D]: 0.00006,
+        },
+        5: {
+            [StarSize.Ia]: 89_000,
+            [StarSize.Ib]: 8_100,
+            [StarSize.II]: 740,
+            [StarSize.III]: 75,
+            [StarSize.IV]: 4.9,
+            [StarSize.V]: 0.67,
+            [StarSize.VI]: 0.186,
+            [StarSize.D]: 0.00006,
+        },
+    },
+    [StarType.K]: {
+        0: {
+            [StarSize.Ia]: 97_000,
+            [StarSize.Ib]: 11_700,
+            [StarSize.II]: 890,
+            [StarSize.III]: 95,
+            [StarSize.IV]: 4.67,
+            [StarSize.V]: 0.42,
+            [StarSize.VI]: 0.117,
+            [StarSize.D]: 0.00004,
+        },
+        5: {
+            [StarSize.Ia]: 107_000,
+            [StarSize.Ib]: 20_400,
+            [StarSize.II]: 2_450,
+            [StarSize.III]: 320,
+            [StarSize.IV]: 0,
+            [StarSize.V]: 0.08,
+            [StarSize.VI]: 0.025,
+            [StarSize.D]: 0.00004,
+        },
+    },
+    [StarType.M]: {
+        0: {
+            [StarSize.Ia]: 117_000,
+            [StarSize.Ib]: 46_000,
+            [StarSize.II]: 4_600,
+            [StarSize.III]: 470,
+            [StarSize.IV]: 0,
+            [StarSize.V]: 0.04,
+            [StarSize.VI]: 0.011,
+            [StarSize.D]: 0.00003,
+        },
+        5: {
+            [StarSize.Ia]: 129_000,
+            [StarSize.Ib]: 89_000,
+            [StarSize.II]: 14_900,
+            [StarSize.III]: 2_280,
+            [StarSize.IV]: 0,
+            [StarSize.V]: 0.007,
+            [StarSize.VI]: 0.002,
+            [StarSize.D]: 0.00003,
+        },
+    },
+};
+
+const massTables: {
+  [key in StarType]: { [key in 0 | 5]: { [key in StarSize]: number } };
+} = {
+  [StarType.O]: {
+    0: {
+      [StarSize.Ia]: 0,
+      [StarSize.Ib]: 0,
+      [StarSize.II]: 0,
+      [StarSize.III]: 0,
+      [StarSize.IV]: 0,
+      [StarSize.V]: 0,
+      [StarSize.VI]: 0,
+      [StarSize.D]: 0,
+    },
+    5: {
+      [StarSize.Ia]: 0,
+      [StarSize.Ib]: 0,
+      [StarSize.II]: 0,
+      [StarSize.III]: 0,
+      [StarSize.IV]: 0,
+      [StarSize.V]: 0,
+      [StarSize.VI]: 0,
+      [StarSize.D]: 0,
+    },
+  },
+  [StarType.B]: {
+    0: {
+      [StarSize.Ia]: 60,
+      [StarSize.Ib]: 50,
+      [StarSize.II]: 30,
+      [StarSize.III]: 25,
+      [StarSize.IV]: 20,
+      [StarSize.V]: 18,
+      [StarSize.VI]: 0,
+      [StarSize.D]: 0.26,
+    },
+    5: {
+      [StarSize.Ia]: 30,
+      [StarSize.Ib]: 25,
+      [StarSize.II]: 20,
+      [StarSize.III]: 15,
+      [StarSize.IV]: 10,
+      [StarSize.V]: 6.5,
+      [StarSize.VI]: 0,
+      [StarSize.D]: 0.26,
+    },
+  },
+  [StarType.A]: {
+    0: {
+      [StarSize.Ia]: 18,
+      [StarSize.Ib]: 16,
+      [StarSize.II]: 14,
+      [StarSize.III]: 12,
+      [StarSize.IV]: 6,
+      [StarSize.V]: 3.2,
+      [StarSize.VI]: 0,
+      [StarSize.D]: 0.36,
+    },
+    5: {
+      [StarSize.Ia]: 15,
+      [StarSize.Ib]: 13,
+      [StarSize.II]: 11,
+      [StarSize.III]: 9,
+      [StarSize.IV]: 4,
+      [StarSize.V]: 2.1,
+      [StarSize.VI]: 0,
+      [StarSize.D]: 0.36,
+    },
+  },
+  [StarType.F]: {
+    0: {
+      [StarSize.Ia]: 13,
+      [StarSize.Ib]: 12,
+      [StarSize.II]: 10,
+      [StarSize.III]: 8,
+      [StarSize.IV]: 2.5,
+      [StarSize.V]: 1.7,
+      [StarSize.VI]: 0,
+      [StarSize.D]: 0.42,
+    },
+    5: {
+      [StarSize.Ia]: 12,
+      [StarSize.Ib]: 10,
+      [StarSize.II]: 8.1,
+      [StarSize.III]: 5,
+      [StarSize.IV]: 2,
+      [StarSize.V]: 1.3,
+      [StarSize.VI]: 0.8,
+      [StarSize.D]: 0.42,
+    },
+  },
+  [StarType.G]: {
+    0: {
+      [StarSize.Ia]: 12,
+      [StarSize.Ib]: 10,
+      [StarSize.II]: 8.1,
+      [StarSize.III]: 2.5,
+      [StarSize.IV]: 1.75,
+      [StarSize.V]: 1.04,
+      [StarSize.VI]: 0.6,
+      [StarSize.D]: 0.63,
+    },
+    5: {
+      [StarSize.Ia]: 13,
+      [StarSize.Ib]: 12,
+      [StarSize.II]: 10,
+      [StarSize.III]: 3.2,
+      [StarSize.IV]: 2,
+      [StarSize.V]: 0.94,
+      [StarSize.VI]: 0.528,
+      [StarSize.D]: 0.63,
+    },
+  },
+  [StarType.K]: {
+    0: {
+      [StarSize.Ia]: 14,
+      [StarSize.Ib]: 13,
+      [StarSize.II]: 11,
+      [StarSize.III]: 4,
+      [StarSize.IV]: 2.3,
+      [StarSize.V]: 0.825,
+      [StarSize.VI]: 0.43,
+      [StarSize.D]: 0.83,
+    },
+    5: {
+      [StarSize.Ia]: 18,
+      [StarSize.Ib]: 16,
+      [StarSize.II]: 14,
+      [StarSize.III]: 5,
+      [StarSize.IV]: 0,
+      [StarSize.V]: 0.57,
+      [StarSize.VI]: 0.33,
+      [StarSize.D]: 0.83,
+    },
+  },
+  [StarType.M]: {
+    0: {
+      [StarSize.Ia]: 20,
+      [StarSize.Ib]: 16,
+      [StarSize.II]: 14,
+      [StarSize.III]: 6.3,
+      [StarSize.IV]: 0,
+      [StarSize.V]: 0.489,
+      [StarSize.VI]: 0.154,
+      [StarSize.D]: 1.11,
+    },
+    5: {
+      [StarSize.Ia]: 25,
+      [StarSize.Ib]: 20,
+      [StarSize.II]: 16,
+      [StarSize.III]: 7.4,
+      [StarSize.IV]: 0,
+      [StarSize.V]: 0.331,
+      [StarSize.VI]: 0.104,
+      [StarSize.D]: 1.11,
     },
   },
 };

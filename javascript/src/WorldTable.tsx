@@ -17,6 +17,7 @@ const WorldTable: React.FunctionComponent<WorldTableProps> = ({ primary, worlds 
         <th>Name</th>
         <th>UPP</th>
         <th>Remarks</th>
+        <th>Astro Data</th>
       </tr>
     </thead>
     <tbody>
@@ -61,10 +62,10 @@ const WorldView: React.FunctionComponent<WorldViewProps> = ({
 }) => {
   if (!SHOW_EMPTY && world instanceof Empty) {
     return <></>;
-  }
+  } 
 
-  return <>
-    <tr>
+return <>
+    <tr key={"world-view-" + world.orbit}>
       {satellite && <td></td>}
       <td>{world.orbit}</td>
       {!satellite && <td></td>}
@@ -74,6 +75,7 @@ const WorldView: React.FunctionComponent<WorldViewProps> = ({
        world instanceof GasGiant && world.size === GasGiantSize.Large ? "Large GG" :
        ""}</td>
       <td>{world instanceof World ? [world.facilities_string(),world.trade_classes_string()].filter((s) => s.length > 0).join("; ") : ""}</td>
+      <td>{world instanceof World && world.astro_data !== undefined ? world.astro_data.describe(world) : ""}</td>
     </tr>
     {!(world instanceof Empty) && world.satellites.length > 0 &&
       world.satellites.map((satellite: World | GasGiant, index: number) => (

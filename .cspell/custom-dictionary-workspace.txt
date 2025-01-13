@@ -1,0 +1,5 @@
+# Custom Dictionary Words
+astrodata
+Sono
+unkeyed
+worldtable

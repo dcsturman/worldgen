@@ -1,0 +1,22 @@
+{
+    "cSpell.words": [
+        "Icecapped",
+        "leptos",
+        "mainworld",
+        "systemview",
+        "worldgen"
+    ],
+    "rust-analyzer.rustfmt.overrideCommand": [
+        "leptosfmt",
+        "--stdin",
+        "--rustfmt"
+    ],
+    "cSpell.customDictionaries": {
+        "custom-dictionary-workspace": {
+            "name": "custom-dictionary-workspace",
+            "path": "${workspaceFolder:worldGen}/.cspell/custom-dictionary-workspace.txt",
+            "addWords": true,
+            "scope": "workspace"
+        }
+    }
+}
