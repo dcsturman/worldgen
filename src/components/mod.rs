@@ -1,3 +1,3 @@
 pub mod app;
-pub mod systemview;
-pub mod worldtable;
+pub mod system_view;
+pub mod world_list;

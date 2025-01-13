@@ -1,14 +1,13 @@
+use itertools::Itertools;
 use leptos::prelude::*;
 use reactive_stores::{Field, OptionStoreExt, Store, StoreFieldIterator};
-use itertools::Itertools;
 
-use crate::worldgen::{
-    GasGiant, GasGiantStoreFields, OrbitContent, OrbitContentStoreFields, Satellites,
-    SatellitesStoreFields, StarOrbit, System, SystemStoreFields, World, WorldStoreFields,
-};
+use crate::gas_giant::{GasGiant, GasGiantStoreFields};
+use crate::system::{OrbitContent, OrbitContentStoreFields, StarOrbit, System, SystemStoreFields};
+use crate::world::{Satellites, SatellitesStoreFields, World, WorldStoreFields};
 
 #[component]
-pub fn WorldTable(#[prop(default=false)] is_companion: bool) -> impl IntoView {
+pub fn WorldList(#[prop(default = false)] is_companion: bool) -> impl IntoView {
     let primary = expect_context::<Store<System>>();
 
     view! {
@@ -107,7 +106,10 @@ pub fn WorldTable(#[prop(default=false)] is_companion: bool) -> impl IntoView {
 }
 
 #[component]
-pub fn StarRow(#[prop(into)] system: Field<System>, #[prop(default=false)] is_companion: bool) -> impl IntoView {
+pub fn StarRow(
+    #[prop(into)] system: Field<System>,
+    #[prop(default = false)] is_companion: bool,
+) -> impl IntoView {
     view! {
         <tr>
             <td class="table-entry">
@@ -145,9 +147,9 @@ pub fn WorldView(#[prop(into)] world: Field<World>, satellite: bool) -> impl Int
                     {move || {
                         world
                             .with(|world| {
-                                vec![world.facilities_string(), world.trade_classes_string()]
+                                [world.facilities_string(), world.trade_classes_string()]
                                     .iter()
-                                    .filter(|s| s.len() > 0)
+                                    .filter(|s| !s.is_empty())
                                     .cloned()
                                     .intersperse("; ".to_string())
                                     .collect::<String>()
