@@ -27,7 +27,7 @@ pub struct World {
     facilities: Vec<Facility>,
     pub satellites: Satellites,
     trade_classes: Vec<TradeClass>,
-    pub astro_data: AstroData,
+    astro_data: AstroData,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -383,6 +383,11 @@ impl World {
         let astro = AstroData::compute(star, self);
         self.astro_data = astro;
     }
+
+    pub fn get_astro_description(&self) -> String {
+        self.astro_data.describe(self)
+    }
+    
 }
 
 impl Display for World {
@@ -460,7 +465,7 @@ impl HasSatellites for World {
         }
     }
 
-    fn gen_satellite(&mut self, system_zones: &ZoneTable, main_world: &World) {
+    fn gen_satellite(&mut self, system_zones: &ZoneTable, main_world: &World, star: &Star) {
         // Anything less than 0 is size S; make them all -1 to keep it
         // straightforward.
         let size = (self.size - roll_1d6()).max(-1);
@@ -553,6 +558,7 @@ impl HasSatellites for World {
         satellite.gen_subordinate_stats(main_world);
         satellite.gen_trade_classes();
         satellite.gen_subordinate_facilities(system_zones, orbit, main_world);
+        satellite.compute_astro_data(star);
         self.satellites.sats.push(satellite);
     }
 }
@@ -591,9 +597,9 @@ impl Display for PortCode {
 impl Display for Facility {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Facility::Naval => write!(f, "Naval Base"),
-            Facility::Military => write!(f, "Military Base"),
-            Facility::Scout => write!(f, "Scout Base"),
+            Facility::Naval => write!(f, "Naval"),
+            Facility::Military => write!(f, "Military"),
+            Facility::Scout => write!(f, "Scout"),
             Facility::Farming => write!(f, "Farming"),
             Facility::Mining => write!(f, "Mining"),
             Facility::Colony => write!(f, "Colony"),

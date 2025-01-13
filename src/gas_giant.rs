@@ -3,6 +3,7 @@ use reactive_stores::Store;
 
 use crate::has_satellites::HasSatellites;
 use crate::name_tables::{gen_moon_name, gen_planet_name};
+use crate::system::Star;
 use crate::system_tables::ZoneTable;
 use crate::util::{arabic_to_roman, roll_1d6, roll_2d6};
 use crate::world::{PortCode, Satellites, World};
@@ -99,7 +100,7 @@ impl HasSatellites for GasGiant {
         }
     }
 
-    fn gen_satellite(&mut self, system_zones: &ZoneTable, main_world: &World) {
+    fn gen_satellite(&mut self, system_zones: &ZoneTable, main_world: &World, star: &Star) {
         // Anything less than 0 is size S; make them all -1 to keep it
         // straightforward
         let size = (match self.size {
@@ -197,6 +198,7 @@ impl HasSatellites for GasGiant {
         satellite.gen_subordinate_stats(main_world);
         satellite.gen_trade_classes();
         satellite.gen_subordinate_facilities(system_zones, self.orbit, main_world);
+        satellite.compute_astro_data(star);
         self.satellites.sats.push(satellite);
     }
 }

@@ -958,14 +958,14 @@ fn fill_system(system: &mut System, main_world: World, is_primary: bool) {
             Some(OrbitContent::World(world)) => {
                 let num_satellites = world.determine_num_satellites();
                 for _ in 0..num_satellites {
-                    world.gen_satellite(&zone_table, &main_world_copy);
+                    world.gen_satellite(&zone_table, &main_world_copy, &system.star);
                 }
                 world.clean_satellites();
             }
             Some(OrbitContent::GasGiant(gas_giant)) => {
                 let num_satellites = gas_giant.determine_num_satellites();
                 for _ in 0..num_satellites {
-                    gas_giant.gen_satellite(&system_zones, &main_world_copy);
+                    gas_giant.gen_satellite(&system_zones, &main_world_copy, &system.star);
                 }
                 gas_giant.clean_satellites();
                 gas_giant.gen_name(&system.name, i);

@@ -32,10 +32,10 @@ pub fn WorldList(#[prop(default = false)] is_companion: bool) -> impl IntoView {
                             view! { <StarRow system=companion is_companion=true /> }
                                 .into_any()
                         } else {
-                            view! { <></> }.into_any()
+                            ().into_any()
                         }
                     } else {
-                        view! { <></> }.into_any()
+                        ().into_any()
                     }
                 }).collect::<Vec<_>>().into_view()}
                 {move || {
@@ -80,7 +80,7 @@ pub fn WorldList(#[prop(default = false)] is_companion: bool) -> impl IntoView {
                                         view! { <StarRow system=tertiary is_companion=false /> }
                                             .into_any()
                                     }
-                                    _ => view! { <></> }.into_any(),
+                                    _ => ().into_any(),
                                 })
                         })
                         .collect::<Vec<_>>()
@@ -94,10 +94,10 @@ pub fn WorldList(#[prop(default = false)] is_companion: bool) -> impl IntoView {
                             view! { <StarRow system=companion is_companion=false /> }
                                 .into_any()
                         } else {
-                            view! { <></> }.into_any()
+                            ().into_any()
                         }
                     } else {
-                        view! { <></> }.into_any()
+                        ().into_any()
                     }
                 }).collect::<Vec<_>>().into_view()}
             </tbody>
@@ -138,9 +138,9 @@ pub fn WorldView(#[prop(into)] world: Field<World>, satellite: bool) -> impl Int
         view! {
             <tr>
                 // Add an indent for satellite orbit number
-                <Show when=move || satellite>{move || view! { <td></td> }}</Show>
+                <Show when=move || satellite>{move || view! { <td /> }}</Show>
                 <td class="table-entry">{move || world.read().orbit.to_string()}</td>
-                <Show when=move || !satellite>{move || view! { <td></td> }}</Show>
+                <Show when=move || !satellite>{move || view! { <td /> }}</Show>
                 <td class="table-entry">{move || world.read().name.clone()}</td>
                 <td class="table-entry">{move || world.with(|world| world.to_upp())}</td>
                 <td class="table-entry">
@@ -157,7 +157,7 @@ pub fn WorldView(#[prop(into)] world: Field<World>, satellite: bool) -> impl Int
                     }}
                 </td>
                 <td class="table-entry">
-                    {move || world.with(|world| world.astro_data.describe(world))}
+                    {move || world.with(|world| world.get_astro_description())}
                 </td>
             </tr>
             <SatelliteView satellites=world.satellites() />

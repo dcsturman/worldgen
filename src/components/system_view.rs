@@ -204,7 +204,7 @@ pub fn SystemMain(#[prop(default = false)] is_companion: bool) -> impl IntoView 
                         <br />
                     }.into_any()
                 } else {
-                    view! { <></> }.into_any()
+                    ().into_any()
                 }
             }}
             {move || {
@@ -218,7 +218,7 @@ pub fn SystemMain(#[prop(default = false)] is_companion: bool) -> impl IntoView 
                         <br />
                     }.into_any()
                 } else {
-                    view! { <></> }.into_any()
+                    ().into_any()
                 }
             }}
         </div>
