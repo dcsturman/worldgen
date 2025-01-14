@@ -2,7 +2,7 @@ use leptos::prelude::*;
 use reactive_stores::Store;
 
 use crate::components::system_view::SystemView;
-use crate::system::{generate_system, System};
+use crate::system::System;
 use crate::world::World;
 
 const INITIAL_UPP: &str = "A788899-A";
@@ -43,7 +43,7 @@ fn WorldEntryForm(
     let upp = RwSignal::new(INITIAL_UPP.to_string());
 
     let handle_submit = move |_e| {
-        let new_system = generate_system(World::from_upp(
+        let new_system = System::generate_system(World::from_upp(
             main_world_name.get(),
             &upp.get(),
             false,

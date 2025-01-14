@@ -1,6 +1,6 @@
+use crate::system::Star;
 use crate::system_tables::ZoneTable;
 use crate::world::{Satellites, World};
-use crate::system::Star;
 
 pub trait HasSatellites {
     fn get_num_satellites(&self) -> usize;

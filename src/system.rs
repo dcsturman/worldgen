@@ -154,6 +154,406 @@ impl System {
         }
         self.orbit_slots[orbit] = Some(content);
     }
+
+    pub fn generate_system(mut main_world: World) -> System {
+        let star_mod = if (main_world.atmosphere >= 4 && main_world.atmosphere <= 9)
+            || main_world.get_population() >= 8
+        {
+            4
+        } else {
+            0
+        };
+        let mut system = gen_stars(star_mod, true);
+        main_world.gen_trade_classes();
+        system.fill_system(main_world, true);
+        system
+    }
+
+    fn generate_companion(
+        primary_type_roll: i32,
+        primary_size_roll: i32,
+        orbit: StarOrbit,
+    ) -> System {
+        let companion_type_roll = roll_2d6() + primary_type_roll;
+        let companion_size_roll = roll_2d6() + primary_size_roll;
+        let mut companion: System = System::new(
+            gen_companion_star_type(companion_type_roll),
+            roll_10() as StarSubType,
+            gen_companion_star_size(companion_size_roll),
+            orbit,
+            0,
+        );
+        companion.set_max_orbits(gen_max_orbits(&companion.star));
+
+        if companion.orbit == StarOrbit::Far {
+            // If secondary is Far then it can have companions.
+            if gen_num_stars() > 1 {
+                // -4 to this as we're a secondary of a secondary.
+                let orbit = gen_companion_orbit(roll_2d6() - 4);
+                let mut secondary: Box<System> = Box::new(System::generate_companion(
+                    companion_type_roll,
+                    companion_size_roll,
+                    orbit,
+                ));
+
+                // If the secondary of the secondary is also in a FAR orbit, then it can have a full range of
+                // orbits itself.  Otherwise it is halved.
+                if orbit == StarOrbit::Far {
+                    secondary.set_max_orbits(gen_max_orbits(&secondary.star));
+                } else {
+                    secondary.set_max_orbits(gen_max_orbits(&secondary.star) / 2);
+                }
+
+                companion.secondary = Some(secondary);
+                if let StarOrbit::System(orbit) = orbit {
+                    companion.set_orbit_slot(orbit, OrbitContent::Secondary);
+                }
+            }
+        }
+        companion
+    }
+
+    fn gen_planetoids(&mut self, num_giants: i32, main_world: &World) {
+        if roll_2d6() >= 7 {
+            // No planetoids in system
+            return;
+        }
+        let mut num_planetoids = match roll_2d6() - num_giants {
+            1..=3 => 3,
+            4..=6 => 2,
+            _ => 1,
+        };
+        let mut viable_giants: Vec<usize> = self
+            .orbit_slots
+            .iter()
+            .enumerate()
+            .filter_map(|(index, body)| {
+                if matches!(body, Some(OrbitContent::GasGiant(_))) {
+                    Some(index)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let mut viable_other_orbits: Vec<usize> = self
+            .orbit_slots
+            .iter()
+            .enumerate()
+            .filter_map(
+                |(index, body)| {
+                    if body.is_none() {
+                        Some(index)
+                    } else {
+                        None
+                    }
+                },
+            )
+            .collect();
+
+        while viable_giants.len() + viable_other_orbits.len() > 0 && num_planetoids > 0 {
+            let orbit = if !viable_giants.is_empty() {
+                let pos = rand::thread_rng().gen_range(0..viable_giants.len());
+                viable_giants.remove(pos);
+                pos
+            } else {
+                let pos = rand::thread_rng().gen_range(0..viable_other_orbits.len());
+                viable_other_orbits.remove(pos);
+                pos
+            };
+
+            let population = (roll_2d6() - 2
+                + if orbit as i32 <= get_zone(&self.star).inner {
+                    -5
+                } else {
+                    0
+                }
+                + if orbit as i32 > get_zone(&self.star).habitable {
+                    -5
+                } else {
+                    0
+                })
+            .clamp(0, main_world.get_population() - 1);
+
+            let mut planetoid = World::new(
+                "Planetoid Belt".to_string(),
+                orbit,
+                orbit,
+                0,
+                0,
+                0,
+                population,
+                false,
+                false,
+            );
+
+            planetoid.gen_subordinate_stats(main_world);
+            planetoid.gen_trade_classes();
+            planetoid.gen_subordinate_facilities(&get_zone(&self.star), orbit, main_world);
+            planetoid.compute_astro_data(&self.star);
+            self.set_orbit_slot(orbit, OrbitContent::World(planetoid));
+            num_planetoids -= 1;
+        }
+    }
+
+    fn gen_gas_giants(&mut self) -> i32 {
+        if roll_2d6() >= 10 {
+            // No gas giant in system
+            return 0;
+        }
+
+        let mut num_giants = match roll_2d6() {
+            1..=3 => 1,
+            4..=5 => 2,
+            6..=7 => 3,
+            8..=10 => 4,
+            _ => 5,
+        };
+
+        leptos::logging::log!("For system {}, place {} gas giants, open orbits = {}", self.name, num_giants, count_open_orbits(self));
+        num_giants = num_giants.min(count_open_orbits(self));
+        let original_num_giants = num_giants;
+
+        let habitable = get_zone(&self.star).habitable;
+
+        let mut viable_outer_orbits: Vec<usize> = self
+            .orbit_slots
+            .iter()
+            .enumerate()
+            .filter_map(|(index, body)| {
+                if body.is_none() {
+                    if index as i32 > habitable {
+                        Some(index)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let mut viable_inner_orbits: Vec<usize> = self
+            .orbit_slots
+            .iter()
+            .enumerate()
+            .filter_map(|(index, body)| {
+                if body.is_none() {
+                    if index as i32 <= habitable {
+                        Some(index)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        leptos::logging::log!("For system {}, viable outer = {}, viable inner = {}", self.name, viable_outer_orbits.len(), viable_inner_orbits.len());
+
+        while viable_outer_orbits.len() + viable_inner_orbits.len() > 0 && num_giants > 0 {
+            let orbit = if !viable_outer_orbits.is_empty() {
+                let pos = rand::thread_rng().gen_range(0..viable_outer_orbits.len());
+                let orbit = viable_outer_orbits.remove(pos);
+                leptos::logging::log!("For {}, place in outer orbit {}", self.name, orbit);
+                orbit
+            } else {
+                let pos = rand::thread_rng().gen_range(0..viable_inner_orbits.len());
+                let orbit = viable_inner_orbits.remove(pos);
+                leptos::logging::log!("For {}, place in inner orbit {}", self.name, orbit);
+                orbit
+            };
+
+            if roll_1d6() <= 3 {
+                self.set_orbit_slot(
+                    orbit,
+                    OrbitContent::GasGiant(GasGiant::new(GasGiantSize::Small, orbit)),
+                );
+            } else {
+                self.set_orbit_slot(
+                    orbit,
+                    OrbitContent::GasGiant(GasGiant::new(GasGiantSize::Large, orbit)),
+                );
+            }
+            num_giants -= 1;
+        }
+
+        if num_giants > 0 {
+            error!(
+                "Not enough orbits for gas giants. Need {} in system {:?}",
+                original_num_giants, self
+            );
+        }
+        original_num_giants - num_giants
+    }
+
+    fn fill_system(&mut self, main_world: World, is_primary: bool) {
+        // First block appropriate orbits (just to have some number of empty orbits)
+        self.gen_blocked_orbits();
+
+        let main_world_copy = main_world.clone();
+        let system_zones = get_zone(&self.star);
+        let num_gas_giants = self.gen_gas_giants();
+
+        // Next generate planetoids
+        self.gen_planetoids(num_gas_giants, &main_world_copy);
+
+        if is_primary {
+            self.place_main_world(main_world);
+        }
+
+        for i in 0..=get_zone(&self.star).hot {
+            self.set_orbit_slot(i as usize, OrbitContent::Blocked);
+        }
+
+        for i in (get_zone(&self.star).hot + 1)..self.get_max_orbits() as i32 {
+            let i = i as usize;
+            if self.is_slot_empty(i) {
+                let mut new_world = World::generate(&self.star, i, &main_world_copy);
+                new_world.gen_name(&self.name, i);
+                new_world.compute_astro_data(&self.star);
+                self.set_orbit_slot(i, OrbitContent::World(new_world));
+            }
+        }
+
+        let zone_table = get_zone(&self.star);
+        for i in 0..self.get_max_orbits() {
+            match &mut self.orbit_slots[i] {
+                Some(OrbitContent::World(world)) => {
+                    let num_satellites = world.determine_num_satellites();
+                    for _ in 0..num_satellites {
+                        world.gen_satellite(&zone_table, &main_world_copy, &self.star);
+                    }
+                    world.clean_satellites();
+                }
+                Some(OrbitContent::GasGiant(gas_giant)) => {
+                    let num_satellites = gas_giant.determine_num_satellites();
+                    for _ in 0..num_satellites {
+                        gas_giant.gen_satellite(&system_zones, &main_world_copy, &self.star);
+                    }
+                    gas_giant.clean_satellites();
+                    gas_giant.gen_name(&self.name, i);
+                }
+                _ => continue,
+            }
+        }
+
+        if let Some(secondary) = &mut self.secondary {
+            if secondary.orbit != StarOrbit::Primary {
+                secondary.fill_system(main_world_copy.clone(), false);
+            }
+        }
+
+        if let Some(tertiary) = &mut self.tertiary {
+            if tertiary.orbit != StarOrbit::Primary {
+                tertiary.fill_system(main_world_copy, false);
+            }
+        }
+    }
+
+    fn place_main_world(&mut self, mut main_world: World) {
+        let requires_habitable =
+            main_world.atmosphere > 1 && main_world.atmosphere < 10 && main_world.size > 0;
+        let mut habitable = get_zone(&self.star).habitable;
+        if (habitable <= 0 || habitable == get_zone(&self.star).inner) && requires_habitable {
+            warn!("No habitable zone for main world for system: {:?}. Habitable = {}. Inner = {}. Using orbit 0.", self, habitable, get_zone(&self.star).inner);
+            habitable = get_zone(&self.star).inner.max(0);
+        }
+
+        debug!(
+            "(place_main_world) habitable = {}, max_orbits = {}, requires_habitable = {}, star = {}",
+            habitable,
+            self.get_max_orbits(),
+            requires_habitable,
+            self.star
+        );
+
+        // Place the main world. After placing be sure and generate the astro data (cannot do it until its placed!)
+        if requires_habitable {
+            // Just place in the habitable
+            match &mut self
+                .orbit_slots
+                .get_mut(habitable as usize)
+                .unwrap_or(&mut None)
+            {
+                Some(OrbitContent::Secondary) => {
+                    // If there happens to be a star in the habitable zone, place it in orbit there.
+                    // Note the orbit of the main world in terms of primary first
+                    // TODO: Is this correct when we have multiple stars?
+                    main_world.position_in_system = habitable as usize;
+                    // Safe to unwrap as if the orbital position is secondary but there is no secondary, thats bug.
+                    self.secondary
+                        .as_mut()
+                        .unwrap()
+                        .place_main_world(main_world);
+                }
+                Some(OrbitContent::Tertiary) => {
+                    // If there happens to be a star in the habitable zone, place it in orbit there.
+                    // Note the orbit of the main world in terms of primary first
+                    // TODO: Is this correct when we have multiple stars?
+                    main_world.position_in_system = habitable as usize;
+                    // Safe to unwrap as if the orbital position is tertiary but there is no tertiary, thats bug.
+                    self.tertiary.as_mut().unwrap().place_main_world(main_world);
+                }
+                Some(OrbitContent::GasGiant(gas_giant)) => {
+                    let orbit = gas_giant.gen_satellite_orbit(main_world.size == 0);
+                    main_world.orbit = orbit;
+                    main_world.position_in_system = habitable as usize;
+                    main_world.compute_astro_data(&self.star);
+                    gas_giant.push_satellite(main_world);
+                }
+                Some(OrbitContent::Blocked) => {
+                    main_world.position_in_system = habitable as usize;
+                    main_world.orbit = habitable as usize;
+                    main_world.compute_astro_data(&self.star);
+                    self.set_orbit_slot(habitable as usize, OrbitContent::World(main_world));
+                }
+                Some(OrbitContent::World(_)) | None => {
+                    main_world.position_in_system = habitable as usize;
+                    main_world.orbit = habitable as usize;
+                    main_world.compute_astro_data(&self.star);
+                    self.set_orbit_slot(habitable as usize, OrbitContent::World(main_world));
+                }
+            }
+        } else {
+            let empty_orbits = self.get_unused_orbits();
+            if !empty_orbits.is_empty() {
+                let orbit = empty_orbits[rand::thread_rng().gen_range(0..empty_orbits.len())];
+                main_world.position_in_system = orbit;
+                main_world.orbit = orbit;
+                main_world.compute_astro_data(&self.star);
+                self.set_orbit_slot(orbit, OrbitContent::World(main_world));
+            } else {
+                // Just jam the world in somewhere.
+                let pos = rand::thread_rng().gen_range(0..self.get_max_orbits());
+                main_world.orbit = pos;
+                main_world.position_in_system = pos;
+                self.set_orbit_slot(pos, OrbitContent::World(main_world));
+            };
+        }
+    }
+
+    fn gen_blocked_orbits(&mut self) {
+        if roll_1d6() < 5 {
+            // No Empty orbits
+            return;
+        }
+        let roll = roll_1d6();
+        let num_empty = match roll {
+            1..=2 => 1,
+            3 => 2,
+            _ => 3,
+        };
+
+        let valid_orbits = self.get_unused_orbits();
+
+        for _ in 0..num_empty {
+            if let Some(pos) = valid_orbits.choose(&mut rand::thread_rng()) {
+                self.set_orbit_slot(*pos, OrbitContent::Blocked);
+            }
+        }
+    }
 }
 
 impl Default for System {
@@ -244,11 +644,7 @@ impl Display for System {
                 Some(OrbitContent::Tertiary) => {
                     if let Some(tertiary) = &self.tertiary {
                         if let StarOrbit::System(orbit) = tertiary.orbit {
-                            writeln!(
-                                f,
-                                "{:<7}{:<24}{:<12}",
-                                orbit, tertiary.name, tertiary.star
-                            )?;
+                            writeln!(f, "{:<7}{:<24}{:<12}", orbit, tertiary.name, tertiary.star)?;
                         }
                     }
                 }
@@ -324,7 +720,8 @@ fn gen_primary_star_type(roll: i32) -> StarType {
         3..=7 => StarType::M,
         8 => StarType::K,
         9 => StarType::G,
-        _ => StarType::F,
+        10..=11 => StarType::F,
+        _ =>  StarType::G,
     }
 }
 
@@ -413,78 +810,12 @@ fn gen_max_orbits(star: &Star) -> usize {
     }
 }
 
-fn gen_companion_system(
-    primary_type_roll: i32,
-    primary_size_roll: i32,
-    orbit: StarOrbit,
-) -> System {
-    let companion_type_roll = roll_2d6() + primary_type_roll;
-    let companion_size_roll = roll_2d6() + primary_size_roll;
-    let mut companion: System = System::new(
-        gen_companion_star_type(companion_type_roll),
-        roll_10() as StarSubType,
-        gen_companion_star_size(companion_size_roll),
-        orbit,
-        0,
-    );
-    companion.set_max_orbits(gen_max_orbits(&companion.star));
-
-    if companion.orbit == StarOrbit::Far {
-        // If secondary is Far then it can have companions.
-        if gen_num_stars() > 1 {
-            // -4 to this as we're a secondary of a secondary.
-            let orbit = gen_companion_orbit(roll_2d6() - 4);
-            let mut secondary: Box<System> = Box::new(gen_companion_system(
-                companion_type_roll,
-                companion_size_roll,
-                orbit,
-            ));
-
-            // If the secondary of the secondary is also in a FAR orbit, then it can have a full range of
-            // orbits itself.  Otherwise it is halved.
-            if orbit == StarOrbit::Far {
-                secondary.set_max_orbits(gen_max_orbits(&secondary.star));
-            } else {
-                secondary.set_max_orbits(gen_max_orbits(&secondary.star) / 2);
-            }
-
-            companion.secondary = Some(secondary);
-            if let StarOrbit::System(orbit) = orbit {
-                companion.set_orbit_slot(orbit, OrbitContent::Secondary);
-            }
-        }
-    }
-
-    companion
-}
-
 fn empty_orbits_near_companion(system: &mut System, orbit: usize) {
     for i in (orbit / 2 + 1)..orbit {
         system.set_orbit_slot(i, OrbitContent::Blocked);
     }
     system.set_orbit_slot(orbit + 1, OrbitContent::Blocked);
     system.set_orbit_slot(orbit + 2, OrbitContent::Blocked);
-}
-
-fn gen_blocked_orbits(system: &mut System) {
-    if roll_1d6() < 5 {
-        // No Empty orbits
-        return;
-    }
-    let roll = roll_1d6();
-    let num_empty = match roll {
-        1..=2 => 1,
-        3 => 2,
-        _ => 3,
-    };
-
-    let valid_orbits = system.get_unused_orbits();
-
-    for _ in 0..num_empty {
-        if let Some(pos) = valid_orbits.choose(&mut rand::thread_rng()) {
-            system.set_orbit_slot(*pos, OrbitContent::Blocked);
-        }
-    }
 }
 
 fn gen_stars(world_mod: i32, companions_possible: bool) -> System {
@@ -508,7 +839,7 @@ fn gen_stars(world_mod: i32, companions_possible: bool) -> System {
         let orbit = gen_companion_orbit(roll_2d6());
         match orbit {
             StarOrbit::Primary | StarOrbit::Far => {
-                system.secondary = Some(Box::new(gen_companion_system(
+                system.secondary = Some(Box::new(System::generate_companion(
                     primary_type_roll,
                     primary_size_roll,
                     orbit,
@@ -516,14 +847,14 @@ fn gen_stars(world_mod: i32, companions_possible: bool) -> System {
             }
             // If the companion has an orbit, but its inside the primary star, just treat it as the primary orbit.
             StarOrbit::System(position) if position as i32 <= get_zone(&star).inside => {
-                system.secondary = Some(Box::new(gen_companion_system(
+                system.secondary = Some(Box::new(System::generate_companion(
                     primary_type_roll,
                     primary_size_roll,
                     StarOrbit::Primary,
                 )));
             }
             StarOrbit::System(position) => {
-                system.secondary = Some(Box::new(gen_companion_system(
+                system.secondary = Some(Box::new(System::generate_companion(
                     primary_type_roll,
                     primary_size_roll,
                     orbit,
@@ -540,21 +871,21 @@ fn gen_stars(world_mod: i32, companions_possible: bool) -> System {
         let orbit = gen_companion_orbit(roll_2d6() + 4);
         match orbit {
             StarOrbit::Primary | StarOrbit::Far => {
-                system.tertiary = Some(Box::new(gen_companion_system(
+                system.tertiary = Some(Box::new(System::generate_companion(
                     primary_type_roll,
                     primary_size_roll,
                     orbit,
                 )));
             }
             StarOrbit::System(position) if position as i32 <= get_zone(&star).inside => {
-                system.tertiary = Some(Box::new(gen_companion_system(
+                system.tertiary = Some(Box::new(System::generate_companion(
                     primary_type_roll,
                     primary_size_roll,
                     StarOrbit::Primary,
                 )));
             }
             StarOrbit::System(position) => {
-                system.tertiary = Some(Box::new(gen_companion_system(
+                system.tertiary = Some(Box::new(System::generate_companion(
                     primary_type_roll,
                     primary_size_roll,
                     orbit,
@@ -573,420 +904,6 @@ fn count_open_orbits(system: &System) -> i32 {
         .iter()
         .filter(|body| body.is_none())
         .count() as i32
-}
-
-fn gen_gas_giants(system: &mut System) -> i32 {
-    if roll_2d6() >= 10 {
-        // No gas giant in system
-        return 0;
-    }
-
-    let mut num_giants = match roll_2d6() {
-        1..=3 => 1,
-        4..=5 => 2,
-        6..=7 => 3,
-        8..=10 => 4,
-        _ => 5,
-    };
-
-    num_giants = num_giants.min(count_open_orbits(system));
-    let original_num_giants = num_giants;
-
-    let habitable = get_zone(&system.star).habitable;
-
-    let mut viable_outer_orbits: Vec<i32> = system
-        .orbit_slots
-        .iter()
-        .enumerate()
-        .filter_map(|(index, body)| {
-            if body.is_none() {
-                if habitable <= 0 || index as i32 > habitable {
-                    Some(index as i32)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    let mut viable_inner_orbits: Vec<i32> = system
-        .orbit_slots
-        .iter()
-        .enumerate()
-        .filter_map(|(index, body)| {
-            if body.is_none() {
-                if habitable <= 0 || index as i32 <= habitable {
-                    Some(index as i32)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    while viable_outer_orbits.len() + viable_inner_orbits.len() > 0 && num_giants > 0 {
-        let orbit = if !viable_outer_orbits.is_empty() {
-            let pos = rand::thread_rng().gen_range(0..viable_outer_orbits.len());
-            viable_outer_orbits.remove(pos);
-            pos
-        } else {
-            let pos = rand::thread_rng().gen_range(0..viable_inner_orbits.len());
-            viable_inner_orbits.remove(pos);
-            pos
-        };
-
-        if roll_1d6() <= 3 {
-            system.set_orbit_slot(
-                orbit,
-                OrbitContent::GasGiant(GasGiant::new(GasGiantSize::Small, orbit)),
-            );
-        } else {
-            system.set_orbit_slot(
-                orbit,
-                OrbitContent::GasGiant(GasGiant::new(GasGiantSize::Large, orbit)),
-            );
-        }
-        num_giants -= 1;
-    }
-
-    if num_giants > 0 {
-        error!(
-            "Not enough orbits for gas giants. Need {} in system {:?}",
-            original_num_giants, system
-        );
-    }
-    original_num_giants - num_giants
-}
-
-fn gen_planetoids(system: &mut System, num_giants: i32, main_world: &World) {
-    if roll_2d6() >= 7 {
-        // No planetoids in system
-        return;
-    }
-    let mut num_planetoids = match roll_2d6() - num_giants {
-        1..=3 => 3,
-        4..=6 => 2,
-        _ => 1,
-    };
-    let mut viable_giants: Vec<usize> = system
-        .orbit_slots
-        .iter()
-        .enumerate()
-        .filter_map(|(index, body)| {
-            if matches!(body, Some(OrbitContent::GasGiant(_))) {
-                Some(index)
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    let mut viable_other_orbits: Vec<usize> = system
-        .orbit_slots
-        .iter()
-        .enumerate()
-        .filter_map(
-            |(index, body)| {
-                if body.is_none() {
-                    Some(index)
-                } else {
-                    None
-                }
-            },
-        )
-        .collect();
-
-    while viable_giants.len() + viable_other_orbits.len() > 0 && num_planetoids > 0 {
-        let orbit = if !viable_giants.is_empty() {
-            let pos = rand::thread_rng().gen_range(0..viable_giants.len());
-            viable_giants.remove(pos);
-            pos
-        } else {
-            let pos = rand::thread_rng().gen_range(0..viable_other_orbits.len());
-            viable_other_orbits.remove(pos);
-            pos
-        };
-
-        let population = (roll_2d6() - 2
-            + if orbit as i32 <= get_zone(&system.star).inner {
-                -5
-            } else {
-                0
-            }
-            + if orbit as i32 > get_zone(&system.star).habitable {
-                -5
-            } else {
-                0
-            })
-        .clamp(0, main_world.get_population() - 1);
-
-        let mut planetoid = World::new(
-            "Planetoid Belt".to_string(),
-            orbit,
-            orbit,
-            0,
-            0,
-            0,
-            population,
-            false,
-            false,
-        );
-
-        planetoid.gen_subordinate_stats(main_world);
-        planetoid.gen_trade_classes();
-        planetoid.gen_subordinate_facilities(&get_zone(&system.star), orbit, main_world);
-        planetoid.compute_astro_data(&system.star);
-        system.set_orbit_slot(orbit, OrbitContent::World(planetoid));
-        num_planetoids -= 1;
-    }
-}
-
-fn place_main_world(system: &mut System, mut main_world: World) {
-    let requires_habitable =
-        main_world.atmosphere > 1 && main_world.atmosphere < 10 && main_world.size > 0;
-    let mut habitable = get_zone(&system.star).habitable;
-    if (habitable < 0 || habitable == get_zone(&system.star).inner) && requires_habitable {
-        warn!("No habitable zone for main world for system: {:?}. Habitable = {}. Inner = {}. Using orbit 0.", system, habitable, get_zone(&system.star).inner);
-        habitable = get_zone(&system.star).inner.max(0);
-    }
-
-    debug!(
-        "(place_main_world) habitable = {}, max_orbits = {}, requires_habitable = {}, star = {}",
-        habitable,
-        system.get_max_orbits(),
-        requires_habitable,
-        system.star
-    );
-    if requires_habitable {
-        // Just place in the habitable
-        match &mut system
-            .orbit_slots
-            .get_mut(habitable as usize)
-            .unwrap_or(&mut None)
-        {
-            Some(OrbitContent::Secondary) => {
-                // If there happens to be a star in the habitable zone, place it in orbit there.
-                // Note the orbit of the main world in terms of primary first
-                // TODO: Is this correct when we have multiple stars?
-                main_world.position_in_system = habitable as usize;
-                // Safe to unwrap as if the orbital position is secondary but there is no secondary, thats bug.
-                place_main_world(system.secondary.as_mut().unwrap(), main_world);
-            }
-            Some(OrbitContent::Tertiary) => {
-                // If there happens to be a star in the habitable zone, place it in orbit there.
-                // Note the orbit of the main world in terms of primary first
-                // TODO: Is this correct when we have multiple stars?
-                main_world.position_in_system = habitable as usize;
-                // Safe to unwrap as if the orbital position is tertiary but there is no tertiary, thats bug.
-                place_main_world(system.tertiary.as_mut().unwrap(), main_world);
-            }
-            Some(OrbitContent::GasGiant(gas_giant)) => {
-                main_world.orbit = gas_giant.gen_satellite_orbit(main_world.size == 0);
-                main_world.position_in_system = habitable as usize;
-                gas_giant.push_satellite(main_world);
-            }
-            Some(OrbitContent::Blocked) => {
-                main_world.position_in_system = habitable as usize;
-                main_world.orbit = habitable as usize;
-                system.set_orbit_slot(habitable as usize, OrbitContent::World(main_world));
-            }
-            Some(OrbitContent::World(_)) | None => {
-                main_world.position_in_system = habitable as usize;
-                main_world.orbit = habitable as usize;
-                system.set_orbit_slot(habitable as usize, OrbitContent::World(main_world));
-            }
-        }
-    } else {
-        let empty_orbits = system.get_unused_orbits();
-        if !empty_orbits.is_empty() {
-            let orbit = empty_orbits[rand::thread_rng().gen_range(0..empty_orbits.len())];
-            main_world.position_in_system = orbit;
-            main_world.orbit = orbit;
-            system.set_orbit_slot(orbit, OrbitContent::World(main_world));
-        } else {
-            // Just jam the world in somewhere.
-            let pos = rand::thread_rng().gen_range(0..system.get_max_orbits());
-            main_world.orbit = pos;
-            system.set_orbit_slot(pos, OrbitContent::World(main_world));
-        }
-    }
-}
-
-pub fn generate_system(mut main_world: World) -> System {
-    let star_mod = if (main_world.atmosphere >= 4 && main_world.atmosphere <= 9)
-        || main_world.get_population() >= 8
-    {
-        4
-    } else {
-        0
-    };
-    let mut system = gen_stars(star_mod, true);
-    main_world.gen_trade_classes();
-    main_world.compute_astro_data(&system.star);
-    fill_system(&mut system, main_world, true);
-
-    system
-}
-
-pub fn gen_world(star: &Star, orbit: usize, main_world: &World) -> World {
-    let mut modifier = if orbit == 0 {
-        -5
-    } else if orbit == 1 {
-        -4
-    } else if orbit == 2 {
-        -2
-    } else {
-        0
-    };
-
-    if star.star_type == StarType::M {
-        modifier -= 2;
-    }
-
-    let size = (roll_2d6() - 2 + modifier).min(0);
-
-    let roll = roll_2d6();
-    let signed_orbit = orbit as i32;
-    let mut atmosphere = (roll_2d6() - 7
-        + size
-        + if signed_orbit <= get_zone(star).inner {
-            -2
-        } else {
-            0
-        }
-        + if signed_orbit > get_zone(star).habitable {
-            -2
-        } else {
-            0
-        })
-    .clamp(0, 10);
-
-    // Special case for a type A atmosphere.
-    if roll == 12 && signed_orbit > get_zone(star).habitable {
-        atmosphere = 10;
-    }
-
-    let mut hydro = (roll_2d6() - 7
-        + size
-        + if signed_orbit > get_zone(star).habitable {
-            -4
-        } else {
-            0
-        }
-        + if atmosphere <= 1 || atmosphere >= 10 {
-            -4
-        } else {
-            0
-        })
-    .clamp(0, 10);
-    if size <= 0 || signed_orbit <= get_zone(star).inner {
-        hydro = 0;
-    }
-
-    let population = (roll_2d6() - 2
-        + if signed_orbit <= get_zone(star).inner {
-            -5
-        } else {
-            0
-        }
-        + if signed_orbit > get_zone(star).habitable {
-            -5
-        } else {
-            0
-        }
-        + if ![5, 6, 8].contains(&atmosphere) {
-            -2
-        } else {
-            0
-        })
-    .clamp(0, main_world.get_population() - 1);
-
-    let mut world = World::new(
-        "Unknown".to_string(),
-        orbit,
-        orbit,
-        size,
-        atmosphere,
-        hydro,
-        population,
-        false,
-        false,
-    );
-    world.gen_name(&main_world.name, orbit);
-    world.gen_subordinate_stats(main_world);
-    world.gen_trade_classes();
-    world.gen_subordinate_facilities(&get_zone(star), orbit, main_world);
-    world
-}
-
-fn fill_system(system: &mut System, main_world: World, is_primary: bool) {
-    gen_blocked_orbits(system);
-    let main_world_copy = main_world.clone();
-    let system_zones = get_zone(&system.star);
-    let num_gas_giants = gen_gas_giants(system);
-
-    gen_planetoids(system, num_gas_giants, &main_world_copy);
-
-    if is_primary {
-        debug!("(fill_system) Place main world...");
-        place_main_world(system, main_world);
-        debug!("(fill_system) Placed main world.");
-    }
-
-    for i in 0..=get_zone(&system.star).hot {
-        system.set_orbit_slot(i as usize, OrbitContent::Blocked);
-    }
-
-    for i in (get_zone(&system.star).hot + 1)..system.get_max_orbits() as i32 {
-        debug!("(fill_system) Fill orbit {}", i);
-        let i = i as usize;
-        if system.is_slot_empty(i) {
-            let mut new_world = gen_world(&system.star, i, &main_world_copy);
-            new_world.gen_name(&system.name, i);
-            new_world.compute_astro_data(&system.star);
-            system.set_orbit_slot(i, OrbitContent::World(new_world));
-        }
-    }
-
-    let zone_table = get_zone(&system.star);
-    for i in 0..system.get_max_orbits() {
-        match &mut system.orbit_slots[i] {
-            Some(OrbitContent::World(world)) => {
-                let num_satellites = world.determine_num_satellites();
-                for _ in 0..num_satellites {
-                    world.gen_satellite(&zone_table, &main_world_copy, &system.star);
-                }
-                world.clean_satellites();
-            }
-            Some(OrbitContent::GasGiant(gas_giant)) => {
-                let num_satellites = gas_giant.determine_num_satellites();
-                for _ in 0..num_satellites {
-                    gas_giant.gen_satellite(&system_zones, &main_world_copy, &system.star);
-                }
-                gas_giant.clean_satellites();
-                gas_giant.gen_name(&system.name, i);
-            }
-            _ => continue,
-        }
-    }
-
-    if let Some(secondary) = &mut system.secondary {
-        if secondary.orbit != StarOrbit::Primary {
-            fill_system(secondary, main_world_copy.clone(), false);
-        }
-    }
-
-    if let Some(tertiary) = &mut system.tertiary {
-        if tertiary.orbit != StarOrbit::Primary {
-            fill_system(tertiary, main_world_copy, false);
-        }
-    }
-
-    debug!("(fill_system) System filled.");
 }
 
 // Implement other functions...
@@ -1026,7 +943,7 @@ mod tests {
         let main_upp = "A788899-A";
         let main_world = World::from_upp("Main World".to_string(), main_upp, false, true);
 
-        let system = generate_system(main_world);
+        let system = System::generate_system(main_world);
         println!("{}", system);
     }
 
