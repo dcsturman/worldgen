@@ -132,7 +132,7 @@ impl AstroData {
             let temp_modifier: i32 =
                 ((self.greenhouse * (1.0 - self.albedo) - 1.0) / 0.05).trunc() as i32;
             // Convert from Celsius to Kelvin
-            self.temp = get_world_temp(temp_modifier) + 273;
+            self.temp = get_world_temp(temp_modifier) + 273.0;
         } else {
             self.temp = k * self.greenhouse * (1.0 - self.albedo) * self.luminosity.powf(0.25)
                 / self.orbit_distance.powf(0.5);
