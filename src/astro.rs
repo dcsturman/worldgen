@@ -1,6 +1,7 @@
 use crate::system::Star;
 use crate::system_tables::{
     get_cloudiness, get_greenhouse, get_luminosity, get_orbital_distance, get_solar_mass,
+    get_world_temp, get_habitable,
 };
 use crate::world::World;
 
@@ -22,6 +23,8 @@ pub struct AstroData {
     // Mass in Earth equivalents
     mass: f32,
     ice_cap_percent: f32,
+    greenhouse: f32,
+    luminosity: f32,
 }
 
 impl AstroData {
@@ -34,6 +37,8 @@ impl AstroData {
             gravity: 0.0,
             mass: 0.0,
             ice_cap_percent: 0.1,
+            greenhouse: 0.0,
+            luminosity: 0.0,
         }
     }
 
@@ -43,7 +48,12 @@ impl AstroData {
         astro.compute_mass_gravity(world.size);
 
         // Do this twice to try and estimate icecap
-        astro.compute_albedo_temp(world.atmosphere, world.hydro, star);
+        astro.compute_albedo_temp(
+            world.position_in_system,
+            world.atmosphere,
+            world.hydro,
+            star,
+        );
         // at temp = 273 then 0.5x of hydro is ice
         // at temp = 243 then 2x hydro is ice.
         // y(273) = 0.5 = m(273) + b
@@ -55,8 +65,10 @@ impl AstroData {
         // 0.5 = -0.03*273 + b
         // b = 0.5 + (-0.03*273) = 0.5 + 8.19 = 8.69
         // y = -0.03x + 8.69
-        astro.ice_cap_percent = (2.0 * world.hydro as f32 / 10.0 * (-0.03 * astro.temp + 8.69)).clamp(0.0, 1.0);
-        astro.compute_albedo_temp(world.atmosphere, world.hydro, star);
+        astro.ice_cap_percent =
+            (world.hydro as f32 / 5.0 * (869.0/80.0 - 3.0/80.0*astro.temp)).clamp(0.0, 1.0);
+
+        //astro.compute_albedo_temp(world.atmosphere, world.hydro, star);
         astro
     }
 
@@ -73,14 +85,10 @@ impl AstroData {
         self.mass = (size as f32 / 8.0).powi(3);
         // G = M(8/SIZE)^2
         // TODO: Validate this math is right!
-        self.gravity = if size <= 0 {
-            0.0
-        } else {
-            (size as f32 / 8.0)
-        };
+        self.gravity = if size <= 0 { 0.0 } else { size as f32 / 8.0 };
     }
 
-    fn compute_albedo_temp(&mut self, atmosphere: i32, hydro: i32, star: &Star) {
+    fn compute_albedo_temp(&mut self, position: usize, atmosphere: i32, hydro: i32, star: &Star) {
         let cloud_percent = get_cloudiness(atmosphere) as f32 / 100.0;
         let mut water_percent = hydro as f32 / 10.0;
         let mut land_percent = 1.0 - water_percent;
@@ -115,22 +123,30 @@ impl AstroData {
         // L = Luminosity in solar units
         // D = Distance in AU from primary
         let k = 374.02;
-        let gh_impact = 1.0 + get_greenhouse(atmosphere);
-        let luminosity = get_luminosity(star);
+        self.greenhouse = 1.0 + get_greenhouse(atmosphere);
+        self.luminosity = get_luminosity(star);
 
-        self.temp = k * gh_impact * (1.0 - self.albedo) * luminosity.powf(0.25)
-            / self.orbit_distance.powf(0.5);
+        // One formula for habitable zone (trying to make the planet habitable) and
+        // then another for other orbits.
+        if position == get_habitable(star) as usize {
+            let temp_modifier: i32 =
+                ((self.greenhouse * (1.0 - self.albedo) - 1.0) / 0.05).trunc() as i32;
+            // Convert from Celsius to Kelvin
+            self.temp = get_world_temp(temp_modifier) + 273;
+        } else {
+            self.temp = k * self.greenhouse * (1.0 - self.albedo) * self.luminosity.powf(0.25)
+                / self.orbit_distance.powf(0.5);
+        }
     }
 
-    pub fn describe(&self, world: &World) -> String {
+    pub fn get_astro_description(&self, world: &World) -> String {
         if world.atmosphere <= 1 {
             return "".to_string();
         }
 
-        let temp_diff = self.temp - EARTH_TEMP;
         format!(
-            "{:+0.2} °K, {:2.2}% ice, {:0.1}G, {:0.1} yrs",
-            temp_diff,
+            "{:+0.2} °C, {:2.0}% ice, {:0.1}G, {:0.1} yrs",
+            self.temp - EARTH_TEMP + 15.0,
             (self.ice_cap_percent * 100.0).round(),
             self.gravity,
             self.orbital_period

@@ -5,8 +5,8 @@ use std::fmt::Display;
 use crate::astro::AstroData;
 use crate::has_satellites::HasSatellites;
 use crate::name_tables::{gen_moon_name, gen_planet_name};
-use crate::system::Star;
-use crate::system_tables::ZoneTable;
+use crate::system::{Star, StarType};
+use crate::system_tables::{get_zone, ZoneTable};
 use crate::util::{arabic_to_roman, roll_1d6, roll_2d6};
 
 #[derive(Debug, Clone, Store)]
@@ -385,9 +385,100 @@ impl World {
     }
 
     pub fn get_astro_description(&self) -> String {
-        self.astro_data.describe(self)
+        self.astro_data.get_astro_description(self)
     }
-    
+
+    pub fn generate(star: &Star, orbit: usize, main_world: &World) -> World {
+        let mut modifier = if orbit == 0 {
+            -5
+        } else if orbit == 1 {
+            -4
+        } else if orbit == 2 {
+            -2
+        } else {
+            0
+        };
+
+        if star.star_type == StarType::M {
+            modifier -= 2;
+        }
+
+        let size = (roll_2d6() - 2 + modifier).min(0);
+
+        let roll = roll_2d6();
+        let signed_orbit = orbit as i32;
+        let mut atmosphere = (roll_2d6() - 7
+            + size
+            + if signed_orbit <= get_zone(star).inner {
+                -2
+            } else {
+                0
+            }
+            + if signed_orbit > get_zone(star).habitable {
+                -2
+            } else {
+                0
+            })
+        .clamp(0, 10);
+
+        // Special case for a type A atmosphere. Possible if 2 zones out
+        // or more from the habitable zone.
+        if roll == 12 && signed_orbit > get_zone(star).habitable + 1 {
+            atmosphere = 10;
+        }
+
+        let mut hydro = (roll_2d6() - 7
+            + size
+            + if signed_orbit > get_zone(star).habitable {
+                -4
+            } else {
+                0
+            }
+            + if atmosphere <= 1 || atmosphere >= 10 {
+                -4
+            } else {
+                0
+            })
+        .clamp(0, 10);
+        if size <= 0 || signed_orbit <= get_zone(star).inner {
+            hydro = 0;
+        }
+
+        let population = (roll_2d6() - 2
+            + if signed_orbit <= get_zone(star).inner {
+                -5
+            } else {
+                0
+            }
+            + if signed_orbit > get_zone(star).habitable {
+                -5
+            } else {
+                0
+            }
+            + if ![5, 6, 8].contains(&atmosphere) {
+                -2
+            } else {
+                0
+            })
+        .clamp(0, main_world.get_population() - 1);
+
+        let mut world = World::new(
+            "Unknown".to_string(),
+            orbit,
+            orbit,
+            size,
+            atmosphere,
+            hydro,
+            population,
+            false,
+            false,
+        );
+        world.gen_name(&main_world.name, orbit);
+        world.gen_subordinate_stats(main_world);
+        world.gen_trade_classes();
+        world.gen_subordinate_facilities(&get_zone(star), orbit, main_world);
+        world
+    }
 }
 
 impl Display for World {
