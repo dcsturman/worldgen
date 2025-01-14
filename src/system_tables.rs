@@ -1,4 +1,5 @@
 use crate::system::{Star, StarSize, StarSubType, StarType};
+use crate::util::roll_2d6;
 use lazy_static::lazy_static;
 use log::debug;
 use std::collections::HashMap;
@@ -55,6 +56,11 @@ pub(crate) fn get_greenhouse(atmosphere: i32) -> f32 {
     GREENHOUSE[atmosphere as usize]
 }
 
+pub(crate) fn get_world_temp(modifier: i32) -> f32 {
+    let roll = (roll_2d6() + modifier).clamp(0, AVG_WORLD_TEMP.len() as i32 - 1) as usize;
+    AVG_WORLD_TEMP[roll]
+}
+
 const ORBITAL_DISTANCE: [f32; 20] = [
     29.9, 59.8, 104.7, 149.6, 239.3, 418.9, 777.9, 1495.9, 2932.0, 5804.0, 11548.0, 23038.0,
     46016.0, 91972.0, 183885.0, 367711.0, 735363.0, 1470666.0, 2941274.0, 5882488.0,
@@ -64,6 +70,10 @@ const CLOUDINESS: [i32; 11] = [0, 0, 10, 10, 20, 30, 40, 50, 60, 70, 70];
 
 const GREENHOUSE: [f32; 16] = [
     0.0, 0.0, 0.0, 0.0, 0.05, 0.05, 0.1, 0.1, 0.15, 0.15, 0.5, 0.5, 0.5, 0.15, 0.10, 0.0,
+];
+
+const AVG_WORLD_TEMP: [f32; 16] = [
+    -2.5, 0.0, 2.5, 5.0, 7.5, 10.0, 12.5, 15.0, 17.5, 20.0, 22.5, 25.0, 27.5, 30.0, 32.5, 35.0,
 ];
 
 #[derive(Debug, Clone, Copy)]
