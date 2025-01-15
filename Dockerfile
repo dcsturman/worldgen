@@ -1,0 +1,27 @@
+FROM rust:latest AS base
+RUN rustup update
+RUN cargo install trunk
+RUN rustup target add wasm32-unknown-unknown
+
+FROM base AS build 
+
+# Build dependencies
+RUN mkdir /web
+WORKDIR /web
+
+ADD Cargo.toml Cargo.lock index.html Trunk.toml /web/
+
+RUN mkdir ./src && echo 'fn main() {}' > ./src/main.rs && touch ./src/lib.rs
+RUN cargo build --release --target wasm32-unknown-unknown
+RUN rm -rf ./src
+ADD src /web/src/
+
+FROM build AS release
+RUN touch ./src/main.rs
+ADD public /web/public
+ADD style.css /web/style.css
+RUN trunk build --release
+
+# Expose our port
+EXPOSE 8080
+ENTRYPOINT ["trunk", "serve", "--release", "--address", "0.0.0.0", "--port", "8080"]
