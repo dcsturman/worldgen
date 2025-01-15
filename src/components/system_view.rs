@@ -1,4 +1,3 @@
-use itertools::Itertools;
 use leptos::context::Provider;
 use leptos::prelude::*;
 use reactive_stores::Store;
@@ -138,40 +137,42 @@ pub fn SystemPreamble() -> impl IntoView {
                             {system.read().name.clone()}
                             " has "
                             {move || {
-                                [
-                                    quantity_suffix(num_stars(), "star"),
-                                    {
-                                        if num_gas_giants() >= 2 {
-                                            format!("{} gas giants", num_gas_giants())
-                                        } else if num_gas_giants() == 1 {
-                                            "1 gas giant".to_string()
-                                        } else {
-                                            "".to_string()
-                                        }
-                                    },
-                                    {
-                                        if num_planetoids() >= 2 {
-                                            format!("{} planetoids", num_planetoids())
-                                        } else if num_planetoids() == 1 {
-                                            "1 planetoid".to_string()
-                                        } else {
-                                            "".to_string()
-                                        }
-                                    },
-                                    {
-                                        if num_satellites() >= 2 {
-                                            format!("{} satellites", num_satellites())
-                                        } else if num_satellites() == 1 {
-                                            "1 satellite".to_string()
-                                        } else {
-                                            "".to_string()
-                                        }
-                                    },
-                                ]
-                                    .iter()
-                                    .filter(|x| !x.is_empty())
-                                    .cloned()
-                                    .intersperse(", ".to_string())
+                                itertools::Itertools::intersperse(
+                                        [
+                                            quantity_suffix(num_stars(), "star"),
+                                            {
+                                                if num_gas_giants() >= 2 {
+                                                    format!("{} gas giants", num_gas_giants())
+                                                } else if num_gas_giants() == 1 {
+                                                    "1 gas giant".to_string()
+                                                } else {
+                                                    "".to_string()
+                                                }
+                                            },
+                                            {
+                                                if num_planetoids() >= 2 {
+                                                    format!("{} planetoids", num_planetoids())
+                                                } else if num_planetoids() == 1 {
+                                                    "1 planetoid".to_string()
+                                                } else {
+                                                    "".to_string()
+                                                }
+                                            },
+                                            {
+                                                if num_satellites() >= 2 {
+                                                    format!("{} satellites", num_satellites())
+                                                } else if num_satellites() == 1 {
+                                                    "1 satellite".to_string()
+                                                } else {
+                                                    "".to_string()
+                                                }
+                                            },
+                                        ]
+                                            .iter()
+                                            .filter(|x| !x.is_empty())
+                                            .cloned(),
+                                        ", ".to_string(),
+                                    )
                                     .collect::<String>()
                             }}
                         }
@@ -197,12 +198,17 @@ pub fn SystemMain(#[prop(default = false)] is_companion: bool) -> impl IntoView 
                 if let Some(secondary) = system.secondary().get() {
                     let secondary = Store::new(*secondary);
                     view! {
-                        {system.read().name.clone()}"'s secondary star "{secondary.name().get()}:<br />
+                        {system.read().name.clone()}
+                        "'s secondary star "
+                        {secondary.name().get()}
+                        :
+                        <br />
                         <Provider value=secondary>
                             <SystemMain is_companion=true />
                         </Provider>
                         <br />
-                    }.into_any()
+                    }
+                        .into_any()
                 } else {
                     ().into_any()
                 }
@@ -211,12 +217,17 @@ pub fn SystemMain(#[prop(default = false)] is_companion: bool) -> impl IntoView 
                 if let Some(tertiary) = system.tertiary().get() {
                     let tertiary = Store::new(*tertiary);
                     view! {
-                        {system.read().name.clone()}"'s tertiary star "{tertiary.name().get()}:<br />
+                        {system.read().name.clone()}
+                        "'s tertiary star "
+                        {tertiary.name().get()}
+                        :
+                        <br />
                         <Provider value=tertiary>
                             <SystemMain is_companion=true />
                         </Provider>
                         <br />
-                    }.into_any()
+                    }
+                        .into_any()
                 } else {
                     ().into_any()
                 }

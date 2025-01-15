@@ -1,4 +1,3 @@
-use itertools::Itertools;
 use leptos::prelude::*;
 use reactive_stores::{Field, OptionStoreExt, Store, StoreFieldIterator};
 
@@ -24,20 +23,26 @@ pub fn WorldList(#[prop(default = false)] is_companion: bool) -> impl IntoView {
             </thead>
             <tbody>
                 <StarRow system=primary is_companion=is_companion />
-                {move || [primary.secondary(), primary.tertiary()].into_iter().map(|companion| {
-                    if let Some(companion) = companion.get() {
-                        let companion = Store::new(*companion);
-                        if companion.orbit().get() == StarOrbit::Primary {
-                            // TODO: Get rid of this clone.
-                            view! { <StarRow system=companion is_companion=true /> }
-                                .into_any()
-                        } else {
-                            ().into_any()
-                        }
-                    } else {
-                        ().into_any()
-                    }
-                }).collect::<Vec<_>>().into_view()}
+                {move || {
+                    [primary.secondary(), primary.tertiary()]
+                        .into_iter()
+                        .map(|companion| {
+                            if let Some(companion) = companion.get() {
+                                let companion = Store::new(*companion);
+                                if companion.orbit().get() == StarOrbit::Primary {
+                                    // TODO: Get rid of this clone.
+                                    view! { <StarRow system=companion is_companion=true /> }
+                                        .into_any()
+                                } else {
+                                    ().into_any()
+                                }
+                            } else {
+                                ().into_any()
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .into_view()
+                }}
                 {move || {
                     (0..primary.orbit_slots().read().len())
                         .map(|index| {
@@ -86,20 +91,26 @@ pub fn WorldList(#[prop(default = false)] is_companion: bool) -> impl IntoView {
                         .collect::<Vec<_>>()
                         .into_view()
                 }}
-                {move || [primary.secondary(), primary.tertiary()].into_iter().map(|companion| {
-                    if let Some(companion) = companion.get() {
-                        let companion = Store::new(*companion);
-                        if companion.orbit().get() == StarOrbit::Far {
-                            // TODO: Get rid of this clone.
-                            view! { <StarRow system=companion is_companion=false /> }
-                                .into_any()
-                        } else {
-                            ().into_any()
-                        }
-                    } else {
-                        ().into_any()
-                    }
-                }).collect::<Vec<_>>().into_view()}
+                {move || {
+                    [primary.secondary(), primary.tertiary()]
+                        .into_iter()
+                        .map(|companion| {
+                            if let Some(companion) = companion.get() {
+                                let companion = Store::new(*companion);
+                                if companion.orbit().get() == StarOrbit::Far {
+                                    // TODO: Get rid of this clone.
+                                    view! { <StarRow system=companion is_companion=false /> }
+                                        .into_any()
+                                } else {
+                                    ().into_any()
+                                }
+                            } else {
+                                ().into_any()
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .into_view()
+                }}
             </tbody>
         </table>
     }
@@ -147,11 +158,13 @@ pub fn WorldView(#[prop(into)] world: Field<World>, satellite: bool) -> impl Int
                     {move || {
                         world
                             .with(|world| {
-                                [world.facilities_string(), world.trade_classes_string()]
-                                    .iter()
-                                    .filter(|s| !s.is_empty())
-                                    .cloned()
-                                    .intersperse("; ".to_string())
+                                itertools::Itertools::intersperse(
+                                        [world.facilities_string(), world.trade_classes_string()]
+                                            .iter()
+                                            .filter(|s| !s.is_empty())
+                                            .cloned(),
+                                        "; ".to_string(),
+                                    )
                                     .collect::<String>()
                             })
                     }}
