@@ -310,7 +310,6 @@ impl System {
             _ => 5,
         };
 
-        leptos::logging::log!("For system {}, place {} gas giants, open orbits = {}", self.name, num_giants, count_open_orbits(self));
         num_giants = num_giants.min(count_open_orbits(self));
         let original_num_giants = num_giants;
 
@@ -350,18 +349,14 @@ impl System {
             })
             .collect();
 
-        leptos::logging::log!("For system {}, viable outer = {}, viable inner = {}", self.name, viable_outer_orbits.len(), viable_inner_orbits.len());
-
         while viable_outer_orbits.len() + viable_inner_orbits.len() > 0 && num_giants > 0 {
             let orbit = if !viable_outer_orbits.is_empty() {
                 let pos = rand::thread_rng().gen_range(0..viable_outer_orbits.len());
                 let orbit = viable_outer_orbits.remove(pos);
-                leptos::logging::log!("For {}, place in outer orbit {}", self.name, orbit);
                 orbit
             } else {
                 let pos = rand::thread_rng().gen_range(0..viable_inner_orbits.len());
                 let orbit = viable_inner_orbits.remove(pos);
-                leptos::logging::log!("For {}, place in inner orbit {}", self.name, orbit);
                 orbit
             };
 

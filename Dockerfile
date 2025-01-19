@@ -22,6 +22,8 @@ ADD public /web/public
 ADD style.css /web/style.css
 RUN trunk build --release
 
-# Expose our port
-EXPOSE 8080
-ENTRYPOINT ["trunk", "serve", "--release", "--address", "0.0.0.0", "--port", "8080"]
+FROM nginx:1.21-alpine
+
+EXPOSE 80
+COPY nginx.conf /etc/nginx/nginx.conf
+COPY --from=release /web/dist/ /usr/share/nginx/html/
