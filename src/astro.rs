@@ -1,7 +1,7 @@
 use crate::system::Star;
 use crate::system_tables::{
-    get_cloudiness, get_greenhouse, get_luminosity, get_orbital_distance, get_solar_mass,
-    get_world_temp, get_habitable,
+    get_cloudiness, get_greenhouse, get_habitable, get_luminosity, get_orbital_distance,
+    get_solar_mass, get_world_temp,
 };
 use crate::world::World;
 
@@ -66,7 +66,7 @@ impl AstroData {
         // b = 0.5 + (-0.03*273) = 0.5 + 8.19 = 8.69
         // y = -0.03x + 8.69
         astro.ice_cap_percent =
-            (world.hydro as f32 / 5.0 * (869.0/80.0 - 3.0/80.0*astro.temp)).clamp(0.0, 1.0);
+            (world.hydro as f32 / 5.0 * (869.0 / 80.0 - 3.0 / 80.0 * astro.temp)).clamp(0.0, 1.0);
 
         //astro.compute_albedo_temp(world.atmosphere, world.hydro, star);
         astro

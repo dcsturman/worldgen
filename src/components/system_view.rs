@@ -10,7 +10,7 @@ use crate::system_tables::get_habitable;
 fn habitable_clause(system: &System) -> String {
     let habitable = get_habitable(&system.star);
     if habitable > -1 && habitable <= system.get_max_orbits() as i32 {
-        format!(" with a habitable zone at orbit {}", habitable)
+        format!(" with a habitable zone at orbit {habitable}")
     } else {
         " with no habitable zone".to_string()
     }
@@ -88,9 +88,9 @@ fn quantity_suffix(quantity: usize, singular: &str) -> String {
     if quantity == 0 {
         "".to_string()
     } else if quantity == 1 {
-        format!("1 {}", singular)
+        format!("1 {singular}")
     } else {
-        format!("{} {}s", quantity, singular)
+        format!("{quantity} {singular}s")
     }
 }
 
