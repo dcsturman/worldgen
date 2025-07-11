@@ -57,8 +57,6 @@ pub enum Facility {
     Military,
 }
 
-
-
 #[derive(Debug, Clone, Store)]
 pub struct Satellites {
     #[store(key: String = |world| world.name.clone())]

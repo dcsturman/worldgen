@@ -352,12 +352,12 @@ impl System {
         while viable_outer_orbits.len() + viable_inner_orbits.len() > 0 && num_giants > 0 {
             let orbit = if !viable_outer_orbits.is_empty() {
                 let pos = rand::thread_rng().gen_range(0..viable_outer_orbits.len());
-                let orbit = viable_outer_orbits.remove(pos);
-                orbit
+
+                viable_outer_orbits.remove(pos)
             } else {
                 let pos = rand::thread_rng().gen_range(0..viable_inner_orbits.len());
-                let orbit = viable_inner_orbits.remove(pos);
-                orbit
+
+                viable_inner_orbits.remove(pos)
             };
 
             if roll_1d6() <= 3 {
@@ -644,21 +644,21 @@ impl Display for System {
                     }
                 }
                 Some(OrbitContent::World(world)) => {
-                    writeln!(f, "{}", world)?;
+                    writeln!(f, "{world}")?;
                 }
                 Some(OrbitContent::GasGiant(gas_giant)) => {
-                    writeln!(f, "{}", gas_giant)?;
+                    writeln!(f, "{gas_giant}")?;
                 }
                 Some(OrbitContent::Blocked) | None => {}
             }
         }
 
         if let Some(secondary) = &self.secondary {
-            writeln!(f, "\n{}", secondary)?;
+            writeln!(f, "\n{secondary}")?;
         }
 
         if let Some(tertiary) = &self.tertiary {
-            writeln!(f, "\n{}", tertiary)?;
+            writeln!(f, "\n{tertiary}")?;
         }
         Ok(())
     }
@@ -666,13 +666,13 @@ impl Display for System {
 
 impl Display for StarType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
 impl Display for StarSize {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
@@ -691,7 +691,7 @@ impl Display for StarOrbit {
         match self {
             StarOrbit::Primary => write!(f, "close orbit"),
             StarOrbit::Far => write!(f, "far orbit"),
-            StarOrbit::System(orbit) => write!(f, "orbit {}", orbit),
+            StarOrbit::System(orbit) => write!(f, "orbit {orbit}"),
         }
     }
 }
@@ -716,7 +716,7 @@ fn gen_primary_star_type(roll: i32) -> StarType {
         8 => StarType::K,
         9 => StarType::G,
         10..=11 => StarType::F,
-        _ =>  StarType::G,
+        _ => StarType::G,
     }
 }
 
