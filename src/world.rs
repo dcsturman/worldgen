@@ -302,6 +302,10 @@ impl World {
         self.set_subordinate_stats(port, government, law_level, tech_level, Vec::new());
     }
 
+    pub fn get_trade_classes(&self) -> Vec<TradeClass> {
+        self.trade_classes.clone()
+    }
+
     pub fn gen_trade_classes(&mut self) {
         if self.atmosphere >= 4
             && self.atmosphere <= 9
