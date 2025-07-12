@@ -1,5 +1,6 @@
 use leptos::prelude::*;
 use reactive_stores::Store;
+#[allow(unused_imports)]
 use leptos::leptos_dom::logging::console_log;
 
 use trade::available_goods::AvailableGoodsTable;
@@ -7,6 +8,7 @@ use trade::table::TradeTable;
 
 use crate::components::system_view::SystemView;
 use crate::components::trade_view::TradeView;
+use crate::components::world_entry::WorldEntry;
 use crate::system::System;
 use crate::world::World;
 
@@ -88,30 +90,16 @@ fn WorldEntryForm(
 
     view! {
         <div class="d-print-none world-entry-form">
-            <div id:entry-data>
-                <div class:world-entry-element>
-                    <label for:worldName>"World Name:"</label>
-                    <input
-                        id="worldName"
-                        class:entry-input
-                        type="text"
-                        bind:value=main_world_name
-                    />
-                </div>
-                <div class:world-entry-element>
-                    <label for:upp>"UPP:"</label>
-                    <input class:entry-input type="text" id="upp" bind:value=upp />
-                </div>
-            </div>
+            <WorldEntry world_name=main_world_name uwp=upp />
             <div id:entry-buttons>
                 <button class:blue-button type="button" on:click=handle_submit>
                     "System"
                 </button>
-                <button class:blue-button type="button" on:click=|_| print()>
-                    "Print"
-                </button>
                 <button class:blue-button type="button" on:click=handle_trade>
                     "Trade Tables"
+                </button>
+                                <button class:blue-button type="button" on:click=|_| print()>
+                    "Print"
                 </button>
             </div>
         </div>

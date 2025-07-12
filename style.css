@@ -129,6 +129,11 @@ h1 {
   -moz-osx-font-smoothing: grayscale;
 }
 
+.world-entry-label {
+  text-wrap: nowrap;
+  align-content: center;
+}
+
 .world-entry-form {
   border: 1px solid #ccc;
   border-radius: 5px;
@@ -236,4 +241,22 @@ h1 {
 .blue-button:focus {
   box-shadow: rgba(131, 192, 253, 0.5) 0 0 0 3px;
   outline: none;
+}
+
+.input-with-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.checkbox-container {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.loading-indicator {
+    margin-left: 10px;
+    font-size: 0.8em;
+    color: #666;
 }
