@@ -1,6 +1,8 @@
 use rand::Rng;
-use crate::{TradeClass, table::TradeTable, table::TradeTableEntry};
 use std::fmt::{Display, Formatter, Result as FmtResult};
+use log::debug;
+
+use crate::{TradeClass, table::TradeTable, table::TradeTableEntry};
 
 /// Represents a good available for purchase at a specific world
 #[derive(Debug, Clone)]
@@ -9,7 +11,9 @@ pub struct AvailableGood {
     pub name: String,
     /// Available quantity
     pub quantity: i32,
-    /// Cost of the good
+    /// Original base cost of the good
+    pub base_cost: i32,
+    /// Current cost of the good (after pricing)
     pub cost: i32,
     /// Original trade table entry this good was derived from
     pub source_entry: TradeTableEntry,
@@ -21,7 +25,13 @@ pub struct AvailableGood {
 
 impl Display for AvailableGood {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(f, "{}: {} @ {}", self.name, self.quantity, self.cost)
+        let discount_percent = (self.cost as f64 / self.base_cost as f64 * 100.0).round();
+        write!(f, "{}: {} @ {} ({}% of base)", 
+            self.name, 
+            self.quantity, 
+            self.cost,
+            discount_percent as i32
+        )
     }
 }
 
@@ -68,7 +78,7 @@ impl AvailableGoodsTable {
             let available = match &entry.availability {
                 crate::table::Availability::All => true,
                 crate::table::Availability::List(classes) => {
-                    classes.iter().any(|tc| world_trade_classes.contains(tc))
+                    classes.iter().any(|tc| world_trade_classes.contains(tc) && (illegal_ok || entry.index < 60))
                 }
             };
             
@@ -136,6 +146,7 @@ impl AvailableGoodsTable {
         let good = AvailableGood {
             name: entry.name.clone(),
             quantity,
+            base_cost: entry.base_cost,
             cost: entry.base_cost,
             source_entry: entry,
             best_purchase_dm,
@@ -191,6 +202,14 @@ impl AvailableGoodsTable {
                 - supplier_broker_skill 
                 + good.best_purchase_dm 
                 - good.best_sale_dm;
+            debug!("Roll: {}, Buyer skill: {}, Supplier skill: {}, Purchase DM: {}, Sale DM: {}, Modified roll: {}",
+                roll, 
+                buyer_broker_skill, 
+                supplier_broker_skill, 
+                good.best_purchase_dm, 
+                good.best_sale_dm, 
+                modified_roll
+            );
             
             // Determine the price multiplier based on the modified roll
             let price_multiplier = match modified_roll {
@@ -226,8 +245,20 @@ impl AvailableGoodsTable {
             };
             
             // Apply the multiplier to the cost
-            good.cost = (good.cost as f64 * price_multiplier).round() as i32;
+            good.cost = (good.base_cost as f64 * price_multiplier).round() as i32;
         }
+    }
+
+    /// Sort goods from most discounted to least discounted
+    pub fn sort_by_discount(&mut self) {
+        self.goods.sort_by(|a, b| {
+            // Calculate discount percentage for each good
+            let a_discount = a.cost as f64 / a.base_cost as f64;
+            let b_discount = b.cost as f64 / b.base_cost as f64;
+            
+            // Sort from lowest ratio (biggest discount) to highest ratio (smallest discount)
+            a_discount.partial_cmp(&b_discount).unwrap_or(std::cmp::Ordering::Equal)
+        });
     }
 }
 
@@ -255,7 +286,7 @@ mod tests {
     use crate::TradeClass;
     use std::collections::HashMap;
     
-    #[test]
+    #[test_log::test]
     fn test_available_goods_table() {
         // Create a standard trade table
         let trade_table = TradeTable::standard().expect("Failed to create standard trade table");
@@ -293,11 +324,11 @@ mod tests {
         // Check that DMs are correctly calculated
         // Common Electronics (11) has purchase DM for Rich+1
         let electronics = available_goods.get_by_index(11).unwrap();
-        assert_eq!(electronics.best_purchase_dm, Some(1));
+        assert_eq!(electronics.best_purchase_dm, 1);
         
-        // Agricultural Products (33) has purchase DM for Agricultural+6
+        // Agricultural Products (33) has purchase DM for Agricultural+2
         let ag_products = available_goods.get_by_index(33).unwrap();
-        assert_eq!(ag_products.best_purchase_dm, Some(6));
+        assert_eq!(ag_products.best_purchase_dm, 2);
         
         // Create another table with illegal goods allowed
         let available_goods_with_illegal = AvailableGoodsTable::for_world(
@@ -312,7 +343,7 @@ mod tests {
         assert!(!available_goods_with_illegal.is_empty());
     }
     
-    #[test]
+    #[test_log::test]
     fn test_find_best_dm() {
         let mut dm_map = std::collections::HashMap::new();
         dm_map.insert(TradeClass::Agricultural, 3);
@@ -324,24 +355,24 @@ mod tests {
         
         // Rich should be the best DM
         let best_dm = find_best_dm(&dm_map, &world_trade_classes);
-        assert_eq!(best_dm, Some(5));
+        assert_eq!(best_dm, 5);
         
         // World with only Agricultural trade class
         let world_trade_classes = vec![TradeClass::Agricultural];
         
         // Agricultural should be the best (and only) DM
         let best_dm = find_best_dm(&dm_map, &world_trade_classes);
-        assert_eq!(best_dm, Some(3));
+        assert_eq!(best_dm, 3);
         
         // World with no matching trade classes
         let world_trade_classes = vec![TradeClass::Industrial, TradeClass::Poor];
         
         // No DM should be found
         let best_dm = find_best_dm(&dm_map, &world_trade_classes);
-        assert_eq!(best_dm, None);
+        assert_eq!(best_dm, 0);
     }
 
-    #[test]
+    #[test_log::test]
     fn test_price_goods() {
         // Create a simple trade table entry for testing
         let mut purchase_dm = HashMap::new();
@@ -365,7 +396,7 @@ mod tests {
         
         // Create a table with a single good
         let mut table = AvailableGoodsTable::new();
-        table.add_entry(entry, 5, &world_trade_classes).unwrap();
+        table.add_entry(entry.clone(), 5, &world_trade_classes).unwrap();
         
         // Get the original cost
         let original_cost = table.goods()[0].cost;
@@ -403,12 +434,13 @@ mod tests {
         assert!(new_cost <= (original_cost as f64 * 2.0) as i32);
     }
 
-    #[test]
+    #[test_log::test]
     fn test_display() {
         // Create a simple good
         let good = AvailableGood {
             name: "Test Good".to_string(),
             quantity: 10,
+            base_cost: 5000,
             cost: 5000,
             source_entry: TradeTableEntry {
                 index: 1,
@@ -419,19 +451,19 @@ mod tests {
                 purchase_dm: HashMap::new(),
                 sale_dm: HashMap::new(),
             },
-            best_purchase_dm: Some(2),
-            best_sale_dm: None,
+            best_purchase_dm: 2,
+            best_sale_dm: 0,
         };
         
         // Check the display output
-        assert_eq!(format!("{}", good), "Test Good: 10 @ 5000");
+        assert_eq!(format!("{}", good), "Test Good: 10 @ 5000 (100% of base)");
         
         // Create a table with a single good
         let mut table = AvailableGoodsTable::new();
         table.goods.push(good);
         
         // Check the display output
-        let expected = "Test Good: 10 @ 5000\n";
+        let expected = "Test Good: 10 @ 5000 (100% of base)\n";
         assert_eq!(format!("{}", table), expected);
         
         // Create an empty table
@@ -439,5 +471,111 @@ mod tests {
         
         // Check the display output
         assert_eq!(format!("{}", empty_table), "No goods available\n");
+    }
+
+    // Test to test end to end by creating a TradeTable from the standard table
+    // and then creating an AvailableGoodsTable from it, and then printing out
+    // the available goods
+    #[test_log::test]
+    fn test_end_to_end() {
+        // Create a standard trade table
+        let trade_table = TradeTable::standard().expect("Failed to create standard trade table");
+        
+        // Create a world with Agricultural and Rich trade classes
+        let world_trade_classes = vec![TradeClass::Agricultural, TradeClass::Rich];
+        
+        // Create an available goods table for the world
+        let mut available_goods = AvailableGoodsTable::for_world(
+            &trade_table,
+            &world_trade_classes,
+            5, // Population 5
+            false, // No illegal goods
+        ).expect("Failed to create available goods table");
+        
+        // Price the goods with equal broker skills
+        available_goods.price_goods(0, 0);
+        
+        // Sort by discount
+        available_goods.sort_by_discount();
+        
+        // Print out the available goods
+        println!("{}", available_goods);
+    }
+
+    #[test_log::test]
+    fn test_sort_by_discount() {
+        // Create a table with multiple goods at different discount levels
+        let mut table = AvailableGoodsTable::new();
+        
+        // Add goods with different discounts
+        let good1 = AvailableGood {
+            name: "Good 1".to_string(),
+            quantity: 10,
+            base_cost: 10000,
+            cost: 5000,  // 50% of base
+            source_entry: TradeTableEntry {
+                index: 1,
+                name: "Good 1".to_string(),
+                availability: crate::table::Availability::All,
+                quantity: crate::table::Quantity { dice: 2, multiplier: 1 },
+                base_cost: 10000,
+                purchase_dm: HashMap::new(),
+                sale_dm: HashMap::new(),
+            },
+            best_purchase_dm: 0,
+            best_sale_dm: 0,
+        };
+        
+        let good2 = AvailableGood {
+            name: "Good 2".to_string(),
+            quantity: 10,
+            base_cost: 10000,
+            cost: 8000,  // 80% of base
+            source_entry: TradeTableEntry {
+                index: 2,
+                name: "Good 2".to_string(),
+                availability: crate::table::Availability::All,
+                quantity: crate::table::Quantity { dice: 2, multiplier: 1 },
+                base_cost: 10000,
+                purchase_dm: HashMap::new(),
+                sale_dm: HashMap::new(),
+            },
+            best_purchase_dm: 0,
+            best_sale_dm: 0,
+        };
+        
+        let good3 = AvailableGood {
+            name: "Good 3".to_string(),
+            quantity: 10,
+            base_cost: 10000,
+            cost: 2000,  // 20% of base
+            source_entry: TradeTableEntry {
+                index: 3,
+                name: "Good 3".to_string(),
+                availability: crate::table::Availability::All,
+                quantity: crate::table::Quantity { dice: 2, multiplier: 1 },
+                base_cost: 10000,
+                purchase_dm: HashMap::new(),
+                sale_dm: HashMap::new(),
+            },
+            best_purchase_dm: 0,
+            best_sale_dm: 0,
+        };
+        
+        // Add goods in random order
+        table.goods.push(good1);
+        table.goods.push(good2);
+        table.goods.push(good3);
+        
+        // Sort by discount
+        table.sort_by_discount();
+        
+        // Check that goods are sorted from most discounted to least discounted
+        assert_eq!(table.goods[0].name, "Good 3");  // 20% of base
+        assert_eq!(table.goods[1].name, "Good 1");  // 50% of base
+        assert_eq!(table.goods[2].name, "Good 2");  // 80% of base
+        
+        // Print the sorted table
+        println!("Sorted table:\n{}", table);
     }
 }

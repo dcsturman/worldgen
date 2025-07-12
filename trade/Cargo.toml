@@ -4,4 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+log = "0.4.27"
 rand = "0.9.1"
+test-log = "0.2.18"

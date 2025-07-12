@@ -1,3 +1,4 @@
 pub mod app;
 pub mod system_view;
+pub mod trade_view;
 pub mod world_list;

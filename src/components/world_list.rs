@@ -30,7 +30,6 @@ pub fn WorldList(#[prop(default = false)] is_companion: bool) -> impl IntoView {
                             if let Some(companion) = companion.get() {
                                 let companion = Store::new(*companion);
                                 if companion.orbit().get() == StarOrbit::Primary {
-                                    // TODO: Get rid of this clone.
                                     view! { <StarRow system=companion is_companion=true /> }
                                         .into_any()
                                 } else {
@@ -73,7 +72,6 @@ pub fn WorldList(#[prop(default = false)] is_companion: bool) -> impl IntoView {
                                         let secondary = Store::new(
                                             *primary.secondary().unwrap().get(),
                                         );
-                                        // TODO: Get rid of this clone.
                                         view! { <StarRow system=secondary is_companion=false /> }
                                             .into_any()
                                     }
@@ -81,7 +79,6 @@ pub fn WorldList(#[prop(default = false)] is_companion: bool) -> impl IntoView {
                                         let tertiary = Store::new(
                                             *primary.tertiary().unwrap().get(),
                                         );
-                                        // TODO: Get rid of this clone.
                                         view! { <StarRow system=tertiary is_companion=false /> }
                                             .into_any()
                                     }

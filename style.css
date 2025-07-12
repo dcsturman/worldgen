@@ -93,9 +93,19 @@ h1 {
   .world-table {
     font-size: 9pt !important;
   }
+  .trade-table {
+    font-size: 9pt !important;
+  }
 }
 
 .world-table {
+  color: inherit;
+  text-align: left;
+  padding: 10px;
+  border-spacing: 20px 0px;
+}
+
+.trade-table {
   color: inherit;
   text-align: left;
   padding: 10px;
@@ -175,6 +185,7 @@ h1 {
 
  .table-entry{
   padding-left: 1em;
+  color: white;
  }
 
  .blue-button {

@@ -7,10 +7,12 @@ edition = "2021"
 console_error_panic_hook = "0.1.7"
 itertools = "0.14.0"
 lazy_static = "1.5.0"
-leptos = { version = "0.7.3", features = ["csr", "ssr"] }
-leptos_meta = "0.7.3"
+leptos = { version = "0.8.2", features = ["csr", "ssr"] }
+leptos_meta = "0.8.2"
 log = "0.4.22"
-rand = "0.8.5"
-reactive_stores = "0.1.3"
+rand = "0.9.1"
+reactive_stores = "0.2.2"
 test-log = "0.2.16"
 trade = { version = "0.1.0", path = "trade" }
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
