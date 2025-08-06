@@ -1,14 +1,11 @@
 use leptos::context::Provider;
 use leptos::prelude::*;
-use leptos::tachys::view::iterators::StaticVecState;
 use reactive_stores::{Store, Subfield};
 
 use crate::components::world_list::WorldList;
 use crate::has_satellites::HasSatellites;
 use crate::system::{OrbitContent, StarOrbit, System, SystemStoreFields};
 use crate::system_tables::get_habitable;
-
-use leptos::leptos_dom::logging::console_log;
 
 fn habitable_clause(system: &System) -> String {
     let habitable = get_habitable(&system.star);

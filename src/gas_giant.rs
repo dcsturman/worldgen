@@ -89,7 +89,7 @@ impl HasSatellites for GasGiant {
             debug!("(GasGiant.gen_satellite_orbit) Having to bump orbit up by 1.");
             orbit += 1;
         }
-        debug!("(GasGiant.gen_satellite_orbit) Orbit is {}", orbit);
+        debug!("(GasGiant.gen_satellite_orbit) Orbit is {orbit}");
         orbit
     }
 
