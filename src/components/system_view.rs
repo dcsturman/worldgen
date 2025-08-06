@@ -1,16 +1,19 @@
 use leptos::context::Provider;
 use leptos::prelude::*;
-use reactive_stores::Store;
+use leptos::tachys::view::iterators::StaticVecState;
+use reactive_stores::{Store, Subfield};
 
 use crate::components::world_list::WorldList;
 use crate::has_satellites::HasSatellites;
 use crate::system::{OrbitContent, StarOrbit, System, SystemStoreFields};
 use crate::system_tables::get_habitable;
 
+use leptos::leptos_dom::logging::console_log;
+
 fn habitable_clause(system: &System) -> String {
     let habitable = get_habitable(&system.star);
     if habitable > -1 && habitable <= system.get_max_orbits() as i32 {
-        format!(" with a habitable zone at orbit {}", habitable)
+        format!(" with a habitable zone at orbit {habitable}")
     } else {
         " with no habitable zone".to_string()
     }
@@ -18,7 +21,7 @@ fn habitable_clause(system: &System) -> String {
 
 #[component]
 pub fn SystemView(main_world_name: RwSignal<String>) -> impl IntoView {
-    let system = expect_context::<Store<System>>();
+    let primary = expect_context::<Store<System>>();
 
     view! {
         <div class="output-region">
@@ -26,11 +29,11 @@ pub fn SystemView(main_world_name: RwSignal<String>) -> impl IntoView {
             "The primary star of the "
             {move || main_world_name.get()}
             " system is "
-            <b>{move || system.name().get()}</b>
+            <b>{move || primary.name().get()}</b>
             ", a "
-            {move || system.star().get().to_string()}
+            {move || primary.star().get().to_string()}
             " star"
-            {move || habitable_clause(&system.read())}
+            {move || habitable_clause(&primary.read())}
             ". "
             <SystemPreamble />
             <br />
@@ -41,7 +44,7 @@ pub fn SystemView(main_world_name: RwSignal<String>) -> impl IntoView {
 }
 
 fn lead_builder(
-    system: reactive_stores::Subfield<Store<System>, System, Option<Box<System>>>,
+    system: Subfield<Store<System>, System, Option<Box<System>>>,
     kind: &str,
 ) -> impl '_ + Fn() -> String {
     move || {
@@ -88,9 +91,9 @@ fn quantity_suffix(quantity: usize, singular: &str) -> String {
     if quantity == 0 {
         "".to_string()
     } else if quantity == 1 {
-        format!("1 {}", singular)
+        format!("1 {singular}")
     } else {
-        format!("{} {}s", quantity, singular)
+        format!("{quantity} {singular}s")
     }
 }
 

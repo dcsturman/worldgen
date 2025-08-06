@@ -1,15 +1,15 @@
 use rand::Rng;
 
 pub(crate) fn gen_planet_name() -> String {
-    PLANET_NAMES[rand::thread_rng().gen_range(0..PLANET_NAMES.len())].to_string()
+    PLANET_NAMES[rand::rng().random_range(0..PLANET_NAMES.len())].to_string()
 }
 
 pub(crate) fn gen_star_system_name() -> String {
-    STAR_SYSTEM_NAMES[rand::thread_rng().gen_range(0..STAR_SYSTEM_NAMES.len())].to_string()
+    STAR_SYSTEM_NAMES[rand::rng().random_range(0..STAR_SYSTEM_NAMES.len())].to_string()
 }
 
 pub(crate) fn gen_moon_name() -> String {
-    MOON_NAMES[rand::thread_rng().gen_range(0..MOON_NAMES.len())].to_string()
+    MOON_NAMES[rand::rng().random_range(0..MOON_NAMES.len())].to_string()
 }
 
 const STAR_SYSTEM_NAMES: [&str; 100] = [

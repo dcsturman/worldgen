@@ -37,3 +37,5 @@ yarn-error.log*
 /target
 /dist
 /debug
+/trade/target
+/trade/target
