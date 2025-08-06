@@ -1,7 +1,6 @@
 #[allow(unused_imports)]
 use leptos::leptos_dom::logging::console_log;
 use leptos::prelude::*;
-use log::{debug, info};
 use reactive_stores::Store;
 
 use trade::available_goods::AvailableGoodsTable;
@@ -41,6 +40,8 @@ pub fn App() -> impl IntoView {
     }
 }
 
+// I may want this later so allowing it to stay without a warning.
+#[allow(dead_code)]
 fn print() {
     leptos::leptos_dom::helpers::window()
         .print()
@@ -67,7 +68,6 @@ fn WorldEntryForm(
     // Regenerate the system only when the main world name or upp changes
     // Ideally this would be just the upp but I'm not sure how to do that.
     Effect::new(move |_| {
-        info!("Generating system");
         system.set(System::generate_system(main_world()));
     });
 
