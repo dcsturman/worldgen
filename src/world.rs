@@ -536,7 +536,7 @@ impl HasSatellites for World {
             orbit += 1;
         }
 
-        debug!("(World.gen_satellite_orbit) Orbit is {}", orbit);
+        debug!("(World.gen_satellite_orbit) Orbit is {orbit}");
         orbit
     }
 
