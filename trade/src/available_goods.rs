@@ -191,7 +191,6 @@ impl AvailableGoodsTable {
     /// Adjust the prices of goods based on broker skills and trade DMs
     pub fn price_goods(&mut self, buyer_broker_skill: i16, supplier_broker_skill: i16) {
         let mut rng = rand::rng();
-        
         for good in &mut self.goods {
             // Roll 2d6
             let roll = rng.random_range(1..=6) + rng.random_range(1..=6);
