@@ -1,6 +1,6 @@
 use log::{debug, error, warn};
-use rand::Rng;
 use rand::prelude::IndexedRandom;
+use rand::Rng;
 use reactive_stores::Store;
 use std::fmt::Display;
 

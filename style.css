@@ -72,6 +72,10 @@
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
+* {
+  box-sizing: border-box;
+}
+
 body {
   margin: 0;
   font-family: "Space Mono", sans-serif;
@@ -129,58 +133,66 @@ h1 {
   -moz-osx-font-smoothing: grayscale;
 }
 
-.world-entry-label {
-  text-wrap: nowrap;
-  align-content: center;
-}
-
 .world-entry-form {
   border: 1px solid #ccc;
   border-radius: 5px;
-  margin: 20px;
-  padding: 10px;
+  font-family: "Space Mono", sans-serif;
+  font-weight: 400;
   display: flex;
   flex-direction: column;
-  font-family: "Space Mono", sans-serif;
-  font-weight: 400;
+  width: fit-content;
  }
 
- .entry-input {
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  width: 150px;
-  font-family: "Space Mono", sans-serif;
-  font-weight: 400;
+.world-entry-form * {
+  display: flex;
+}
+
+.world-entry-form label {
+  flex: 1;
+}
+
+.world-text-entry {
+  flex-direction: column;
+  padding: 5px 0;
+}
+
+.world-text-entry > div {
+  padding: 2px;
+}
+
+.world-text-entry label {
+  padding-right: 10px;
+}
+
+.control-container {
+  padding: 2px 5px 2px 10px;
+  display: flex;
+  align-items: start;
+}
+
+.control-container label {
+  padding-left: 5px;
   font-size: 12pt;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
- }
+}
 
- #entry-data {
-  display: flex;
-  flex-direction: column;
+.control-container input {
+  font-size: 9pt;
+}
+
+ #entry-buttons input {
   flex: 1;
-  width: 270px;
- }
+  margin: 0 5px;
+}
 
- #entry-buttons {
-  display: flex;
-  flex-direction: row;
-  flex: 1;
-  justify-content: right;
-  width: 270px;
- }
+#world-suggestions {
+  display: none;
+}
 
- .world-entry-element {
-  display: flex;
-  flex-direction: row;
-  justify-content: space-between;
-  width: 270px;
-  margin: 2px;
-  
- }
+#world-suggestions option {
+  display: none;
+}
 
- .output-region {
+.output-region {
   border: 1px solid #ccc;
   border-radius: 5px;
   margin: 20px;
@@ -216,9 +228,7 @@ h1 {
   font-size: 12pt;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-
-  flex-grow: 1;
-
+  padding: 2px 16px;
 }
 
 .blue-button:disabled {
@@ -241,18 +251,6 @@ h1 {
 .blue-button:focus {
   box-shadow: rgba(131, 192, 253, 0.5) 0 0 0 3px;
   outline: none;
-}
-
-.input-with-checkbox {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-
-.checkbox-container {
-    display: flex;
-    align-items: center;
-    gap: 5px;
 }
 
 .loading-indicator {

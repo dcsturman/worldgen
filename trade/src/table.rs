@@ -3,6 +3,8 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct TradeTable {
+    /// map a two digit index from the trade table (for lookup after a random roll)
+    /// into a TradeTableEntry
     entries: HashMap<i16, TradeTableEntry>,
 }
 
