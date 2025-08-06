@@ -1,5 +1,5 @@
 use log::{debug, error, warn};
-use rand::seq::SliceRandom;
+use rand::prelude::IndexedRandom;
 use rand::Rng;
 use reactive_stores::Store;
 use std::fmt::Display;
@@ -253,11 +253,11 @@ impl System {
 
         while viable_giants.len() + viable_other_orbits.len() > 0 && num_planetoids > 0 {
             let orbit = if !viable_giants.is_empty() {
-                let pos = rand::thread_rng().gen_range(0..viable_giants.len());
+                let pos = rand::rng().random_range(0..viable_giants.len());
                 viable_giants.remove(pos);
                 pos
             } else {
-                let pos = rand::thread_rng().gen_range(0..viable_other_orbits.len());
+                let pos = rand::rng().random_range(0..viable_other_orbits.len());
                 viable_other_orbits.remove(pos);
                 pos
             };
@@ -351,13 +351,13 @@ impl System {
 
         while viable_outer_orbits.len() + viable_inner_orbits.len() > 0 && num_giants > 0 {
             let orbit = if !viable_outer_orbits.is_empty() {
-                let pos = rand::thread_rng().gen_range(0..viable_outer_orbits.len());
-                let orbit = viable_outer_orbits.remove(pos);
-                orbit
+                let pos = rand::rng().random_range(0..viable_outer_orbits.len());
+
+                viable_outer_orbits.remove(pos)
             } else {
-                let pos = rand::thread_rng().gen_range(0..viable_inner_orbits.len());
-                let orbit = viable_inner_orbits.remove(pos);
-                orbit
+                let pos = rand::rng().random_range(0..viable_inner_orbits.len());
+
+                viable_inner_orbits.remove(pos)
             };
 
             if roll_1d6() <= 3 {
@@ -376,8 +376,7 @@ impl System {
 
         if num_giants > 0 {
             error!(
-                "Not enough orbits for gas giants. Need {} in system {:?}",
-                original_num_giants, self
+                "Not enough orbits for gas giants. Need {original_num_giants} in system {self:?}",
             );
         }
         original_num_giants - num_giants
@@ -514,14 +513,14 @@ impl System {
         } else {
             let empty_orbits = self.get_unused_orbits();
             if !empty_orbits.is_empty() {
-                let orbit = empty_orbits[rand::thread_rng().gen_range(0..empty_orbits.len())];
+                let orbit = empty_orbits[rand::rng().random_range(0..empty_orbits.len())];
                 main_world.position_in_system = orbit;
                 main_world.orbit = orbit;
                 main_world.compute_astro_data(&self.star);
                 self.set_orbit_slot(orbit, OrbitContent::World(main_world));
             } else {
                 // Just jam the world in somewhere.
-                let pos = rand::thread_rng().gen_range(0..self.get_max_orbits());
+                let pos = rand::rng().random_range(0..self.get_max_orbits());
                 main_world.orbit = pos;
                 main_world.position_in_system = pos;
                 self.set_orbit_slot(pos, OrbitContent::World(main_world));
@@ -544,7 +543,7 @@ impl System {
         let valid_orbits = self.get_unused_orbits();
 
         for _ in 0..num_empty {
-            if let Some(pos) = valid_orbits.choose(&mut rand::thread_rng()) {
+            if let Some(pos) = valid_orbits.choose(&mut rand::rng()) {
                 self.set_orbit_slot(*pos, OrbitContent::Blocked);
             }
         }
@@ -644,21 +643,21 @@ impl Display for System {
                     }
                 }
                 Some(OrbitContent::World(world)) => {
-                    writeln!(f, "{}", world)?;
+                    writeln!(f, "{world}")?;
                 }
                 Some(OrbitContent::GasGiant(gas_giant)) => {
-                    writeln!(f, "{}", gas_giant)?;
+                    writeln!(f, "{gas_giant}")?;
                 }
                 Some(OrbitContent::Blocked) | None => {}
             }
         }
 
         if let Some(secondary) = &self.secondary {
-            writeln!(f, "\n{}", secondary)?;
+            writeln!(f, "\n{secondary}")?;
         }
 
         if let Some(tertiary) = &self.tertiary {
-            writeln!(f, "\n{}", tertiary)?;
+            writeln!(f, "\n{tertiary}")?;
         }
         Ok(())
     }
@@ -666,13 +665,13 @@ impl Display for System {
 
 impl Display for StarType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
 impl Display for StarSize {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
@@ -691,7 +690,7 @@ impl Display for StarOrbit {
         match self {
             StarOrbit::Primary => write!(f, "close orbit"),
             StarOrbit::Far => write!(f, "far orbit"),
-            StarOrbit::System(orbit) => write!(f, "orbit {}", orbit),
+            StarOrbit::System(orbit) => write!(f, "orbit {orbit}"),
         }
     }
 }
@@ -716,7 +715,7 @@ fn gen_primary_star_type(roll: i32) -> StarType {
         8 => StarType::K,
         9 => StarType::G,
         10..=11 => StarType::F,
-        _ =>  StarType::G,
+        _ => StarType::G,
     }
 }
 
@@ -939,7 +938,7 @@ mod tests {
         let main_world = World::from_upp("Main World".to_string(), main_upp, false, true);
 
         let system = System::generate_system(main_world);
-        println!("{}", system);
+        println!("{system}");
     }
 
     #[test_log::test]
@@ -951,7 +950,7 @@ mod tests {
         }
 
         let mut count_vec: Vec<_> = buckets.iter().collect();
-        count_vec.sort_by(|a, b| a.0.cmp(&b.0));
+        count_vec.sort_by(|a, b| a.0.cmp(b.0));
         for (roll, count) in count_vec {
             println!("{}: {:2.2}%", roll, *count as f32 / 100.0);
         }

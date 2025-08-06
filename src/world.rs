@@ -9,6 +9,8 @@ use crate::system::{Star, StarType};
 use crate::system_tables::{get_zone, ZoneTable};
 use crate::util::{arabic_to_roman, roll_1d6, roll_2d6};
 
+use trade::TradeClass;
+
 #[derive(Debug, Clone, Store)]
 pub struct World {
     pub name: String,
@@ -53,20 +55,6 @@ pub enum Facility {
     Colony,
     Lab,
     Military,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TradeClass {
-    Agricultural,
-    NonAgricultural,
-    Industrial,
-    NonIndustrial,
-    Rich,
-    Poor,
-    WaterWorld,
-    DesertWorld,
-    VacuumWorld,
-    Icecapped,
 }
 
 #[derive(Debug, Clone, Store)]
@@ -314,6 +302,10 @@ impl World {
         self.set_subordinate_stats(port, government, law_level, tech_level, Vec::new());
     }
 
+    pub fn get_trade_classes(&self) -> Vec<TradeClass> {
+        self.trade_classes.clone()
+    }
+
     pub fn gen_trade_classes(&mut self) {
         if self.atmosphere >= 4
             && self.atmosphere <= 9
@@ -347,14 +339,14 @@ impl World {
             self.trade_classes.push(TradeClass::WaterWorld);
         }
         if self.hydro <= 0 && self.atmosphere > 1 {
-            self.trade_classes.push(TradeClass::DesertWorld);
+            self.trade_classes.push(TradeClass::Desert);
         }
 
         if self.atmosphere <= 1 && self.hydro >= 10 {
-            self.trade_classes.push(TradeClass::Icecapped);
+            self.trade_classes.push(TradeClass::IceCapped);
         }
         if self.atmosphere <= 0 && self.population > 1 {
-            self.trade_classes.push(TradeClass::VacuumWorld);
+            self.trade_classes.push(TradeClass::Vacuum);
         }
     }
 
@@ -492,7 +484,7 @@ impl Display for World {
             self.facilities_string()
         )?;
         for satellite in self.satellites.sats.iter() {
-            writeln!(f, "\t{}", satellite)?;
+            writeln!(f, "\t{satellite}")?;
         }
         Ok(())
     }
@@ -695,23 +687,6 @@ impl Display for Facility {
             Facility::Mining => write!(f, "Mining"),
             Facility::Colony => write!(f, "Colony"),
             Facility::Lab => write!(f, "Lab"),
-        }
-    }
-}
-
-impl Display for TradeClass {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TradeClass::Agricultural => write!(f, "Ag"),
-            TradeClass::NonAgricultural => write!(f, "Na"),
-            TradeClass::Industrial => write!(f, "In"),
-            TradeClass::NonIndustrial => write!(f, "Ni"),
-            TradeClass::Rich => write!(f, "Ri"),
-            TradeClass::Poor => write!(f, "Po"),
-            TradeClass::WaterWorld => write!(f, "Wa"),
-            TradeClass::DesertWorld => write!(f, "De"),
-            TradeClass::Icecapped => write!(f, "Ic"),
-            TradeClass::VacuumWorld => write!(f, "Va"),
         }
     }
 }
