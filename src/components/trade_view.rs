@@ -1,15 +1,17 @@
 use leptos::prelude::*;
 use reactive_stores::Store;
+use crate::world::World;
 
 use trade::available_goods::AvailableGoodsTable;
 
 #[component]
-pub fn TradeView(main_world_name: RwSignal<String>) -> impl IntoView {
+pub fn TradeView() -> impl IntoView {
+    let main_world = expect_context::<Store<World>>();
     let available_goods = expect_context::<Store<AvailableGoodsTable>>();
 
     view! {
         <div class="output-region">
-            <h2>"Trade Goods for " {move || main_world_name.get()}</h2>
+            <h2>"Trade Goods for " {move || main_world.read().name.clone()} " [" {move || main_world.read().trade_classes_string()}"]" </h2>
 
             <table class="trade-table">
                 <thead>

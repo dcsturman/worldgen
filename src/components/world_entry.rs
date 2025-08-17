@@ -1,10 +1,13 @@
 use leptos::prelude::*;
+use reactive_stores::Store;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
 #[allow(unused_imports)]
 use leptos::leptos_dom::logging::console_log;
+
+use crate::world::World;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "PascalCase")]
@@ -61,7 +64,7 @@ struct SubsectorData {
 }
 
 #[component]
-pub fn WorldEntry(world_name: RwSignal<String>, uwp: RwSignal<String>) -> impl IntoView {
+pub fn WorldEntry(main_world_name: RwSignal<String>, uwp: RwSignal<String>) -> impl IntoView {
     let search_traveller_map = RwSignal::new(true);
     let (search_results, set_search_results) = signal::<Vec<(String, String, String)>>(vec![]);
     let (is_loading, set_is_loading) = signal(false);
@@ -78,7 +81,7 @@ pub fn WorldEntry(world_name: RwSignal<String>, uwp: RwSignal<String>) -> impl I
     });
 
     // Debounced search function
-    let search_query = Memo::new(move |_| world_name.get());
+    let search_query = Memo::new(move |_| main_world_name.get());
 
     let handle_uwp_input = move |ev| {
         let new_uwp = event_target_value(&ev);
@@ -133,7 +136,7 @@ pub fn WorldEntry(world_name: RwSignal<String>, uwp: RwSignal<String>) -> impl I
 
     // Handle selection from datalist
     let handle_selection = move |_| {
-        let current_name = world_name.get();
+        let current_name = main_world_name.get();
         // Find the matching result
         for (name, _, world_uwp) in search_results.get() {
             if current_name == name {
@@ -142,6 +145,7 @@ pub fn WorldEntry(world_name: RwSignal<String>, uwp: RwSignal<String>) -> impl I
             }
         }
     };
+
 
     view! {
         <>
@@ -153,7 +157,7 @@ pub fn WorldEntry(world_name: RwSignal<String>, uwp: RwSignal<String>) -> impl I
                             id="worldName"
                             class:entry-input
                             type="text"
-                            bind:value=world_name
+                            bind:value=main_world_name
                             list="world-suggestions"
                             on:input=handle_selection
                         />

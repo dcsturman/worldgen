@@ -17,24 +17,25 @@ const INITIAL_NAME: &str = "Main World";
 
 #[component]
 pub fn App() -> impl IntoView {
-    let main_world_name = RwSignal::new(INITIAL_NAME.to_string());
     let (show_system, set_show_system) = signal(false);
     let (show_trade, set_show_trade) = signal(false);
 
+    provide_context(Store::new(World::from_upp(INITIAL_NAME.to_string(), INITIAL_UPP, false, true)));
     provide_context(Store::new(System::default()));
     provide_context(Store::new(TradeTable::standard().unwrap()));
     provide_context(Store::new(AvailableGoodsTable::new()));
-
+    let main_world = expect_context::<Store<World>>();
+    let main_world_name = RwSignal::new(main_world.read().name.clone());
     view! {
         <div class:App>
             <h1 class="d-print-none">Solar System Generator</h1>
-            <WorldEntryForm main_world_name show_system set_show_system show_trade set_show_trade />
+            <WorldEntryForm show_system set_show_system show_trade set_show_trade />
             <Show when=move || {
                 show_system.get()
-            }>{move || view! { <SystemView main_world_name /> }}</Show>
+            }>{move || view! { <SystemView main_world_name=main_world_name /> }}</Show>
             <Show when=move || {
                 show_trade.get()
-            }>{move || view! { <TradeView main_world_name /> }}</Show>
+            }>{move || view! { <TradeView /> }}</Show>
             <br />
         </div>
     }
@@ -50,40 +51,52 @@ fn print() {
 
 #[component]
 fn WorldEntryForm(
-    main_world_name: RwSignal<String>,
     show_system: ReadSignal<bool>,
     set_show_system: WriteSignal<bool>,
     show_trade: ReadSignal<bool>,
     set_show_trade: WriteSignal<bool>,
 ) -> impl IntoView {
     let system = expect_context::<Store<System>>();
+    let main_world = expect_context::<Store<World>>();
     let available_goods = expect_context::<Store<AvailableGoodsTable>>();
     let trade_table = expect_context::<Store<TradeTable>>();
+
+    // When changed should change the name of main_world through an effect.
+    // But we want it separate to avoid loops in the first Effect we create.
+    let main_world_name = RwSignal::new(main_world.read().name.clone());
+
     let buyer_broker_skill = RwSignal::new(0);
     let seller_broker_skill = RwSignal::new(0);
 
     let upp = RwSignal::new(INITIAL_UPP.to_string());
-    let main_world = move || World::from_upp(main_world_name.get(), &upp.get(), false, true);
 
-    // Regenerate the system only when the main world name or upp changes
-    // Ideally this would be just the upp but I'm not sure how to do that.
     Effect::new(move |_| {
-        system.set(System::generate_system(main_world()));
+        console_log("Generating world");
+        let upp = upp.get();
+        let name = main_world_name.get();
+        let mut w = World::from_upp(name, upp.as_str(), false, true);
+        w.gen_trade_classes();
+        main_world.set(w);
+        system.set(System::generate_system(main_world.get()));
     });
 
     // Regenerate the available goods when the main world changes
     Effect::new(move |_| {
-        let new_ag = AvailableGoodsTable::for_world(
+        console_log("Generating available goods");
+        let mut new_ag = AvailableGoodsTable::for_world(
             &trade_table.get(),
-            &main_world().get_trade_classes(),
-            main_world().get_population(),
+            &main_world.read().get_trade_classes(),
+            main_world.read().get_population(),
             false,
         )
         .expect("Failed to create available goods table");
+        new_ag.price_goods(buyer_broker_skill.get(), seller_broker_skill.get());
+        new_ag.sort_by_discount(); 
         available_goods.set(new_ag);
     });
 
     Effect::new(move |_| {
+        console_log("Pricing goods");
         let mut ag = available_goods.write();
         // Price the goods based on broker skills and sort them
         ag.price_goods(buyer_broker_skill.get(), seller_broker_skill.get());
@@ -91,12 +104,11 @@ fn WorldEntryForm(
     });
 
     let handle_system_check = move |ev| set_show_system.set(event_target_checked(&ev));
-
     let handle_trade_check = move |ev| set_show_trade.set(event_target_checked(&ev));
 
     view! {
         <div class="d-print-none world-entry-form">
-            <WorldEntry world_name=main_world_name uwp=upp />
+            <WorldEntry main_world_name=main_world_name uwp=upp />
             <div id:entry-controls>
                 <div class="control-container">
                     <div>
