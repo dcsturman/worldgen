@@ -1,6 +1,7 @@
 use log::debug;
 use reactive_stores::Store;
 use std::fmt::Display;
+use leptos::leptos_dom::logging::console_log;
 
 use crate::astro::AstroData;
 use crate::has_satellites::HasSatellites;
@@ -177,7 +178,7 @@ impl World {
         world.set_subordinate_stats(port, government, law_level, tech_level, Vec::new());
         world
     }
-
+    
     pub fn gen_subordinate_facilities(
         &mut self,
         system_zones: &ZoneTable,
@@ -364,11 +365,13 @@ impl World {
     }
 
     pub fn trade_classes_string(&self) -> String {
-        self.trade_classes
+        let res = self.trade_classes
             .iter()
             .map(|x| x.to_string())
             .collect::<Vec<String>>()
-            .join(", ")
+            .join(", ");
+        console_log(format!("Generating trade classes string: {res}").as_str());
+        res
     }
 
     pub fn compute_astro_data(&mut self, star: &Star) {
