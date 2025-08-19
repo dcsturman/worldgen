@@ -1,6 +1,8 @@
 use log::debug;
 use reactive_stores::Store;
 use std::fmt::Display;
+
+#[allow(unused_imports)]
 use leptos::leptos_dom::logging::console_log;
 
 use crate::astro::AstroData;
@@ -11,40 +13,28 @@ use crate::system_tables::{get_zone, ZoneTable};
 use crate::util::{arabic_to_roman, roll_1d6, roll_2d6};
 
 use trade::TradeClass;
+use trade::PortCode;
 
-#[derive(Debug, Clone, Store)]
+#[derive(Debug, Clone, Store, PartialEq)]
 pub struct World {
     pub name: String,
     pub orbit: usize,
     pub(crate) position_in_system: usize,
     is_satellite: bool,
     is_mainworld: bool,
-    port: PortCode,
+    pub port: PortCode,
     pub(crate) size: i32,
     pub(crate) atmosphere: i32,
     pub(crate) hydro: i32,
     population: i32,
     law_level: i32,
     government: i32,
-    tech_level: i32,
+    pub tech_level: i32,
     facilities: Vec<Facility>,
     pub satellites: Satellites,
     trade_classes: Vec<TradeClass>,
     astro_data: AstroData,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PortCode {
-    A,
-    B,
-    C,
-    D,
-    E,
-    X,
-    Y,
-    H,
-    G,
-    F,
+    pub coordinates: Option<(i32, i32)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,7 +48,7 @@ pub enum Facility {
     Military,
 }
 
-#[derive(Debug, Clone, Store)]
+#[derive(Debug, Clone, Store, PartialEq)]
 pub struct Satellites {
     #[store(key: String = |world| world.name.clone())]
     pub sats: Vec<World>,
@@ -95,6 +85,7 @@ impl World {
             satellites: Satellites { sats: Vec::new() },
             trade_classes: Vec::new(),
             astro_data: AstroData::new(),
+            coordinates: None,
         }
     }
     pub fn gen_name(&mut self, system_name: &str, orbit: usize) {
@@ -320,12 +311,38 @@ impl World {
         if self.atmosphere <= 3 && self.hydro <= 3 && self.population >= 6 {
             self.trade_classes.push(TradeClass::NonAgricultural);
         }
+
+        if self.size == 0 && self.atmosphere == 0 && self.hydro == 0 && self.is_mainworld {
+            self.trade_classes.push(TradeClass::Asteroid);
+        }
+
+        if self.population == 0 && self.government == 0 && self.law_level == 0 {
+            self.trade_classes.push(TradeClass::Barren);
+        }
+
+        if self.atmosphere >= 10 && self.hydro >= 1 {
+            self.trade_classes.push(TradeClass::FluidOceans);
+        }
+        if (6..=8).contains(&self.size) && [5, 6, 8].contains(&self.atmosphere) && (5..=7).contains(&self.hydro) {
+            self.trade_classes.push(TradeClass::Garden);
+        }
+        if self.population >= 9 {
+            self.trade_classes.push(TradeClass::HighPopulation);
+        }
+        if self.tech_level >= 12 {
+            self.trade_classes.push(TradeClass::HighTech);
+        }
         if [0, 1, 2, 4, 7, 9].contains(&self.atmosphere) && self.population >= 9 {
             self.trade_classes.push(TradeClass::Industrial);
         }
         if (1..=6).contains(&self.population) {
             self.trade_classes.push(TradeClass::NonIndustrial);
         }
+
+        if self.population >= 1 && self.tech_level <= 5 {
+            self.trade_classes.push(TradeClass::LowTech);
+        }
+        
         if [6, 8].contains(&self.atmosphere)
             && [6, 7, 8].contains(&self.population)
             && self.government >= 4
@@ -370,7 +387,6 @@ impl World {
             .map(|x| x.to_string())
             .collect::<Vec<String>>()
             .join(", ");
-        console_log(format!("Generating trade classes string: {res}").as_str());
         res
     }
 
@@ -649,36 +665,6 @@ impl HasSatellites for World {
     }
 }
 
-impl PortCode {
-    pub fn from_upp(upp: &str) -> PortCode {
-        match upp.chars().next() {
-            Some('A') => PortCode::A,
-            Some('B') => PortCode::B,
-            Some('C') => PortCode::C,
-            Some('D') => PortCode::D,
-            Some('E') => PortCode::E,
-            Some('X') => PortCode::X,
-            _ => PortCode::A,
-        }
-    }
-}
-
-impl Display for PortCode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PortCode::A => write!(f, "A"),
-            PortCode::B => write!(f, "B"),
-            PortCode::C => write!(f, "C"),
-            PortCode::D => write!(f, "D"),
-            PortCode::E => write!(f, "E"),
-            PortCode::X => write!(f, "X"),
-            PortCode::Y => write!(f, "Y"),
-            PortCode::H => write!(f, "H"),
-            PortCode::G => write!(f, "G"),
-            PortCode::F => write!(f, "F"),
-        }
-    }
-}
 
 impl Display for Facility {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

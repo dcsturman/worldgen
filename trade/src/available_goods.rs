@@ -1,7 +1,8 @@
 use rand::Rng;
 use std::fmt::{Display, Formatter, Result as FmtResult};
+
+#[allow(unused_imports)]
 use leptos::leptos_dom::logging::console_log;
-use log::debug;
 
 use crate::{TradeClass, table::TradeTable, table::TradeTableEntry};
 
