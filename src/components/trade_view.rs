@@ -19,14 +19,9 @@ pub fn TradeView() -> impl IntoView {
     let buyer_broker_skill = RwSignal::new(0);
     let seller_broker_skill = RwSignal::new(0);
     let steward_skill = RwSignal::new(0);
+    let show_sell_price = RwSignal::new(false);
 
-    // Effect to update goods pricing when broker skills change
-    Effect::new(move |_| {
-        let mut ag = available_goods.write();
-        ag.price_goods(buyer_broker_skill.get(), seller_broker_skill.get());
-        ag.sort_by_discount();
-    });
-
+    
     // Destination world state
     let dest_world_name = RwSignal::new("".to_string());
     let dest_uwp = RwSignal::new("".to_string());
@@ -45,6 +40,25 @@ pub fn TradeView() -> impl IntoView {
         } else {
             None
         }
+    });
+
+    // Effect to reset show_sell_price when UPPs change
+    Effect::new(move |_| {
+        let _ = main_world.read().to_upp();
+        let _ = dest_uwp.get();
+        show_sell_price.set(false);
+    });
+
+    // Effect to update goods pricing when broker skills change, main world (trade classes) change, or destination world changes.
+    Effect::new(move |_| {
+        let mut ag = available_goods.write();
+        ag.price_goods_to_buy(&main_world.read().get_trade_classes(), buyer_broker_skill.get(), seller_broker_skill.get());
+        ag.price_goods_to_sell(
+            dest_world.get().as_ref().map(|w| w.get_trade_classes()), 
+            buyer_broker_skill.get(), 
+            seller_broker_skill.get()
+        );
+        ag.sort_by_discount();
     });
 
     // Effect to calculate distance when coordinates change
@@ -166,13 +180,38 @@ pub fn TradeView() -> impl IntoView {
             <h4 style="font-size: 14pt;">"Speculation Goods"</h4>
             <table class="trade-table">
                 <thead>
-                    <tr>
-                        <th class="table-entry">"Good"</th>
-                        <th class="table-entry">"Quantity"</th>
-                        <th class="table-entry">"Price"</th>
-                        <th class="table-entry">"Base Price"</th>
-                        <th class="table-entry">"Discount"</th>
-                    </tr>
+                    {move || {
+                        if dest_world.get().is_none() {
+                            view! {
+                                <tr>
+                                    <th class="table-entry">"Good"</th>
+                                    <th class="table-entry">"Quantity"</th>
+                                    <th class="table-entry">"Base Price"</th>
+                                    <th class="table-entry">"Buy Price"</th>
+                                    <th class="table-entry">"Discount"</th>
+                                </tr>
+                            }.into_any()
+                        } else {
+                            view! {
+                                <tr>
+                                    <th class="table-entry">"Good"</th>
+                                    <th class="table-entry">"Quantity"</th>
+                                    <th class="table-entry">"Base Price"</th>                                    
+                                    <th class="table-entry">"Buy Price"</th>
+                                    <th class="table-entry">"Discount"</th>
+                                    <Show when=move || show_sell_price.get()>
+                                        <th class="table-entry">"Sell Price"</th>
+                                        <th class="table-entry">"Discount"</th>
+                                    </Show>
+                                    <Show when=move || !show_sell_price.get()>
+                                        <th class="table-entry">
+                                            <button class="sell-price-button" on:click=move |_| show_sell_price.set(true)>"Sell Price"</button>
+                                        </th>
+                                    </Show>
+                                </tr>
+                            }.into_any()
+                        }
+                    }}
                 </thead>
                 <tbody>
                     {move || {
@@ -192,16 +231,41 @@ pub fn TradeView() -> impl IntoView {
                                     let discount_percent = (good.cost as f64 / good.base_cost as f64
                                         * 100.0)
                                         .round() as i32;
-                                    view! {
-                                        <tr>
-                                            <td class="table-entry">{good.name.clone()}</td>
-                                            <td class="table-entry">{good.quantity.to_string()}</td>
-                                            <td class="table-entry">{good.cost.to_string()}</td>
-                                            <td class="table-entry">{good.base_cost.to_string()}</td>
-                                            <td class="table-entry">
-                                                {discount_percent.to_string()}"%"
-                                            </td>
-                                        </tr>
+                                    if let Some(sell_price) = good.sell_price {
+                                        let sell_discount_percent = (sell_price as f64 / good.base_cost as f64 * 100.0).round() as i32;
+                                        view! {
+                                            <tr>
+                                                <td class="table-entry">{good.name.clone()}</td>
+                                                <td class="table-entry">{good.quantity.to_string()}</td>
+                                                <td class="table-entry">{good.base_cost.to_string()}</td>
+                                                <td class="table-entry">{good.cost.to_string()}</td>
+                                                <td class="table-entry">
+                                                    {discount_percent.to_string()}"%"
+                                                </td>
+                                                <Show when=move || show_sell_price.get()>
+                                                    <td class="table-entry">{sell_price.to_string()}</td>
+                                                    <td class="table-entry">
+                                                        {sell_discount_percent.to_string()}"%"
+                                                    </td>
+                                                </Show>
+                                            </tr>
+                                        }.into_any()
+                                    } else {
+                                        view! {
+                                            <tr>
+                                                <td class="table-entry">{good.name.clone()}</td>
+                                                <td class="table-entry">{good.quantity.to_string()}</td>
+                                                <td class="table-entry">{good.base_cost.to_string()}</td>
+                                                <td class="table-entry">{good.cost.to_string()}</td>
+                                                <td class="table-entry">
+                                                    {discount_percent.to_string()}"%"
+                                                </td>
+                                                <Show when=move || show_sell_price.get()>
+                                                    <td class="table-entry">"-"</td>
+                                                    <td class="table-entry">"-"</td>
+                                                </Show>
+                                            </tr>
+                                        }.into_any()
                                     }
                                 })
                                 .collect::<Vec<_>>()

@@ -77,7 +77,7 @@ fn WorldEntryForm(
         system.set(System::generate_system(main_world.get()));
     });
 
-    // Regenerate the available goods when the UPP changes (not the name)
+    // Regenerate the available goods when the UPP of the main world changes (not the name)
     Effect::new(move |_| {
         let upp = upp.get(); // Only track UPP changes
         
@@ -94,7 +94,8 @@ fn WorldEntryForm(
         .expect("Failed to create available goods table");
         
         // Apply default pricing (0 broker skills)
-        new_ag.price_goods(0, 0);
+        new_ag.price_goods_to_buy(&temp_world.get_trade_classes(), 0, 0);
+        new_ag.price_goods_to_sell(None, 0, 0);
         new_ag.sort_by_discount();
         
         available_goods.set(new_ag);
