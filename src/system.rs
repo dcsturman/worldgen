@@ -122,7 +122,7 @@ impl System {
     }
 
     pub fn get_max_orbits(&self) -> usize {
-        self.orbit_slots.len()
+        self.orbit_slots.len() - 1
     }
 
     pub fn is_slot_empty(&self, orbit: usize) -> bool {
