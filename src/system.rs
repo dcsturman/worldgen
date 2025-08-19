@@ -520,7 +520,11 @@ impl System {
                 self.set_orbit_slot(orbit, OrbitContent::World(main_world));
             } else {
                 // Just jam the world in somewhere.
-                let pos = rand::rng().random_range(0..self.get_max_orbits());
+                let pos = if self.get_max_orbits() == 0 {
+                    0
+                } else {
+                    rand::rng().random_range(0..self.get_max_orbits())
+                };
                 main_world.orbit = pos;
                 main_world.position_in_system = pos;
                 self.set_orbit_slot(pos, OrbitContent::World(main_world));
