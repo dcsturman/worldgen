@@ -85,9 +85,15 @@ body {
   font-size: 12pt;
 }
 h1 {
-  margin-left: 20px;
+  margin-left: 0px;
 }
 
+input[type="number"] {
+  font-size: 9pt;
+}
+input[type="text"] {
+  font-size: 9pt;
+}
 @media print {
   .output-region {
     font-size: 9pt !important;
@@ -109,11 +115,21 @@ h1 {
   border-spacing: 20px 0px;
 }
 
+.world-table td,
+.world-table th {
+  padding: 2px 12px;
+}
+
 .trade-table {
   color: inherit;
   text-align: left;
-  padding: 10px;
-  border-spacing: 20px 0px;
+  padding: 1cqi;
+  border-spacing: 15px 2px;
+}
+
+.trade-table td,
+.trade-table th {
+  padding: 2px 12px;
 }
 
 .App {
@@ -151,6 +167,10 @@ h1 {
   flex: 1;
 }
 
+.world-entry-form input[type="text"] {
+  width: 130px;
+}
+
 .world-text-entry {
   flex-direction: column;
   padding: 5px 0;
@@ -175,10 +195,6 @@ h1 {
   font-size: 12pt;
 }
 
-.control-container input {
-  font-size: 9pt;
-}
-
  #entry-buttons input {
   flex: 1;
   margin: 0 5px;
@@ -195,13 +211,15 @@ h1 {
 .output-region {
   border: 1px solid #ccc;
   border-radius: 5px;
-  margin: 20px;
+  margin-top: 20px;
   padding: 10px;
   overflow: auto;
+  width: fit-content;
+
  }
 
  .table-entry{
-  padding-left: 1em;
+  padding-left: 0em;
   color: white;
  }
 
@@ -257,4 +275,65 @@ h1 {
     margin-left: 10px;
     font-size: 0.8em;
     color: #666;
+}
+
+.world-suggestions {
+  display: none;
+}
+
+.destination-world-entry {
+  display: flex;
+  flex-direction: row;
+  margin-bottom: 10px;
+  gap: 15px;
+  width: fit-content;
+}
+
+.destination-world-entry input[type="text"] {
+  width: 130px;
+}
+
+.distance-input {
+  width: 50px;
+}
+
+.passengers-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.passenger-type {
+    text-align: center;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    padding: 0.5rem;
+}
+
+.passenger-type h4 {
+    font-size: 10pt;
+    margin: 0;
+}
+
+.passenger-count {
+    font-size: 12pt;
+    font-weight: bold;
+    margin-top: 0.5rem;
+}
+
+.freight-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.freight-lot {
+    text-align: center;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    padding: 0.25rem;
+    background-color: rgba(255, 255, 255, 0.1);
+    color: white;
 }

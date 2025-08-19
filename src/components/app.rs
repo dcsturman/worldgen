@@ -24,15 +24,14 @@ pub fn App() -> impl IntoView {
     provide_context(Store::new(System::default()));
     provide_context(Store::new(TradeTable::standard().unwrap()));
     provide_context(Store::new(AvailableGoodsTable::new()));
-    let main_world = expect_context::<Store<World>>();
-    let main_world_name = RwSignal::new(main_world.read().name.clone());
+
     view! {
         <div class:App>
             <h1 class="d-print-none">Solar System Generator</h1>
             <WorldEntryForm show_system set_show_system show_trade set_show_trade />
             <Show when=move || {
                 show_system.get()
-            }>{move || view! { <SystemView main_world_name=main_world_name /> }}</Show>
+            }>{move || view! { <SystemView /> }}</Show>
             <Show when=move || {
                 show_trade.get()
             }>{move || view! { <TradeView /> }}</Show>
@@ -63,44 +62,42 @@ fn WorldEntryForm(
 
     // When changed should change the name of main_world through an effect.
     // But we want it separate to avoid loops in the first Effect we create.
-    let main_world_name = RwSignal::new(main_world.read().name.clone());
-
-    let buyer_broker_skill = RwSignal::new(0);
-    let seller_broker_skill = RwSignal::new(0);
+    let main_world_name = RwSignal::new(main_world.read_untracked().name.clone());
+    let origin_coords = RwSignal::new(None::<(i32, i32)>);
 
     let upp = RwSignal::new(INITIAL_UPP.to_string());
 
     Effect::new(move |_| {
-        console_log("Generating world");
         let upp = upp.get();
         let name = main_world_name.get();
         let mut w = World::from_upp(name, upp.as_str(), false, true);
+        w.coordinates = origin_coords.get();
         w.gen_trade_classes();
         main_world.set(w);
         system.set(System::generate_system(main_world.get()));
     });
 
-    // Regenerate the available goods when the main world changes
+    // Regenerate the available goods when the UPP changes (not the name)
     Effect::new(move |_| {
-        console_log("Generating available goods");
+        let upp = upp.get(); // Only track UPP changes
+        
+        // Create a temporary world just to get trade classes and population
+        let mut temp_world = World::from_upp("temp".to_string(), upp.as_str(), false, true);
+        temp_world.gen_trade_classes();
+        
         let mut new_ag = AvailableGoodsTable::for_world(
             &trade_table.get(),
-            &main_world.read().get_trade_classes(),
-            main_world.read().get_population(),
+            &temp_world.get_trade_classes(),
+            temp_world.get_population(),
             false,
         )
         .expect("Failed to create available goods table");
-        new_ag.price_goods(buyer_broker_skill.get(), seller_broker_skill.get());
-        new_ag.sort_by_discount(); 
+        
+        // Apply default pricing (0 broker skills)
+        new_ag.price_goods(0, 0);
+        new_ag.sort_by_discount();
+        
         available_goods.set(new_ag);
-    });
-
-    Effect::new(move |_| {
-        console_log("Pricing goods");
-        let mut ag = available_goods.write();
-        // Price the goods based on broker skills and sort them
-        ag.price_goods(buyer_broker_skill.get(), seller_broker_skill.get());
-        ag.sort_by_discount();
     });
 
     let handle_system_check = move |ev| set_show_system.set(event_target_checked(&ev));
@@ -108,7 +105,7 @@ fn WorldEntryForm(
 
     view! {
         <div class="d-print-none world-entry-form">
-            <WorldEntry main_world_name=main_world_name uwp=upp />
+            <WorldEntry main_world_name=main_world_name uwp=upp origin_coords=origin_coords />
             <div id:entry-controls>
                 <div class="control-container">
                     <div>
@@ -132,36 +129,6 @@ fn WorldEntryForm(
                         <label for="show-trade-box">"Trade"</label>
                     </div>
                 </div>
-                <Show when=move || show_trade.get()>
-                <div class="control-container">
-                    <label for="buyer-broker-skill">"Buyer Broker Skill:"</label>
-                    <input
-                        type="number"
-                        id="buyer-broker-skill"
-                        min="0"
-                        max="100"
-                        value=move || buyer_broker_skill.get()
-                        on:change=move |ev| {
-                            buyer_broker_skill.set(event_target_value(&ev).parse().unwrap_or(0));
-                        }
-                    />
-                </div>
-                </Show>
-                <Show when=move || show_trade.get()>
-                <div class="control-container">
-                    <label for="seller-broker-skill">"Seller Broker Skill:"</label>
-                    <input
-                        type="number"
-                        id="seller-broker-skill"
-                        min="0"
-                        max="100"
-                        value=move || seller_broker_skill.get()
-                        on:change=move |ev| {
-                            seller_broker_skill.set(event_target_value(&ev).parse().unwrap_or(0));
-                        }
-                    />
-                </div>
-                </Show>
             </div>
         </div>
     }

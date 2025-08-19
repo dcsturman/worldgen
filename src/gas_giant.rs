@@ -6,7 +6,8 @@ use crate::name_tables::{gen_moon_name, gen_planet_name};
 use crate::system::Star;
 use crate::system_tables::ZoneTable;
 use crate::util::{arabic_to_roman, roll_1d6, roll_2d6};
-use crate::world::{PortCode, Satellites, World};
+use crate::world::{Satellites, World};
+use trade::PortCode;
 use std::fmt::Display;
 
 #[derive(Debug, Clone, Store)]
