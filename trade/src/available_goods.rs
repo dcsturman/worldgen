@@ -1,6 +1,8 @@
 use rand::Rng;
 use std::fmt::{Display, Formatter, Result as FmtResult};
-use log::debug;
+
+#[allow(unused_imports)]
+use leptos::leptos_dom::logging::console_log;
 
 use crate::{TradeClass, table::TradeTable, table::TradeTableEntry};
 
@@ -193,7 +195,7 @@ impl AvailableGoodsTable {
         let mut rng = rand::rng();
         for good in &mut self.goods {
             // Roll 2d6
-            let roll = rng.random_range(1..=6) + rng.random_range(1..=6);
+            let roll = rng.random_range(1..=6) + rng.random_range(1..=6) + rng.random_range(1..=6);
             
             // Calculate the modified roll
             let modified_roll = roll as i16 
@@ -201,14 +203,6 @@ impl AvailableGoodsTable {
                 - supplier_broker_skill 
                 + good.best_purchase_dm 
                 - good.best_sale_dm;
-            debug!("Roll: {}, Buyer skill: {}, Supplier skill: {}, Purchase DM: {}, Sale DM: {}, Modified roll: {}",
-                roll, 
-                buyer_broker_skill, 
-                supplier_broker_skill, 
-                good.best_purchase_dm, 
-                good.best_sale_dm, 
-                modified_roll
-            );
             
             // Determine the price multiplier based on the modified roll
             let price_multiplier = match modified_roll {

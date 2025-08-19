@@ -2,6 +2,7 @@ use std::fmt::Display;
 
 pub mod table;
 pub mod available_goods;
+pub mod available_passengers;
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub enum TradeClass {
@@ -200,5 +201,57 @@ pub fn upp_to_trade_classes(upp: &[char]) -> Vec<TradeClass> {
 
     trade_classes
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PortCode {
+    A, B, C, D, E, X, Y, H, G, F,
+}
+
+impl PortCode {
+    pub fn from_upp(upp: &str) -> PortCode {
+        match upp.chars().next() {
+            Some('A') => PortCode::A,
+            Some('B') => PortCode::B,
+            Some('C') => PortCode::C,
+            Some('D') => PortCode::D,
+            Some('E') => PortCode::E,
+            Some('X') => PortCode::X,
+            _ => PortCode::A,
+        }
+    }
+}
+
+impl std::fmt::Display for PortCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PortCode::A => write!(f, "A"),
+            PortCode::B => write!(f, "B"),
+            PortCode::C => write!(f, "C"),
+            PortCode::D => write!(f, "D"),
+            PortCode::E => write!(f, "E"),
+            PortCode::X => write!(f, "X"),
+            PortCode::Y => write!(f, "Y"),
+            PortCode::H => write!(f, "H"),
+            PortCode::G => write!(f, "G"),
+            PortCode::F => write!(f, "F"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ZoneClassification {
+    Amber,
+    Red,
+}
+
+impl std::fmt::Display for ZoneClassification {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ZoneClassification::Amber => write!(f, "Amber"),
+            ZoneClassification::Red => write!(f, "Red"),
+        }
+    }
+}
+
 
 

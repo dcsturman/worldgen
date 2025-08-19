@@ -1929,6 +1929,7 @@ dependencies = [
 name = "trade"
 version = "0.1.0"
 dependencies = [
+ "leptos",
  "log",
  "rand",
  "test-log",

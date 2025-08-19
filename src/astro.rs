@@ -11,7 +11,7 @@ const ICE_ALBEDO: f32 = 0.85;
 const CLOUD_ALBEDO: f32 = 0.5;
 const EARTH_TEMP: f32 = 288.0;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AstroData {
     // Orbital period in Earth years
     orbital_period: f32,

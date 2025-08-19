@@ -6,6 +6,7 @@ use crate::components::world_list::WorldList;
 use crate::has_satellites::HasSatellites;
 use crate::system::{OrbitContent, StarOrbit, System, SystemStoreFields};
 use crate::system_tables::get_habitable;
+use crate::world::World;
 
 fn habitable_clause(system: &System) -> String {
     let habitable = get_habitable(&system.star);
@@ -17,14 +18,14 @@ fn habitable_clause(system: &System) -> String {
 }
 
 #[component]
-pub fn SystemView(main_world_name: RwSignal<String>) -> impl IntoView {
+pub fn SystemView() -> impl IntoView {
     let primary = expect_context::<Store<System>>();
-
+    let main_world = expect_context::<Store<World>>();
     view! {
         <div class="output-region">
-            <h2>"The " {move || main_world_name.get()} " System"</h2>
+            <h2>"The " {move || main_world.read().name.clone()} " System"</h2>
             "The primary star of the "
-            {move || main_world_name.get()}
+            {move || main_world.read().name.clone()}
             " system is "
             <b>{move || primary.name().get()}</b>
             ", a "
@@ -97,6 +98,7 @@ fn quantity_suffix(quantity: usize, singular: &str) -> String {
 #[component]
 pub fn SystemPreamble() -> impl IntoView {
     let system = expect_context::<Store<System>>();
+    let main_world = expect_context::<Store<World>>();
 
     let secondary_lead = lead_builder(system.secondary(), "secondary");
     let tertiary_lead = lead_builder(system.tertiary(), "tertiary");
@@ -134,7 +136,7 @@ pub fn SystemPreamble() -> impl IntoView {
                 }>
                     {move || {
                         view! {
-                            {system.read().name.clone()}
+                            {main_world.read().name.clone()}
                             " has "
                             {move || {
                                 itertools::Itertools::intersperse(
