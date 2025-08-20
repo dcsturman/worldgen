@@ -33,7 +33,10 @@ pub fn TradeView() -> impl IntoView {
         let name = dest_world_name.get();
         let uwp = dest_uwp.get();
         if !name.is_empty() && uwp.len() == 9 {
-            let mut world = World::from_upp(name, &uwp, false, false);
+            let Ok(mut world) = World::from_upp(name, &uwp, false, false) else {
+                log::error!("Failed to parse UPP in hook to build destination world: {uwp}");
+                return None;
+            };
             world.gen_trade_classes();
             world.coordinates = dest_coords.get();
             Some(world)
@@ -64,9 +67,11 @@ pub fn TradeView() -> impl IntoView {
     // Effect to calculate distance when coordinates change
     Effect::new(move |_| {
         if let (Some(origin), Some(dest)) = (main_world.read().coordinates, dest_coords.get()) {
+            console_log(format!("Calculating distance ({},{}) to ({},{}).", origin.0, origin.1, dest.0, dest.1).as_str());
             let calculated_distance = crate::components::traveller_map::calculate_hex_distance(
                 origin.0, origin.1, dest.0, dest.1
             );
+            console_log(format!("Calculated distance: {calculated_distance}").as_str());
             distance.set(calculated_distance);
         }
     });
@@ -74,7 +79,7 @@ pub fn TradeView() -> impl IntoView {
     // Effect to update passengers when destination world, distance, or steward skill changes
     Effect::new(move |_| {
         if let Some(world) = dest_world.get() {
-            if main_world.read().coordinates.is_some() && world.coordinates.is_some() {
+            if distance.get() > 0 {
                 available_passengers.set(Some(trade::available_passengers::AvailablePassengers::generate(
                     main_world.read().get_population(),
                     main_world.read().port,
@@ -166,6 +171,7 @@ pub fn TradeView() -> impl IntoView {
                         value=move || distance.get().to_string()
                         on:input=move |ev| {
                             if let Ok(val) = event_target_value(&ev).parse::<i32>() {
+                                console_log(format!("Setting distance to {}", val).as_str());
                                 distance.set(val);
                             }
                         }

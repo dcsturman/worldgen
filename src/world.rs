@@ -146,15 +146,15 @@ impl World {
             self.tech_level
         )
     }
-    pub fn from_upp(name: String, upp: &str, is_satellite: bool, is_mainworld: bool) -> World {
+    pub fn from_upp(name: String, upp: &str, is_satellite: bool, is_mainworld: bool) -> Result<World, Box<dyn std::error::Error>> {
         let port = PortCode::from_upp(upp);
-        let size = i32::from_str_radix(&upp[1..2], 16).unwrap();
-        let atmosphere = i32::from_str_radix(&upp[2..3], 16).unwrap();
-        let hydro = i32::from_str_radix(&upp[3..4], 16).unwrap();
-        let population = i32::from_str_radix(&upp[4..5], 16).unwrap();
-        let government = i32::from_str_radix(&upp[5..6], 16).unwrap();
-        let law_level = i32::from_str_radix(&upp[6..7], 16).unwrap();
-        let tech_level = i32::from_str_radix(&upp[8..9], 16).unwrap();
+        let size = i32::from_str_radix(&upp[1..2], 16)?;
+        let atmosphere = i32::from_str_radix(&upp[2..3], 16)?;
+        let hydro = i32::from_str_radix(&upp[3..4], 16)?;
+        let population = i32::from_str_radix(&upp[4..5], 16)?;
+        let government = i32::from_str_radix(&upp[5..6], 16)?;
+        let law_level = i32::from_str_radix(&upp[6..7], 16)?;
+        let tech_level = i32::from_str_radix(&upp[8..9], 16)?;
         let mut world = World::new(
             name,
             0,
@@ -167,7 +167,7 @@ impl World {
             is_mainworld,
         );
         world.set_subordinate_stats(port, government, law_level, tech_level, Vec::new());
-        world
+        Ok(world)
     }
     
     pub fn gen_subordinate_facilities(
