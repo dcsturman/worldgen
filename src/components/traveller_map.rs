@@ -3,6 +3,9 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use serde::{Deserialize, Serialize};
 
+#[allow(unused_imports)]
+use leptos::leptos_dom::logging::console_log;
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "PascalCase")]
 pub struct TravellerMapResponse {
