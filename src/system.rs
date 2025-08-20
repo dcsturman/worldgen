@@ -939,7 +939,7 @@ mod tests {
     #[test_log::test]
     fn test_generate_system() {
         let main_upp = "A788899-A";
-        let main_world = World::from_upp("Main World".to_string(), main_upp, false, true);
+        let main_world = World::from_upp("Main World".to_string(), main_upp, false, true).unwrap();
 
         let system = System::generate_system(main_world);
         println!("{system}");

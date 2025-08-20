@@ -20,7 +20,7 @@ pub fn App() -> impl IntoView {
     let (show_system, set_show_system) = signal(false);
     let (show_trade, set_show_trade) = signal(false);
 
-    provide_context(Store::new(World::from_upp(INITIAL_NAME.to_string(), INITIAL_UPP, false, true)));
+    provide_context(Store::new(World::from_upp(INITIAL_NAME.to_string(), INITIAL_UPP, false, true).unwrap()));
     provide_context(Store::new(System::default()));
     provide_context(Store::new(TradeTable::standard().unwrap()));
     provide_context(Store::new(AvailableGoodsTable::new()));
@@ -70,7 +70,11 @@ fn WorldEntryForm(
     Effect::new(move |_| {
         let upp = upp.get();
         let name = main_world_name.get();
-        let mut w = World::from_upp(name, upp.as_str(), false, true);
+        let Ok(mut w) = World::from_upp(name, upp.as_str(), false, true) else {
+            // If the upp is not properly structured, then just give up and bail out.
+            log::error!("Failed to parse UPP in hook to build main world: {upp}");
+            return;
+        };
         w.coordinates = origin_coords.get();
         w.gen_trade_classes();
         main_world.set(w);
@@ -82,7 +86,11 @@ fn WorldEntryForm(
         let upp = upp.get(); // Only track UPP changes
         
         // Create a temporary world just to get trade classes and population
-        let mut temp_world = World::from_upp("temp".to_string(), upp.as_str(), false, true);
+        let Ok(mut temp_world) = World::from_upp("temp".to_string(), upp.as_str(), false, true) else {
+            log::error!("Failed to parse UPP in hook to build prices: {upp}");
+            return;
+        };
+
         temp_world.gen_trade_classes();
         
         let mut new_ag = AvailableGoodsTable::for_world(
