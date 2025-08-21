@@ -3,17 +3,11 @@ use leptos::prelude::*;
 #[component]
 pub fn Selector() -> impl IntoView {
     let navigate_to_trade = move |_| {
-        let _ = web_sys::window()
-            .unwrap()
-            .location()
-            .set_href("/trade");
+        let _ = web_sys::window().unwrap().location().set_href("/trade");
     };
 
     let navigate_to_world = move |_| {
-        let _ = web_sys::window()
-            .unwrap()
-            .location()
-            .set_href("/world");
+        let _ = web_sys::window().unwrap().location().set_href("/world");
     };
 
     view! {

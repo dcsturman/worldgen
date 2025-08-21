@@ -176,6 +176,9 @@ impl AvailablePassengers {
                 passengers.freight_lots.push(FreightLot { size });
             }
         }
+
+        // Sort freight lots by size (largest first)
+        passengers.freight_lots.sort_by(|a, b| b.size.cmp(&a.size));
     }
 
     #[allow(clippy::too_many_arguments)]
