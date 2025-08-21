@@ -14,6 +14,8 @@ pub struct AvailableGood {
     pub name: String,
     /// Available quantity
     pub quantity: i32,
+    /// Purchased quantity
+    pub purchased: i32,
     /// Original base cost of the good
     pub base_cost: i32,
     /// Current cost of the good (after pricing)
@@ -21,10 +23,6 @@ pub struct AvailableGood {
     pub sell_price: Option<i32>,
     /// Original trade table entry this good was derived from
     pub source_entry: TradeTableEntry,
-    // Best purchase DM for this good on this world (if any)
-    //pub best_purchase_origin_dm: i16,
-    // Best sale DM for this good on this world (if any)
-    //pub best_sale_origin_dm: i16,
 }
 
 impl Display for AvailableGood {
@@ -42,7 +40,7 @@ impl Display for AvailableGood {
 #[derive(Debug, Clone, Default)]
 pub struct AvailableGoodsTable {
     /// List of available goods
-    goods: Vec<AvailableGood>,
+    pub goods: Vec<AvailableGood>,
 }
 
 impl Display for AvailableGoodsTable {
@@ -146,6 +144,7 @@ impl AvailableGoodsTable {
         let good = AvailableGood {
             name: entry.name.clone(),
             quantity,
+            purchased: 0,
             base_cost: entry.base_cost,
             cost: entry.base_cost,
             sell_price: None,
@@ -532,6 +531,7 @@ mod tests {
             quantity: 10,
             base_cost: 5000,
             cost: 5000,
+            purchased: 0,
             sell_price: None,
             source_entry: TradeTableEntry {
                 index: 1,
@@ -606,6 +606,7 @@ mod tests {
             quantity: 10,
             base_cost: 10000,
             cost: 5000, // 50% of base
+            purchased: 0,
             sell_price: None,
             source_entry: TradeTableEntry {
                 index: 1,
@@ -626,6 +627,7 @@ mod tests {
             quantity: 10,
             base_cost: 10000,
             cost: 8000, // 80% of base
+            purchased: 0,
             sell_price: None,
             source_entry: TradeTableEntry {
                 index: 2,
@@ -646,6 +648,7 @@ mod tests {
             quantity: 10,
             base_cost: 10000,
             cost: 2000, // 20% of base
+            purchased: 0,
             sell_price: None,
             source_entry: TradeTableEntry {
                 index: 3,

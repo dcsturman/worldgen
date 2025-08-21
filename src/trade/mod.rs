@@ -2,6 +2,7 @@ use std::fmt::Display;
 
 pub mod available_goods;
 pub mod available_passengers;
+pub mod ship_manifest;
 pub mod table;
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
