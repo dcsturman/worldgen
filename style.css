@@ -121,6 +121,19 @@ input[type="text"] {
   padding: 2px 12px;
 }
 
+.world-table th:nth-child(4),
+.world-table td:nth-child(4) {
+  min-width: 100px;
+  white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+  .world-table th:nth-child(4),
+  .world-table td:nth-child(4) {
+    min-width: 110px;
+  }
+}
+
 .trade-table {
   color: inherit;
   text-align: left;
@@ -334,9 +347,28 @@ input[type="text"] {
 
 .passenger-type {
     text-align: center;
-    border: 1px solid #ccc;
+    border: 1px solid #ccc !important;
     border-radius: 5px;
     padding: 0.5rem;
+    background: none;
+    color: white;
+    cursor: pointer;
+    font-family: inherit;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    outline: none;
+    box-shadow: none;
+}
+
+.passenger-type:focus {
+    outline: none;
+    border: 1px solid #ccc !important;
+}
+
+.passenger-type:active {
+    background-image: linear-gradient(#3D94D9, #0067B9);
+    border: 1px solid #006DBC !important;
 }
 
 .passenger-type h4 {
@@ -348,6 +380,25 @@ input[type="text"] {
     font-size: 12pt;
     font-weight: bold;
     margin-top: 0.5rem;
+}
+
+.passenger-button {
+    background: none;
+    border: none;
+    color: white;
+    font-size: 12pt;
+    font-weight: bold;
+    margin-top: 0.5rem;
+    cursor: pointer;
+    padding: 0;
+    font-family: inherit;
+}
+
+.passenger-button:active {
+    background-image: linear-gradient(#3D94D9, #0067B9);
+    border: 1px solid #006DBC;
+    border-radius: 4px;
+    padding: 2px 4px;
 }
 
 .freight-grid {
@@ -364,6 +415,13 @@ input[type="text"] {
     padding: 0.25rem;
     background-color: rgba(255, 255, 255, 0.1);
     color: white;
+    cursor: pointer;
+    font-family: inherit;
+}
+
+.freight-selected {
+    background-image: linear-gradient(#3D94D9, #0067B9);
+    border: 1px solid #006DBC;
 }
 
 .sell-price-button {
@@ -431,4 +489,137 @@ input[type="text"] {
 
 .tool-card button {
     align-self: center;
+}
+
+.manifest-container {
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    background: rgba(0, 0, 0, 0.3);
+    width: fit-content;
+}
+
+.manifest-section {
+    margin-bottom: 1rem;
+}
+
+.manifest-section h5 {
+    margin: 0 0 0.5rem 0;
+    color: #51A9EE;
+    font-size: 12pt;
+}
+
+.manifest-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.5rem;
+}
+
+.manifest-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.25rem 0.5rem;
+    border: 1px solid #555;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.manifest-label {
+    font-weight: normal;
+}
+
+.manifest-value {
+    font-weight: bold;
+    color: #51A9EE;
+}
+
+.manifest-freight {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.freight-item {
+    padding: 0.25rem 0.5rem;
+    border: 1px solid #555;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.05);
+    font-size: 10pt;
+}
+
+.manifest-goods {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.goods-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.25rem 0.5rem;
+    border: 1px solid #555;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.manifest-button {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid #555;
+    color: white;
+    cursor: pointer;
+    font-family: inherit;
+}
+
+.manifest-button:active {
+    background-image: linear-gradient(#3D94D9, #0067B9);
+    border: 1px solid #006DBC;
+}
+
+.manifest-summary {
+    margin-bottom: 1rem;
+    padding: 0.5rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid #555;
+    border-radius: 3px;
+    font-size: 10pt;
+}
+
+.summary-line {
+    text-align: center;
+}
+
+.summary-line strong {
+    color: #51A9EE;
+}
+
+@media (max-width: 768px) {
+    .manifest-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 768px) {
+  .world-table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+}
+
+.purchased-input {
+    width: 60px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid #555;
+    color: white;
+    padding: 0.25rem;
+    border-radius: 3px;
+    font-family: inherit;
+    text-align: center;
+}
+
+.purchased-input:focus {
+    outline: none;
+    border-color: #3D94D9;
+    background: rgba(255, 255, 255, 0.15);
 }

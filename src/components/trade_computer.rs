@@ -10,6 +10,7 @@ use crate::components::traveller_map::WorldSearch;
 use crate::systems::world::World;
 use crate::trade::available_goods::AvailableGoodsTable;
 use crate::trade::available_passengers::AvailablePassengers;
+use crate::trade::ship_manifest::ShipManifest;
 use crate::trade::table::TradeTable;
 
 use crate::INITIAL_NAME;
@@ -32,6 +33,7 @@ pub fn Trade() -> impl IntoView {
     provide_context(Store::new(None::<AvailablePassengers>));
     // Used for "show sell price"
     provide_context(Store::new(ShowSellPriceType(false)));
+    provide_context(Store::new(ShipManifest::default()));
 
     let origin_world = expect_context::<Store<World>>();
     let dest_world = expect_context::<Store<Option<World>>>();
@@ -39,6 +41,7 @@ pub fn Trade() -> impl IntoView {
     let available_goods = expect_context::<Store<AvailableGoodsTable>>();
     let available_passengers = expect_context::<Store<Option<AvailablePassengers>>>();
     let show_sell_price = expect_context::<Store<ShowSellPriceType>>();
+    let ship_manifest = expect_context::<Store<ShipManifest>>();
 
     // Skills involved, both player and adversary.
     let buyer_broker_skill = RwSignal::new(0);
@@ -76,6 +79,7 @@ pub fn Trade() -> impl IntoView {
                 false,
             )
             .unwrap();
+            ship_manifest.set(ShipManifest::default());
             available_goods.set(ag);
         }
     });
@@ -101,6 +105,7 @@ pub fn Trade() -> impl IntoView {
 
     Effect::new(move |_| {
         console_log("Updating goods pricing");
+        ship_manifest.set(ShipManifest::default());
         let mut ag = available_goods.write();
         ag.price_goods_to_buy(
             &origin_world.read().get_trade_classes(),
@@ -264,6 +269,7 @@ pub fn Trade() -> impl IntoView {
                 </div>
             </div>
 
+            <ShipManifestView distance = distance />
             <TradeView />
 
         </div>
@@ -309,9 +315,9 @@ pub fn TradeView() -> impl IntoView {
                                     <th class="table-entry">"Base Price"</th>
                                     <th class="table-entry">"Buy Price"</th>
                                     <th class="table-entry">"Discount"</th>
+                                    <th class="table-entry">"Purchased"</th>
                                 </tr>
-                            }
-                                .into_any()
+                            }.into_any()
                         } else {
                             view! {
                                 <tr>
@@ -320,6 +326,7 @@ pub fn TradeView() -> impl IntoView {
                                     <th class="table-entry">"Base Price"</th>
                                     <th class="table-entry">"Buy Price"</th>
                                     <th class="table-entry">"Discount"</th>
+                                    <th class="table-entry">"Purchased"</th>
                                     <Show when=move || show_sell_price.read().0>
                                         <th class="table-entry">"Sell Price"</th>
                                         <th class="table-entry">"Discount"</th>
@@ -337,8 +344,7 @@ pub fn TradeView() -> impl IntoView {
                                         </th>
                                     </Show>
                                 </tr>
-                            }
-                                .into_any()
+                            }.into_any()
                         }
                     }}
                 </thead>
@@ -356,10 +362,20 @@ pub fn TradeView() -> impl IntoView {
                                 .get()
                                 .goods()
                                 .iter()
-                                .map(|good| {
+                                .enumerate()
+                                .map(|(index, good)| {
                                     let discount_percent = (good.cost as f64 / good.base_cost as f64
                                         * 100.0)
                                         .round() as i32;
+
+                                    let update_purchased = move |ev| {
+                                        let new_value = event_target_value(&ev).parse::<i32>().unwrap_or(0);
+                                        let mut ag = available_goods.write();
+                                        if let Some(good) = ag.goods.get_mut(index) {
+                                            good.purchased = new_value.clamp(0, good.quantity);
+                                        }
+                                    };
+
                                     if let Some(sell_price) = good.sell_price {
                                         let sell_discount_percent = (sell_price as f64
                                             / good.base_cost as f64 * 100.0)
@@ -373,6 +389,16 @@ pub fn TradeView() -> impl IntoView {
                                                 <td class="table-entry">
                                                     {discount_percent.to_string()}"%"
                                                 </td>
+                                                <td class="table-entry">
+                                                    <input
+                                                        type="number"
+                                                        min="0"
+                                                        max=good.quantity
+                                                        value=good.purchased
+                                                        on:input=update_purchased
+                                                        class="purchased-input"
+                                                    />
+                                                </td>
                                                 <Show when=move || show_sell_price.read().0>
                                                     <td class="table-entry">{sell_price.to_string()}</td>
                                                     <td class="table-entry">
@@ -380,8 +406,7 @@ pub fn TradeView() -> impl IntoView {
                                                     </td>
                                                 </Show>
                                             </tr>
-                                        }
-                                            .into_any()
+                                        }.into_any()
                                     } else {
                                         view! {
                                             <tr>
@@ -392,13 +417,22 @@ pub fn TradeView() -> impl IntoView {
                                                 <td class="table-entry">
                                                     {discount_percent.to_string()}"%"
                                                 </td>
+                                                <td class="table-entry">
+                                                    <input
+                                                        type="number"
+                                                        min="0"
+                                                        max=good.quantity
+                                                        value=good.purchased
+                                                        on:input=update_purchased
+                                                        class="purchased-input"
+                                                    />
+                                                </td>
                                                 <Show when=move || show_sell_price.read().0>
                                                     <td class="table-entry">"-"</td>
                                                     <td class="table-entry">"-"</td>
                                                 </Show>
                                             </tr>
-                                        }
-                                            .into_any()
+                                        }.into_any()
                                     }
                                 })
                                 .collect::<Vec<_>>()
@@ -415,57 +449,105 @@ pub fn TradeView() -> impl IntoView {
 #[component]
 fn PassengerView() -> impl IntoView {
     let available_passengers = expect_context::<Store<Option<AvailablePassengers>>>();
+    let ship_manifest = expect_context::<Store<ShipManifest>>();
+
+    let add_high_passenger = move |_| {
+        if let Some(passengers) = available_passengers.get() {
+            let remaining = passengers.high - ship_manifest.read().high_passengers;
+            if remaining > 0 {
+                let mut manifest = ship_manifest.write();
+                manifest.high_passengers += 1;
+            }
+        }
+    };
+
+    let add_medium_passenger = move |_| {
+        if let Some(passengers) = available_passengers.get() {
+            let remaining = passengers.medium - ship_manifest.read().medium_passengers;
+            if remaining > 0 {
+                let mut manifest = ship_manifest.write();
+                manifest.medium_passengers += 1;
+            }
+        }
+    };
+
+    let add_basic_passenger = move |_| {
+        if let Some(passengers) = available_passengers.get() {
+            let remaining = passengers.basic - ship_manifest.read().basic_passengers;
+            if remaining > 0 {
+                let mut manifest = ship_manifest.write();
+                manifest.basic_passengers += 1;
+            }
+        }
+    };
+
+    let add_low_passenger = move |_| {
+        if let Some(passengers) = available_passengers.get() {
+            let remaining = passengers.low - ship_manifest.read().low_passengers;
+            if remaining > 0 {
+                let mut manifest = ship_manifest.write();
+                manifest.low_passengers += 1;
+            }
+        }
+    };
+
     view! {
         <h4 style="font-size: 14pt;">"Available Passengers"</h4>
         <div class="passengers-grid">
-            <div class="passenger-type">
+            <button class="passenger-type passenger-button" on:click=add_high_passenger>
                 <h4>"High"</h4>
                 <div class="passenger-count">
                     {move || {
                         if let Some(passengers) = available_passengers.get() {
-                            passengers.high.to_string()
+                            let remaining = passengers.high - ship_manifest.read().high_passengers;
+                            remaining.max(0).to_string()
                         } else {
                             "0".to_string()
                         }
                     }}
                 </div>
-            </div>
-            <div class="passenger-type">
+            </button>
+            <button class="passenger-type passenger-button" on:click=add_medium_passenger>
                 <h4>"Medium"</h4>
                 <div class="passenger-count">
                     {move || {
                         if let Some(passengers) = available_passengers.get() {
-                            passengers.medium.to_string()
+                            let remaining = passengers.medium
+                                - ship_manifest.read().medium_passengers;
+                            remaining.max(0).to_string()
                         } else {
                             "0".to_string()
                         }
                     }}
                 </div>
-            </div>
-            <div class="passenger-type">
+            </button>
+            <button class="passenger-type passenger-button" on:click=add_basic_passenger>
                 <h4>"Basic"</h4>
                 <div class="passenger-count">
                     {move || {
                         if let Some(passengers) = available_passengers.get() {
-                            passengers.basic.to_string()
+                            let remaining = passengers.basic
+                                - ship_manifest.read().basic_passengers;
+                            remaining.max(0).to_string()
                         } else {
                             "0".to_string()
                         }
                     }}
                 </div>
-            </div>
-            <div class="passenger-type">
+            </button>
+            <button class="passenger-type passenger-button" on:click=add_low_passenger>
                 <h4>"Low"</h4>
                 <div class="passenger-count">
                     {move || {
                         if let Some(passengers) = available_passengers.get() {
-                            passengers.low.to_string()
+                            let remaining = passengers.low - ship_manifest.read().low_passengers;
+                            remaining.max(0).to_string()
                         } else {
                             "0".to_string()
                         }
                     }}
                 </div>
-            </div>
+            </button>
         </div>
 
         <h4 style="font-size: 14pt;">"Available Freight (tons)"</h4>
@@ -475,13 +557,42 @@ fn PassengerView() -> impl IntoView {
                     if passengers.freight_lots.is_empty() {
                         view! { <div>"No freight available"</div> }.into_any()
                     } else {
-                        let mut sorted_lots = passengers.freight_lots.clone();
-                        sorted_lots.sort_by(|a, b| b.size.cmp(&a.size));
-                        sorted_lots
+                        passengers
+                            .freight_lots
                             .iter()
-                            .map(|lot| {
+                            .enumerate()
+                            .map(|(index, lot)| {
+                                let lot_size = lot.size;
+                                let toggle_freight = move |_| {
+                                    let mut manifest = ship_manifest.write();
+                                    if let Some(pos) = manifest
+                                        .freight_lot_indices
+                                        .iter()
+                                        .position(|&i| i == index)
+                                    {
+                                        manifest.freight_lot_indices.remove(pos);
+                                    } else {
+                                        manifest.freight_lot_indices.push(index);
+                                    }
+                                };
+                                let is_selected = move || {
+                                    ship_manifest.read().freight_lot_indices.contains(&index)
+                                };
 
-                                view! { <div class="freight-lot">{lot.size.to_string()}</div> }
+                                view! {
+                                    <button
+                                        class=move || {
+                                            if is_selected() {
+                                                "freight-lot freight-selected"
+                                            } else {
+                                                "freight-lot"
+                                            }
+                                        }
+                                        on:click=toggle_freight
+                                    >
+                                        {lot_size.to_string()}
+                                    </button>
+                                }
                             })
                             .collect::<Vec<_>>()
                             .into_any()
@@ -490,6 +601,271 @@ fn PassengerView() -> impl IntoView {
                     view! { <div>"No freight available"</div> }.into_any()
                 }
             }}
+        </div>
+    }
+}
+
+#[component]
+fn ShipManifestView(distance: RwSignal<i32>) -> impl IntoView {
+    let ship_manifest = expect_context::<Store<ShipManifest>>();
+    let available_passengers = expect_context::<Store<Option<AvailablePassengers>>>();
+    let available_goods = expect_context::<Store<AvailableGoodsTable>>();
+    let show_sell_price = expect_context::<Store<ShowSellPriceType>>();
+
+    let remove_high_passenger = move |_| {
+        let mut manifest = ship_manifest.write();
+        if manifest.high_passengers > 0 {
+            manifest.high_passengers -= 1;
+        }
+    };
+
+    let remove_medium_passenger = move |_| {
+        let mut manifest = ship_manifest.write();
+        if manifest.medium_passengers > 0 {
+            manifest.medium_passengers -= 1;
+        }
+    };
+
+    let remove_basic_passenger = move |_| {
+        let mut manifest = ship_manifest.write();
+        if manifest.basic_passengers > 0 {
+            manifest.basic_passengers -= 1;
+        }
+    };
+
+    let remove_low_passenger = move |_| {
+        let mut manifest = ship_manifest.write();
+        if manifest.low_passengers > 0 {
+            manifest.low_passengers -= 1;
+        }
+    };
+
+    view! {
+        <div class="manifest-container">
+            <h4 style="font-size: 14pt;">"Ship Manifest"</h4>
+
+            <div class="manifest-summary">
+                {move || {
+                    let passengers = available_passengers.get();
+                    let manifest = ship_manifest.get();
+                    let goods = available_goods.get();
+
+                    let cargo_tons = if let Some(passengers) = passengers {
+                        manifest.freight_lot_indices
+                            .iter()
+                            .map(|&index| passengers.freight_lots.get(index).map(|lot| lot.size).unwrap_or(0))
+                            .sum::<i32>()
+                    } else {
+                        0
+                    };
+
+                    let goods_tons: i32 = goods.goods.iter().map(|good| good.purchased).sum();
+                    let total_cargo = cargo_tons + goods_tons;
+                    let total_passengers = manifest.high_passengers + manifest.medium_passengers + manifest.basic_passengers;
+                    let total_low = manifest.low_passengers;
+
+                    view! {
+                        <div class="summary-line">
+                            "Total Cargo Used: " <strong>{total_cargo.to_string()}" tons"</strong>
+                            " | Total Passengers: " <strong>{total_passengers.to_string()}</strong>
+                            " | Total Low: " <strong>{total_low.to_string()}</strong>
+                        </div>
+                    }
+                }}
+            </div>
+
+            <div class="manifest-section">
+                <h5>"Passengers"</h5>
+                <div class="manifest-grid">
+                    <button class="manifest-item manifest-button" on:click=remove_high_passenger>
+                        <span class="manifest-label">"High:"</span>
+                        <span class="manifest-value">
+                            {move || ship_manifest.read().high_passengers}
+                        </span>
+                    </button>
+                    <button class="manifest-item manifest-button" on:click=remove_medium_passenger>
+                        <span class="manifest-label">"Medium:"</span>
+                        <span class="manifest-value">
+                            {move || ship_manifest.read().medium_passengers}
+                        </span>
+                    </button>
+                    <button class="manifest-item manifest-button" on:click=remove_basic_passenger>
+                        <span class="manifest-label">"Basic:"</span>
+                        <span class="manifest-value">
+                            {move || ship_manifest.read().basic_passengers}
+                        </span>
+                    </button>
+                    <button class="manifest-item manifest-button" on:click=remove_low_passenger>
+                        <span class="manifest-label">"Low:"</span>
+                        <span class="manifest-value">
+                            {move || ship_manifest.read().low_passengers}
+                        </span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="manifest-section">
+                <h5>"Freight"</h5>
+                <div class="manifest-grid">
+                    {move || {
+                        let passengers = available_passengers.get();
+                        let manifest = ship_manifest.get();
+                        let goods = available_goods.get();
+                        let show_sell = show_sell_price.get().0;
+
+                        let cargo_tons = if let Some(passengers) = passengers {
+                            manifest.freight_lot_indices
+                                .iter()
+                                .map(|&index| passengers.freight_lots.get(index).map(|lot| lot.size).unwrap_or(0))
+                                .sum::<i32>()
+                        } else {
+                            0
+                        };
+
+                        let goods_tons: i32 = goods.goods.iter().map(|good| good.purchased).sum();
+                        let goods_cost: i64 = goods.goods.iter().map(|good| good.purchased as i64 * good.cost as i64).sum();
+                        let goods_proceeds: i64 = goods.goods.iter().map(|good| {
+                            if let Some(sell_price) = good.sell_price {
+                                good.purchased as i64 * sell_price as i64
+                            } else {
+                                0
+                            }
+                        }).sum();
+
+                        view! {
+                            <div class="manifest-item">
+                                <span class="manifest-label">"Cargo:"</span>
+                                <span class="manifest-value">{format!("{} tons", cargo_tons)}</span>
+                            </div>
+                            <div class="manifest-item">
+                                <span class="manifest-label">"Goods:"</span>
+                                <span class="manifest-value">{format!("{} tons", goods_tons)}</span>
+                            </div>
+                            <div class="manifest-item">
+                                <span class="manifest-label">"Goods Cost:"</span>
+                                <span class="manifest-value">{format!("{:.2} MCr", goods_cost as f64 / 1_000_000.0)}</span>
+                            </div>
+                            {if show_sell {
+                                view! {
+                                    <div class="manifest-item">
+                                        <span class="manifest-label">"Goods Proceeds:"</span>
+                                        <span class="manifest-value">{format!("{:.2} MCr", goods_proceeds as f64 / 1_000_000.0)}</span>
+                                    </div>
+                                }.into_any()
+                            } else {
+                                ().into_any()
+                            }}
+                        }
+                    }}
+                </div>
+            </div>
+
+            <div class="manifest-section">
+                <h5>"Revenue"</h5>
+                <div class="manifest-grid">
+                    <div class="manifest-item">
+                        <span class="manifest-label">"Passenger Revenue:"</span>
+                        <span class="manifest-value">
+                            {move || {
+                                let manifest = ship_manifest.get();
+                                let revenue = manifest.passenger_revenue(distance.get());
+                                format!("{:.2} MCr", revenue as f64 / 1_000_000.0)
+                            }}
+                        </span>
+                    </div>
+                    <div class="manifest-item">
+                        <span class="manifest-label">"Freight Revenue:"</span>
+                        <span class="manifest-value">
+                            {move || {
+                                let manifest = ship_manifest.get();
+                                let revenue = manifest.freight_revenue(distance.get());
+                                format!("{:.2} MCr", revenue as f64 / 1_000_000.0)
+                            }}
+                        </span>
+                    </div>
+                    <Show when=move || show_sell_price.get().0>
+                        <div class="manifest-item">
+                            <span class="manifest-label">"Goods Profit:"</span>
+                            <span class="manifest-value">
+                                {move || {
+                                    let goods = available_goods.get();
+                                    let cost: i64 = goods.goods.iter()
+                                        .map(|good| good.purchased as i64 * good.cost as i64)
+                                        .sum();
+                                    let proceeds: i64 = goods.goods.iter()
+                                        .map(|good| {
+                                            if let Some(sell_price) = good.sell_price {
+                                                good.purchased as i64 * sell_price as i64
+                                            } else {
+                                                0
+                                            }
+                                        })
+                                        .sum();
+                                    let profit = proceeds - cost;
+                                    format!("{:.2} MCr", profit as f64 / 1_000_000.0)
+                                }}
+                            </span>
+                        </div>
+                    </Show>
+                    <div class="manifest-item">
+                        <span class="manifest-label">"Total:"</span>
+                        <span class="manifest-value">
+                            {move || {
+                                let manifest = ship_manifest.get();
+                                let goods = available_goods.get();
+                                let show_sell = show_sell_price.get().0;
+
+                                let passenger_revenue = manifest.passenger_revenue(distance.get()) as i64;
+                                let freight_revenue = manifest.freight_revenue(distance.get()) as i64;
+
+                                let goods_profit = if show_sell {
+                                    let cost: i64 = goods.goods.iter()
+                                        .map(|good| good.purchased as i64 * good.cost as i64)
+                                        .sum();
+                                    let proceeds: i64 = goods.goods.iter()
+                                        .map(|good| {
+                                            if let Some(sell_price) = good.sell_price {
+                                                good.purchased as i64 * sell_price as i64
+                                            } else {
+                                                0
+                                            }
+                                        })
+                                        .sum();
+                                    proceeds - cost
+                                } else {
+                                    0
+                                };
+
+                                let total = passenger_revenue + freight_revenue + goods_profit;
+                                format!("{:.2} MCr", total as f64 / 1_000_000.0)
+                            }}
+                        </span>
+                    </div>
+                </div>
+            </div>
+
+            <Show when=move || !ship_manifest.read().goods.is_empty()>
+                <div class="manifest-section">
+                    <h5>"Goods"</h5>
+                    <div class="manifest-goods">
+                        {move || {
+                            ship_manifest
+                                .read()
+                                .goods
+                                .iter()
+                                .map(|good| {
+                                    view! {
+                                        <div class="goods-item">
+                                            <span>{good.name.clone()}</span>
+                                            <span>{good.quantity.to_string()}" tons"</span>
+                                        </div>
+                                    }
+                                })
+                                .collect::<Vec<_>>()
+                        }}
+                    </div>
+                </div>
+            </Show>
         </div>
     }
 }

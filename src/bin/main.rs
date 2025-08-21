@@ -1,7 +1,7 @@
 use leptos::prelude::*;
-use worldgen::components::trade_computer::Trade;
-use worldgen::components::system_generator::World;
 use worldgen::components::selector::Selector;
+use worldgen::components::system_generator::World;
+use worldgen::components::trade_computer::Trade;
 use worldgen::logging;
 
 #[component]
@@ -11,7 +11,7 @@ fn App() -> impl IntoView {
         .location()
         .pathname()
         .unwrap_or_default();
-    
+
     if path.contains("world") || path.contains("system") {
         view! { <World /> }.into_any()
     } else if path.contains("trade") {
