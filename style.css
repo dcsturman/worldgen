@@ -137,17 +137,29 @@ input[type="text"] {
   background-image: url("galaxy1.png");
   background-size: cover;
   background-repeat: repeat;
+  background-attachment: fixed;
+  background-position: center;
   display: flex;
   flex-direction: column;
   background-color: black;
   align-items: left;
-  height: 100vh;
+  min-height: 100vh;
   width: 100vw;
   color: white;
   font-family: "Space Mono", sans-serif;
   font-weight: 400;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  overflow-x: auto;
+}
+
+/* Fix for mobile devices where background-attachment: fixed causes issues */
+@media (max-width: 768px) {
+  .App {
+    background-attachment: scroll;
+    background-size: cover;
+    min-height: 100vh;
+  }
 }
 
 .key-region {
@@ -292,7 +304,21 @@ input[type="text"] {
   display: flex;
   flex-direction: row;
   gap: 2em;
-  width: fit-content;
+  width: 100%;
+}
+
+.skill-entry > div {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5em;
+}
+
+@media (max-width: 768px) {
+  .skill-entry {
+    flex-direction: column;
+    gap: 1em;
+  }
 }
 
 .distance-input {
