@@ -1,7 +1,7 @@
 use leptos::prelude::*;
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
-use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "PascalCase")]
@@ -70,15 +70,16 @@ pub async fn fetch_search_results(url: &str) -> Result<TravellerMapResponse, JsV
 /// Creates a world search component with TravellerMap integration
 #[component]
 pub fn WorldSearch(
-    world_entry_label: String,
-    world_name: RwSignal<String>,
+    label: String,
+    name: RwSignal<String>,
     uwp: RwSignal<String>,
-    world_coordinates: RwSignal<Option<(i32, i32)>>,
+    coords: RwSignal<Option<(i32, i32)>>,
     #[prop(default = Signal::derive(|| true))] search_enabled: Signal<bool>,
 ) -> impl IntoView {
-    let (search_results, set_search_results) = signal::<Vec<(String, String, String, i32, i32)>>(vec![]);
+    let (search_results, set_search_results) =
+        signal::<Vec<(String, String, String, i32, i32)>>(vec![]);
     let (is_loading, set_is_loading) = signal(false);
-    
+
     // Separate signal for the UWP input field
     let input_uwp = RwSignal::new(uwp.get_untracked());
 
@@ -100,23 +101,23 @@ pub fn WorldSearch(
 
     // Handle selection from datalist
     let handle_selection = move |_| {
-        let current_name = world_name.get();
+        let current_name = name.get();
         let mut found = false;
         for (name, _, world_uwp, hex_x, hex_y) in search_results.get() {
             if current_name == name {
                 uwp.set(world_uwp);
-                world_coordinates.set(Some((hex_x, hex_y)));
+                coords.set(Some((hex_x, hex_y)));
                 found = true;
                 break;
             }
         }
         if !found {
-            world_coordinates.set(None);
+            coords.set(None);
         }
     };
 
     // Debounced search function
-    let search_query = Memo::new(move |_| world_name.get());
+    let search_query = Memo::new(move |_| name.get());
 
     Effect::new(move |_| {
         let query = search_query.get();
@@ -132,11 +133,11 @@ pub fn WorldSearch(
                         for item in response.results.items {
                             if let Some(world) = item.world {
                                 world_results.push((
-                                    world.name, 
-                                    world.sector, 
+                                    world.name,
+                                    world.sector,
                                     world.uwp,
                                     world.hex_x as i32,
-                                    world.hex_y as i32
+                                    world.hex_y as i32,
                                 ));
                             }
                         }
@@ -162,12 +163,13 @@ pub fn WorldSearch(
     let datalist_id = format!("world-suggestions-{}", rand::random::<u32>());
 
     view! {
+        <div class:world-text-entry>
         <div>
-            <label for=world_name_id.clone()>{world_entry_label}</label>
+            <label for=world_name_id.clone()>{format!("{}:",label.clone())}</label>
             <input
                 id=world_name_id
                 type="text"
-                bind:value=world_name
+                bind:value=name
                 list=datalist_id.clone()
                 on:input=handle_selection
             />
@@ -186,12 +188,13 @@ pub fn WorldSearch(
             </datalist>
         </div>
         <div>
-            <label for=uwp_id.clone()>"UPP:"</label>
+            <label for=uwp_id.clone()>{format!("{label} UPP:")}</label>
             <input type="text" id=uwp_id bind:value=input_uwp on:input=handle_uwp_input />
         </div>
         <Show when=move || is_loading.get()>
             <span class="loading-indicator">"Loading..."</span>
         </Show>
+        </div>
     }
 }
 
@@ -201,7 +204,7 @@ pub fn calculate_hex_distance(hex_x1: i32, hex_y1: i32, hex_x2: i32, hex_y2: i32
     // Convert offset coordinates to cube coordinates
     let (x1, y1, z1) = offset_to_cube(hex_x1, hex_y1);
     let (x2, y2, z2) = offset_to_cube(hex_x2, hex_y2);
-    
+
     // Calculate distance using cube coordinates
     ((x1 - x2).abs() + (y1 - y2).abs() + (z1 - z2).abs()) / 2
 }
