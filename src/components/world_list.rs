@@ -1,9 +1,14 @@
 use leptos::prelude::*;
 use reactive_stores::{Field, OptionStoreExt, Store, StoreFieldIterator};
 
-use crate::gas_giant::{GasGiant, GasGiantStoreFields};
-use crate::system::{OrbitContent, OrbitContentStoreFields, StarOrbit, System, SystemStoreFields};
-use crate::world::{Satellites, SatellitesStoreFields, World, WorldStoreFields};
+#[allow(unused_imports)]
+use log::debug;
+
+use crate::systems::gas_giant::{GasGiant, GasGiantStoreFields};
+use crate::systems::system::{
+    OrbitContent, OrbitContentStoreFields, StarOrbit, System, SystemStoreFields,
+};
+use crate::systems::world::{Satellites, SatellitesStoreFields, World, WorldStoreFields};
 
 #[component]
 pub fn WorldList(#[prop(default = false)] is_companion: bool) -> impl IntoView {
@@ -95,7 +100,6 @@ pub fn WorldList(#[prop(default = false)] is_companion: bool) -> impl IntoView {
                             if let Some(companion) = companion.get() {
                                 let companion = Store::new(*companion);
                                 if companion.orbit().get() == StarOrbit::Far {
-                                    // TODO: Get rid of this clone.
                                     view! { <StarRow system=companion is_companion=false /> }
                                         .into_any()
                                 } else {

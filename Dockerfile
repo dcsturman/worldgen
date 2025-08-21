@@ -9,21 +9,22 @@ FROM base AS build
 RUN mkdir /web
 WORKDIR /web
 
-COPY trade /web/trade
 ADD Cargo.toml Cargo.lock index.html Trunk.toml /web/
 
 ENV RUSTFLAGS='--cfg getrandom_backend="wasm_js"'
 
-RUN mkdir ./src && echo 'fn main() {}' > ./src/main.rs && touch ./src/lib.rs
+RUN mkdir ./src && mkdir ./src/bin && echo 'fn main() {}' > ./src/bin/main.rs && touch ./src/lib.rs
 
 RUN cargo build --release --target wasm32-unknown-unknown
 RUN rm -rf ./src
-ADD src /web/src/
+COPY src /web/src/
 
 FROM build AS release
-RUN touch ./src/main.rs
-ADD public /web/public
-ADD style.css /web/style.css
+RUN touch ./src/bin/main.rs
+RUN touch ./src/lib.rs
+
+COPY public /web/public
+COPY style.css /web/style.css
 
 ENV RUSTFLAGS='--cfg getrandom_backend="wasm_js"'
 

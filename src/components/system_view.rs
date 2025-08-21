@@ -3,10 +3,10 @@ use leptos::prelude::*;
 use reactive_stores::{Store, Subfield};
 
 use crate::components::world_list::WorldList;
-use crate::has_satellites::HasSatellites;
-use crate::system::{OrbitContent, StarOrbit, System, SystemStoreFields};
-use crate::system_tables::get_habitable;
-use crate::world::World;
+use crate::systems::has_satellites::HasSatellites;
+use crate::systems::system::{OrbitContent, StarOrbit, System, SystemStoreFields};
+use crate::systems::system_tables::get_habitable;
+use crate::systems::world::World;
 
 fn habitable_clause(system: &System) -> String {
     let habitable = get_habitable(&system.star);
