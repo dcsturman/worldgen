@@ -183,26 +183,27 @@ pub fn Trade() -> impl IntoView {
             </div>
             <div class:key-region>
                 <div class:skill-entry>
-                    <label for="distance">"Distance: "</label>
-                    <input
-                        class="distance-input control-container"
-                        type="number"
-                        id="distance"
-                        value=move || distance.get().to_string()
-                        on:input=move |ev| {
-                            if let Ok(val) = event_target_value(&ev).parse::<i32>() {
-                                debug!("Setting distance to {val}");
-                                distance.set(val);
+                    <div>
+                        <label for="distance">"Distance: "</label>
+                        <input
+                            class="distance-input"
+                            type="number"
+                            id="distance"
+                            value=move || distance.get().to_string()
+                            on:input=move |ev| {
+                                if let Ok(val) = event_target_value(&ev).parse::<i32>() {
+                                    debug!("Setting distance to {val}");
+                                    distance.set(val);
+                                }
                             }
-                        }
-                    />
+                        />
+                    </div>
                     <div>
                         <span>
                             "Origin Classes: "
                             {move || format!("[{}]", origin_world.read().trade_classes_string())}
                         </span>
                     </div>
-
                     <div>
                         <span>
                             {move || {
