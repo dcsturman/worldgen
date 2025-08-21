@@ -1,6 +1,6 @@
-pub mod app;
+pub mod system_generator;
 pub mod system_view;
-pub mod trade_view;
-pub mod world_entry;
-pub mod world_list;
+pub mod trade_computer;
 pub mod traveller_map;
+pub mod world_list;
+pub mod selector;

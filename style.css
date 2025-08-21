@@ -90,6 +90,7 @@ h1 {
 
 input[type="number"] {
   font-size: 9pt;
+  width: 4em;
 }
 input[type="text"] {
   font-size: 9pt;
@@ -149,15 +150,23 @@ input[type="text"] {
   -moz-osx-font-smoothing: grayscale;
 }
 
-.world-entry-form {
+.key-region {
   border: 1px solid #ccc;
   border-radius: 5px;
   font-family: "Space Mono", sans-serif;
   font-weight: 400;
+  width: fit-content;
+  gap: 0 2em;
+  padding: 5px 1em 5px 1em;
+  margin-bottom: 1em;
   display: flex;
   flex-direction: column;
-  width: fit-content;
- }
+}
+
+.world-entry-form {
+  display: flex;
+  flex-direction: row;
+}
 
 .world-entry-form * {
   display: flex;
@@ -173,7 +182,6 @@ input[type="text"] {
 
 .world-text-entry {
   flex-direction: column;
-  padding: 5px 0;
 }
 
 .world-text-entry > div {
@@ -211,7 +219,6 @@ input[type="text"] {
 .output-region {
   border: 1px solid #ccc;
   border-radius: 5px;
-  margin-top: 20px;
   padding: 10px;
   overflow: auto;
   width: fit-content;
@@ -281,16 +288,11 @@ input[type="text"] {
   display: none;
 }
 
-.destination-world-entry {
+.skill-entry {
   display: flex;
   flex-direction: row;
-  margin-bottom: 10px;
-  gap: 15px;
+  gap: 2em;
   width: fit-content;
-}
-
-.destination-world-entry input[type="text"] {
-  width: 130px;
 }
 
 .distance-input {
@@ -360,4 +362,47 @@ input[type="text"] {
 .sell-price-button:active {
   transform: translateY(0);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.selector-container {
+    display: flex;
+    flex-direction: row;
+    gap: 2rem;
+    justify-content: center;
+    align-items: flex-start;
+    margin-top: 2rem;
+    flex-wrap: wrap;
+}
+
+.selector-container + h1,
+.App > h1:first-child {
+    text-align: center;
+}
+
+.tool-card {
+    background: rgba(0, 0, 0, 0.7);
+    border: 1px solid #ccc;
+    border-radius: 10px;
+    padding: 2rem;
+    max-width: 400px;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.tool-card h2 {
+    color: #51A9EE;
+    margin-bottom: 1rem;
+    text-align: center;
+}
+
+.tool-card p {
+    line-height: 1.5;
+    margin-bottom: 1.5rem;
+    flex-grow: 1;
+    text-align: left;
+}
+
+.tool-card button {
+    align-self: center;
 }
