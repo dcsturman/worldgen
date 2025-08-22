@@ -36,11 +36,11 @@ impl AvailablePassengers {
     pub fn generate(
         origin_population: i32,
         origin_port: PortCode,
-        origin_zone: Option<ZoneClassification>,
+        origin_zone: ZoneClassification,
         origin_tech_level: i32,
         destination_population: i32,
         destination_port: PortCode,
-        destination_zone: Option<ZoneClassification>,
+        destination_zone: ZoneClassification,
         destination_tech_level: i32,
         distance_parsecs: i32,
         steward_skill: i32,
@@ -82,10 +82,10 @@ impl AvailablePassengers {
         passengers: &mut AvailablePassengers,
         origin_population: i32,
         origin_port: PortCode,
-        origin_zone: Option<ZoneClassification>,
+        origin_zone: ZoneClassification,
         destination_population: i32,
         destination_port: PortCode,
-        destination_zone: Option<ZoneClassification>,
+        destination_zone: ZoneClassification,
         distance_parsecs: i32,
         steward_skill: i32,
     ) {
@@ -143,11 +143,11 @@ impl AvailablePassengers {
         passengers: &mut AvailablePassengers,
         origin_population: i32,
         origin_port: PortCode,
-        origin_zone: Option<ZoneClassification>,
+        origin_zone: ZoneClassification,
         origin_tech_level: i32,
         destination_population: i32,
         destination_port: PortCode,
-        destination_zone: Option<ZoneClassification>,
+        destination_zone: ZoneClassification,
         destination_tech_level: i32,
         distance_parsecs: i32,
     ) {
@@ -185,11 +185,11 @@ impl AvailablePassengers {
     fn generate_cargo_class(
         origin_population: i32,
         origin_port: PortCode,
-        origin_zone: Option<ZoneClassification>,
+        origin_zone: ZoneClassification,
         origin_tech_level: i32,
         destination_population: i32,
         destination_port: PortCode,
-        destination_zone: Option<ZoneClassification>,
+        destination_zone: ZoneClassification,
         destination_tech_level: i32,
         distance_parsecs: i32,
         cargo_class: CargoClass,
@@ -243,8 +243,8 @@ impl AvailablePassengers {
 
         // Zone modifiers
         for zone in [origin_zone, destination_zone] {
-            let Some(zone_class) = zone else { continue };
-            match zone_class {
+            match zone {
+                ZoneClassification::Green => continue,
                 ZoneClassification::Amber => roll -= 2,
                 ZoneClassification::Red => roll -= 6,
             }
@@ -283,10 +283,10 @@ impl AvailablePassengers {
     fn generate_passenger_class(
         origin_population: i32,
         origin_port: PortCode,
-        origin_zone: Option<ZoneClassification>,
+        origin_zone: ZoneClassification,
         destination_population: i32,
         destination_port: PortCode,
-        destination_zone: Option<ZoneClassification>,
+        destination_zone: ZoneClassification,
         distance_parsecs: i32,
         steward_skill: i32,
         passenger_class: PassengerClass,
@@ -334,8 +334,8 @@ impl AvailablePassengers {
 
         // Zone modifiers
         for zone in [origin_zone, destination_zone] {
-            let Some(zone_class) = zone else { continue };
-            match zone_class {
+            match zone {
+                ZoneClassification::Green => continue,
                 ZoneClassification::Amber => roll += 1,
                 ZoneClassification::Red => roll -= 4,
             }

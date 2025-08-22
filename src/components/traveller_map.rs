@@ -3,8 +3,12 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
+use crate::trade::ZoneClassification;
+
+const MAX_SEARCH_RESULTS: usize = 12;
+
 #[allow(unused_imports)]
-use leptos::leptos_dom::logging::console_log;
+use log::debug;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "PascalCase")]
@@ -60,6 +64,25 @@ pub struct SubsectorData {
     pub sector_tags: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "PascalCase")]
+pub struct WorldDataApiResponse {
+    pub worlds: Vec<WorldDataResponse>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "PascalCase")]
+pub struct WorldDataResponse {
+    pub hex: String,
+    pub name: String,
+    #[serde(rename = "UWP")]
+    pub uwp: String,
+    pub zone: Option<String>,
+    pub pbg: Option<String>,
+    pub allegiance: Option<String>,
+    pub stellar: Option<String>,
+}
+
 pub async fn fetch_search_results(url: &str) -> Result<TravellerMapResponse, JsValue> {
     let request = web_sys::Request::new_with_str(url)?;
     let window = web_sys::window().unwrap();
@@ -70,6 +93,29 @@ pub async fn fetch_search_results(url: &str) -> Result<TravellerMapResponse, JsV
     Ok(result)
 }
 
+pub async fn fetch_data_world(sector: &str, hex: &str) -> Result<WorldDataResponse, JsValue> {
+    let encoded_sector = web_sys::js_sys::encode_uri_component(sector);
+    let url = format!("https://travellermap.com/data/{}/{}", encoded_sector, hex);
+
+    debug!("Fetching world data from {url}");
+    let request = web_sys::Request::new_with_str(&url)?;
+    let window = web_sys::window().unwrap();
+    let response_value = JsFuture::from(window.fetch_with_request(&request)).await?;
+    let response: web_sys::Response = response_value.dyn_into()?;
+    let json = JsFuture::from(response.json()?).await?;
+    debug!("Response: {json:?}");
+    let api_response: WorldDataApiResponse = serde_wasm_bindgen::from_value(json)?;
+
+    // Take the first world from the array
+    let result = api_response
+        .worlds
+        .into_iter()
+        .next()
+        .ok_or_else(|| JsValue::from_str("No worlds found in response"))?;
+
+    Ok(result)
+}
+
 /// Creates a world search component with TravellerMap integration
 #[component]
 pub fn WorldSearch(
@@ -77,6 +123,7 @@ pub fn WorldSearch(
     name: RwSignal<String>,
     uwp: RwSignal<String>,
     coords: RwSignal<Option<(i32, i32)>>,
+    zone: RwSignal<ZoneClassification>,
     #[prop(default = Signal::derive(|| true))] search_enabled: Signal<bool>,
 ) -> impl IntoView {
     let (search_results, set_search_results) =
@@ -105,10 +152,51 @@ pub fn WorldSearch(
     // Handle selection from datalist
     let handle_selection = move |_| {
         let current_name = name.get();
+        // Parse the format: "WorldName (Sector) UWP"
+        let (world_name, sector_name) = if let Some(paren_start) = current_name.find(" (") {
+            if let Some(paren_end) = current_name.find(") ") {
+                let world_name = &current_name[..paren_start];
+                let sector_name = &current_name[paren_start + 2..paren_end];
+                (world_name, sector_name)
+            } else {
+                return; // Invalid format
+            }
+        } else {
+            return; // Invalid format
+        };
+
         let mut found = false;
-        for (name, _, world_uwp, hex_x, hex_y) in search_results.get() {
-            if current_name == name {
-                uwp.set(world_uwp);
+        for (search_name, sector, world_uwp, hex_x, hex_y) in search_results.get() {
+            if world_name == search_name && sector_name == sector {
+                let hex_string = format!("{:02}{:02}", hex_x, hex_y);
+                debug!("Fetching data for {world_name} from sector {sector}, hex {hex_string}");
+
+                // Set the name to just the world name
+                name.set(world_name.to_string());
+
+                wasm_bindgen_futures::spawn_local(async move {
+                    match fetch_data_world(&sector, &hex_string).await {
+                        Ok(world_data) => {
+                            debug!("Received world data: {:?}", world_data);
+                            let world_zone = match world_data.zone {
+                                Some(zone) => match zone.as_str() {
+                                    "A" => ZoneClassification::Amber,
+                                    "R" => ZoneClassification::Red,
+                                    _ => ZoneClassification::Green,
+                                },
+                                None => ZoneClassification::Green,
+                            };
+                            debug!("Setting zone to {:?}", world_zone);
+                            zone.set(world_zone);
+                            uwp.set(world_data.uwp);
+                        }
+                        Err(err) => {
+                            log::error!("Error fetching world data: {err:?}");
+                            // Fallback to the UWP from search results
+                            uwp.set(world_uwp);
+                        }
+                    }
+                });
                 coords.set(Some((hex_x, hex_y)));
                 found = true;
                 break;
@@ -144,9 +232,16 @@ pub fn WorldSearch(
                                 ));
                             }
                         }
-                        if world_results.len() > 6 {
-                            world_results.truncate(6);
+                        debug!(
+                            "Full search results (len = {}): {world_results:?}",
+                            world_results.len()
+                        );
+                        if world_results.len() > MAX_SEARCH_RESULTS {
+                            // Sort by world name length (shorter names first)
+                            world_results.sort_by(|a, b| a.0.len().cmp(&b.0.len()));
+                            world_results.truncate(MAX_SEARCH_RESULTS);
                         }
+                        debug!("Truncated search results: {:?}", world_results);
                         set_search_results.set(world_results);
                         set_is_loading.set(false);
                     }
@@ -183,7 +278,7 @@ pub fn WorldSearch(
                         .into_iter()
                         .map(|(name, sector, uwp, _, _)| {
                             view! {
-                                <option value=name.clone()>{format!("{name}/{sector}/{uwp}")}</option>
+                                <option value=format!("{name} ({sector}) {uwp}")>{format!("{name} ({sector}) {uwp}")}</option>
                             }
                         })
                         .collect::<Vec<_>>()
