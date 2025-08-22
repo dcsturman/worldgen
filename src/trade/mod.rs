@@ -248,8 +248,9 @@ impl std::fmt::Display for PortCode {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, PartialEq, Copy)]
 pub enum ZoneClassification {
+    Green,
     Amber,
     Red,
 }
@@ -257,6 +258,7 @@ pub enum ZoneClassification {
 impl std::fmt::Display for ZoneClassification {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            ZoneClassification::Green => write!(f, "Green"),
             ZoneClassification::Amber => write!(f, "Amber"),
             ZoneClassification::Red => write!(f, "Red"),
         }

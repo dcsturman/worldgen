@@ -121,7 +121,13 @@ impl AvailableGoodsTable {
         }
         let mut quantity = total * multiplier;
 
-        quantity += if world_population <= 3 { -3 } else if world_population >= 9 { 3 } else { 0 };
+        quantity += if world_population <= 3 {
+            -3
+        } else if world_population >= 9 {
+            3
+        } else {
+            0
+        };
 
         // If the good is already in the table, add to its quantity
         if let Some(existing) = self

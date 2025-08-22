@@ -14,6 +14,7 @@ use crate::util::{arabic_to_roman, roll_1d6, roll_2d6};
 
 use crate::trade::PortCode;
 use crate::trade::TradeClass;
+use crate::trade::ZoneClassification;
 
 #[derive(Debug, Clone, Store, PartialEq)]
 pub struct World {
@@ -33,6 +34,7 @@ pub struct World {
     facilities: Vec<Facility>,
     pub satellites: Satellites,
     trade_classes: Vec<TradeClass>,
+    pub travel_zone: ZoneClassification,
     astro_data: AstroData,
     pub coordinates: Option<(i32, i32)>,
 }
@@ -84,6 +86,7 @@ impl World {
             facilities: Vec::new(),
             satellites: Satellites { sats: Vec::new() },
             trade_classes: Vec::new(),
+            travel_zone: ZoneClassification::Green,
             astro_data: AstroData::new(),
             coordinates: None,
         }

@@ -11,6 +11,7 @@ use crate::components::system_view::SystemView;
 use crate::components::traveller_map::WorldSearch;
 use crate::systems::system::System;
 use crate::systems::world::World;
+use crate::trade::ZoneClassification;
 
 use crate::INITIAL_NAME;
 use crate::INITIAL_UPP;
@@ -37,6 +38,7 @@ pub fn World() -> impl IntoView {
     // But we want it separate to avoid loops in the first Effect we create.
     let main_world_name = RwSignal::new(main_world.read_untracked().name.clone());
     let origin_coords = RwSignal::new(None::<(i32, i32)>);
+    let origin_zone = RwSignal::new(ZoneClassification::Green);
 
     let upp = RwSignal::new(INITIAL_UPP.to_string());
 
@@ -59,7 +61,7 @@ pub fn World() -> impl IntoView {
         <div class:App>
         <h1 class="d-print-none">Solar System Generator</h1>
         <div class="d-print-none key-region world-entry-form">
-            <WorldSearch label="Main World".to_string() name=main_world_name uwp=upp coords=origin_coords />
+            <WorldSearch label="Main World".to_string() name=main_world_name uwp=upp coords=origin_coords zone=origin_zone />
         </div>
         <SystemView />
         </div>
