@@ -623,3 +623,7 @@ input[type="text"] {
     border-color: #3D94D9;
     background: rgba(255, 255, 255, 0.15);
 }
+
+.purchased-input-active {
+    color: #51A9EE !important;
+}
