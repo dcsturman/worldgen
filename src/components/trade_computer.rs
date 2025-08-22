@@ -12,6 +12,7 @@ use crate::trade::available_goods::AvailableGoodsTable;
 use crate::trade::available_passengers::AvailablePassengers;
 use crate::trade::ship_manifest::ShipManifest;
 use crate::trade::table::TradeTable;
+use crate::trade::ZoneClassification;
 
 use crate::INITIAL_NAME;
 use crate::INITIAL_UPP;
@@ -51,9 +52,12 @@ pub fn Trade() -> impl IntoView {
     let origin_world_name = RwSignal::new(origin_world.read_untracked().name.clone());
     let origin_uwp = RwSignal::new(origin_world.read_untracked().to_upp());
     let origin_coords = RwSignal::new(origin_world.read_untracked().coordinates);
+    let origin_zone = RwSignal::new(origin_world.read_untracked().travel_zone);
     let dest_world_name = RwSignal::new("".to_string());
     let dest_uwp = RwSignal::new("".to_string());
     let dest_coords = RwSignal::new(None);
+    let dest_zone = RwSignal::new(ZoneClassification::Green);
+
     let distance = RwSignal::new(0);
 
     // Keep origin world updated based on changes in name or uwp.
@@ -68,7 +72,7 @@ pub fn Trade() -> impl IntoView {
             };
             world.gen_trade_classes();
             world.coordinates = dest_coords.get();
-
+            world.travel_zone = origin_zone.get();
             origin_world.set(world);
 
             // Now update available goods
@@ -97,6 +101,7 @@ pub fn Trade() -> impl IntoView {
             };
             world.gen_trade_classes();
             world.coordinates = dest_coords.get();
+            world.travel_zone = dest_zone.get();
             dest_world.set(Some(world));
         } else {
             dest_world.set(None);
@@ -127,7 +132,18 @@ pub fn Trade() -> impl IntoView {
         show_sell_price.set(ShowSellPriceType(false));
     });
 
-    // Effect to calculate distance when coordinates change
+    // Effect to reset zones when world names change (but not when zones change)
+    Effect::new(move |_| {
+        let _ = origin_world_name.get();
+        origin_zone.set(ZoneClassification::Green);
+    });
+
+    Effect::new(move |_| {
+        let _ = dest_world_name.get();
+        dest_zone.set(ZoneClassification::Green);
+    });
+
+    // Effect to calculate distance when coordinates or zone change
     Effect::new(move |_| {
         if let (Some(origin), Some(dest)) = (origin_coords.get(), dest_coords.get()) {
             debug!(
@@ -149,11 +165,11 @@ pub fn Trade() -> impl IntoView {
                 available_passengers.set(Some(AvailablePassengers::generate(
                     origin_world.read().get_population(),
                     origin_world.read().port,
-                    None,
+                    origin_world.read().travel_zone,
                     origin_world.read().tech_level,
                     world.get_population(),
                     world.port,
-                    None,
+                    world.travel_zone,
                     world.tech_level,
                     distance.get(),
                     steward_skill.get(),
@@ -176,6 +192,7 @@ pub fn Trade() -> impl IntoView {
                         name=origin_world_name
                         uwp=origin_uwp
                         coords=origin_coords
+                        zone=origin_zone
                     />
 
                 </div>
@@ -184,6 +201,7 @@ pub fn Trade() -> impl IntoView {
                     name=dest_world_name
                     uwp=dest_uwp
                     coords=dest_coords
+                    zone=dest_zone
                 />
             </div>
             <div class:key-region>
@@ -206,7 +224,7 @@ pub fn Trade() -> impl IntoView {
                     <div>
                         <span>
                             "Origin Classes: "
-                            {move || format!("[{}]", origin_world.read().trade_classes_string())}
+                            {move || format!("[{}] {}", origin_world.read().trade_classes_string(), origin_world.read().travel_zone)}
                         </span>
                     </div>
                     <div>
@@ -214,8 +232,9 @@ pub fn Trade() -> impl IntoView {
                             {move || {
                                 if let Some(world) = dest_world.get() {
                                     format!(
-                                        "Destination Trade Classes: [{}]",
+                                        "Destination Trade Classes: [{}] {}",
                                         world.trade_classes_string(),
+                                        world.travel_zone
                                     )
                                 } else {
                                     "".to_string()

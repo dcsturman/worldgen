@@ -627,3 +627,15 @@ input[type="text"] {
 .purchased-input-active {
     color: #51A9EE !important;
 }
+
+datalist {
+    font-size: 9pt;
+    line-height: 1.2;
+}
+
+datalist option {
+    padding: 2px 4px;
+    margin: 0;
+    line-height: 1.2;
+    font-size: 9pt;
+}
