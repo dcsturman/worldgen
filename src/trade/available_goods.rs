@@ -112,23 +112,16 @@ impl AvailableGoodsTable {
         world_population: i32,
     ) -> Result<(), String> {
         // Roll for quantity
-        let dice_count = entry.quantity.dice;
-        let multiplier = entry.quantity.multiplier;
+        let dice_count: i32 = entry.quantity.dice as i32;
+        let multiplier: i32 = entry.quantity.multiplier as i32;
 
-        // Reduce dice count by 3 for low population worlds (but never below 1)
-        let adjusted_dice_count = if world_population <= 3 {
-            dice_count.saturating_sub(3).max(1)
-        } else {
-            dice_count
-        };
-
-        let mut total = 0.0;
-        for _ in 0..adjusted_dice_count {
-            total += rng.random_range(1.0..=6.0);
+        let mut total = 0i32;
+        for _ in 0..dice_count {
+            total += rng.random_range(1..=6);
         }
-        let quantity = (total * multiplier as f64)
-            .round()
-            .clamp(0.0, i32::MAX as f64) as i32;
+        let mut quantity = total * multiplier;
+
+        quantity += if world_population <= 3 { -3 } else if world_population >= 9 { 3 } else { 0 };
 
         // If the good is already in the table, add to its quantity
         if let Some(existing) = self
@@ -194,9 +187,9 @@ impl AvailableGoodsTable {
             let roll = rng.random_range(1..=6) + rng.random_range(1..=6) + rng.random_range(1..=6);
 
             let best_purchase_origin_dm =
-                find_best_dm(&good.source_entry.purchase_dm, origin_trade_classes);
+                find_total_dm(&good.source_entry.purchase_dm, origin_trade_classes);
             let best_sale_origin_dm =
-                find_best_dm(&good.source_entry.sale_dm, origin_trade_classes);
+                find_total_dm(&good.source_entry.sale_dm, origin_trade_classes);
             // Calculate the modified roll
             let modified_roll = roll as i16 + buyer_broker_skill - supplier_broker_skill
                 + best_purchase_origin_dm
@@ -264,9 +257,9 @@ impl AvailableGoodsTable {
                     rng.random_range(1..=6) + rng.random_range(1..=6) + rng.random_range(1..=6);
 
                 let best_purchase_origin_dm =
-                    find_best_dm(&good.source_entry.purchase_dm, destination_trade_classes);
+                    find_total_dm(&good.source_entry.purchase_dm, destination_trade_classes);
                 let best_sale_origin_dm =
-                    find_best_dm(&good.source_entry.sale_dm, destination_trade_classes);
+                    find_total_dm(&good.source_entry.sale_dm, destination_trade_classes);
 
                 // Calculate the modified roll
                 let modified_roll = roll as i16 - buyer_broker_skill + supplier_broker_skill
@@ -330,21 +323,19 @@ impl AvailableGoodsTable {
 }
 
 /// Find the best (highest) DM for a given set of trade classes
-fn find_best_dm(
+fn find_total_dm(
     dm_map: &std::collections::HashMap<TradeClass, i16>,
     world_trade_classes: &[TradeClass],
 ) -> i16 {
-    let mut best_dm: i16 = 0;
+    let mut total_dm: i16 = 0;
 
     for trade_class in world_trade_classes {
         if let Some(&dm) = dm_map.get(trade_class) {
-            if dm > best_dm {
-                best_dm = dm;
-            }
+            total_dm += dm;
         }
     }
 
-    best_dm
+    total_dm
 }
 
 #[cfg(test)]
@@ -404,14 +395,14 @@ mod tests {
         // Common Electronics (11) has purchase DM for Rich+1
         let electronics = available_goods.get_by_index(11).unwrap();
         assert_eq!(
-            find_best_dm(&electronics.source_entry.purchase_dm, &world_trade_classes),
+            find_total_dm(&electronics.source_entry.purchase_dm, &world_trade_classes),
             1
         );
 
         // Agricultural Products (33) has purchase DM for Agricultural+2
         let ag_products = available_goods.get_by_index(33).unwrap();
         assert_eq!(
-            find_best_dm(&ag_products.source_entry.purchase_dm, &world_trade_classes),
+            find_total_dm(&ag_products.source_entry.purchase_dm, &world_trade_classes),
             2
         );
 
@@ -440,21 +431,21 @@ mod tests {
         let world_trade_classes = vec![TradeClass::Agricultural, TradeClass::Rich];
 
         // Rich should be the best DM
-        let best_dm = find_best_dm(&dm_map, &world_trade_classes);
+        let best_dm = find_total_dm(&dm_map, &world_trade_classes);
         assert_eq!(best_dm, 5);
 
         // World with only Agricultural trade class
         let world_trade_classes = vec![TradeClass::Agricultural];
 
         // Agricultural should be the best (and only) DM
-        let best_dm = find_best_dm(&dm_map, &world_trade_classes);
+        let best_dm = find_total_dm(&dm_map, &world_trade_classes);
         assert_eq!(best_dm, 3);
 
         // World with no matching trade classes
         let world_trade_classes = vec![TradeClass::Industrial, TradeClass::Poor];
 
         // No DM should be found
-        let best_dm = find_best_dm(&dm_map, &world_trade_classes);
+        let best_dm = find_total_dm(&dm_map, &world_trade_classes);
         assert_eq!(best_dm, 0);
     }
 
