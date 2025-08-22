@@ -368,6 +368,7 @@ pub fn TradeView() -> impl IntoView {
                                         * 100.0)
                                         .round() as i32;
 
+                                    let purchased_amount = good.purchased;
                                     let update_purchased = move |ev| {
                                         let new_value = event_target_value(&ev).parse::<i32>().unwrap_or(0);
                                         let mut ag = available_goods.write();
@@ -394,9 +395,15 @@ pub fn TradeView() -> impl IntoView {
                                                         type="number"
                                                         min="0"
                                                         max=good.quantity
-                                                        value=good.purchased
+                                                        prop:value=purchased_amount
                                                         on:input=update_purchased
-                                                        class="purchased-input"
+                                                        class=move || {
+                                                            if purchased_amount > 0 {
+                                                                "purchased-input purchased-input-active"
+                                                            } else {
+                                                                "purchased-input"
+                                                            }
+                                                        }
                                                     />
                                                 </td>
                                                 <Show when=move || show_sell_price.read().0>
@@ -422,9 +429,15 @@ pub fn TradeView() -> impl IntoView {
                                                         type="number"
                                                         min="0"
                                                         max=good.quantity
-                                                        value=good.purchased
+                                                        prop:value=purchased_amount
                                                         on:input=update_purchased
-                                                        class="purchased-input"
+                                                        class=move || {
+                                                            if purchased_amount > 0 {
+                                                                "purchased-input purchased-input-active"
+                                                            } else {
+                                                                "purchased-input"
+                                                            }
+                                                        }
                                                     />
                                                 </td>
                                                 <Show when=move || show_sell_price.read().0>
@@ -843,29 +856,6 @@ fn ShipManifestView(distance: RwSignal<i32>) -> impl IntoView {
                     </div>
                 </div>
             </div>
-
-            <Show when=move || !ship_manifest.read().goods.is_empty()>
-                <div class="manifest-section">
-                    <h5>"Goods"</h5>
-                    <div class="manifest-goods">
-                        {move || {
-                            ship_manifest
-                                .read()
-                                .goods
-                                .iter()
-                                .map(|good| {
-                                    view! {
-                                        <div class="goods-item">
-                                            <span>{good.name.clone()}</span>
-                                            <span>{good.quantity.to_string()}" tons"</span>
-                                        </div>
-                                    }
-                                })
-                                .collect::<Vec<_>>()
-                        }}
-                    </div>
-                </div>
-            </Show>
         </div>
     }
 }
