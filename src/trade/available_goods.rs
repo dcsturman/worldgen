@@ -1,3 +1,47 @@
+//! # Available Goods Module
+//! 
+//! This module handles the generation and management of trade goods available for purchase
+//! at specific worlds in the Traveller universe. It provides functionality for creating
+//! realistic trade markets based on world characteristics, population, trade classifications,
+//! and broker skills.
+//! 
+//! ## Key Features
+//! 
+//! - **Dynamic Market Generation**: Creates available goods based on world trade classes
+//! - **Population-Based Availability**: Adjusts quantities based on world population
+//! - **Broker Skill Integration**: Modifies prices based on buyer/seller broker skills
+//! - **Trade Classification Support**: Respects world trade class restrictions
+//! - **Illegal Goods Handling**: Optional inclusion of restricted/illegal items
+//! - **Price Fluctuation**: Realistic price variations based on supply/demand
+//! 
+//! ## Market Mechanics
+//! 
+//! The system generates markets through several phases:
+//! 1. **Base Availability**: Goods available based on world trade classes
+//! 2. **Random Goods**: Additional items based on population rolls
+//! 3. **Quantity Generation**: Dice-based quantity determination with population modifiers
+//! 4. **Price Calculation**: Broker skills and trade DMs affect final pricing
+//! 5. **Market Sorting**: Goods can be sorted by discount percentage
+//! 
+//! ## Usage Examples
+//! 
+//! ```rust
+//! use worldgen::trade::{available_goods::AvailableGoodsTable, TradeClass};
+//! 
+//! // Generate market for an agricultural world
+//! let trade_classes = vec![TradeClass::Agricultural, TradeClass::Rich];
+//! let mut market = AvailableGoodsTable::for_world(
+//!     &trade_table, 
+//!     &trade_classes, 
+//!     7,     // Population 7
+//!     false  // No illegal goods
+//! )?;
+//! 
+//! // Apply broker skills and price goods
+//! market.price_goods_to_buy(&trade_classes, 2, 1); // Buyer skill 2, seller skill 1
+//! market.sort_by_discount(); // Sort by best deals first
+//! ```
+
 use rand::Rng;
 use std::fmt::{Display, Formatter, Result as FmtResult};
 
@@ -7,7 +51,28 @@ use leptos::leptos_dom::logging::console_log;
 use crate::trade::table::{Availability, TradeTable, TradeTableEntry};
 use crate::trade::TradeClass;
 
-/// Represents a good available for purchase at a specific world
+/// A trade good available for purchase at a specific world
+/// 
+/// Represents an individual commodity or manufactured good that can be purchased
+/// from a world's market. Contains all necessary information for trade calculations
+/// including quantities, pricing, and source trade table data.
+/// 
+/// ## Pricing Mechanics
+/// 
+/// - **Base Cost**: Original price from trade tables
+/// - **Current Cost**: Modified price after broker skills and market conditions
+/// - **Sell Price**: Optional price for selling at destination (calculated separately)
+/// 
+/// ## Quantity Tracking
+/// 
+/// - **Available Quantity**: Total amount available for purchase
+/// - **Purchased Quantity**: Amount already bought (for manifest tracking)
+/// 
+/// ## Trade Integration
+/// 
+/// Each good maintains a reference to its source trade table entry, allowing
+/// access to trade DMs, availability restrictions, and other metadata needed
+/// for advanced trade calculations.
 #[derive(Debug, Clone)]
 pub struct AvailableGood {
     /// Name of the good
@@ -36,7 +101,33 @@ impl Display for AvailableGood {
     }
 }
 
-/// Table of goods available for purchase at a specific world
+/// Collection of goods available for purchase at a specific world
+/// 
+/// Manages the complete trade market for a world, including generation of available
+/// goods based on world characteristics, pricing based on broker skills, and
+/// market manipulation functions for trade calculations.
+/// 
+/// ## Market Generation
+/// 
+/// Markets are generated through a multi-step process:
+/// 1. **Trade Class Goods**: Items available due to world's trade classifications
+/// 2. **Population Rolls**: Random goods based on population-driven dice rolls
+/// 3. **Quantity Calculation**: Dice-based quantities with population modifiers
+/// 4. **Availability Filtering**: Respects legal restrictions and trade class limits
+/// 
+/// ## Price Dynamics
+/// 
+/// The table supports sophisticated pricing through:
+/// - Broker skill differentials between buyer and seller
+/// - Trade classification DMs (Difficulty Modifiers)
+/// - Random market fluctuations via dice rolls
+/// - Separate buy/sell price calculations for different destinations
+/// 
+/// ## Market Operations
+/// 
+/// - **Sorting**: Goods can be sorted by discount percentage
+/// - **Lookup**: Fast access to specific goods by trade table index
+/// - **Display**: Human-readable market summaries with pricing information
 #[derive(Debug, Clone, Default)]
 pub struct AvailableGoodsTable {
     /// List of available goods
@@ -62,7 +153,46 @@ impl AvailableGoodsTable {
         Self::default()
     }
 
-    /// Create a table of available goods for a specific world
+    /// Generate a complete market for a specific world
+    /// 
+    /// Creates an available goods table based on the world's characteristics,
+    /// including trade classifications, population level, and legal restrictions.
+    /// 
+    /// ## Generation Process
+    /// 
+    /// 1. **Trade Class Filtering**: Adds goods available to world's trade classes
+    /// 2. **Population Rolls**: Makes population-based random rolls for additional goods
+    /// 3. **Quantity Generation**: Rolls dice for quantities with population modifiers
+    /// 4. **Duplicate Handling**: Combines quantities for duplicate goods
+    /// 
+    /// ## Parameters
+    /// 
+    /// * `trade_table` - Master trade table containing all possible goods
+    /// * `world_trade_classes` - Trade classifications for this world
+    /// * `population` - World population code (affects quantity and variety)
+    /// * `illegal_ok` - Whether to include illegal/restricted goods (indices 61-66)
+    /// 
+    /// ## Population Effects
+    /// 
+    /// - **Low Population (≤3)**: -3 to all quantities, fewer random goods
+    /// - **High Population (≥9)**: +3 to all quantities, more random goods
+    /// - **Roll Count**: Makes `population` number of random good rolls
+    /// 
+    /// ## Returns
+    /// 
+    /// `Result<Self, String>` - Complete market table or error message
+    /// 
+    /// ## Examples
+    /// 
+    /// ```rust
+    /// // Generate market for agricultural world, population 6, no illegal goods
+    /// let market = AvailableGoodsTable::for_world(
+    ///     &trade_table,
+    ///     &[TradeClass::Agricultural, TradeClass::Rich],
+    ///     6,
+    ///     false
+    /// )?;
+    /// ```
     pub fn for_world(
         trade_table: &TradeTable,
         world_trade_classes: &[TradeClass],
@@ -104,7 +234,35 @@ impl AvailableGoodsTable {
         Ok(table)
     }
 
-    /// Add a trade table entry to the available goods using the provided RNG
+    /// Add a trade table entry using provided random number generator
+    /// 
+    /// Internal method for adding goods to the market with explicit RNG control.
+    /// Handles quantity generation, population modifiers, and duplicate consolidation.
+    /// 
+    /// ## Quantity Calculation
+    /// 
+    /// 1. **Base Roll**: Rolls specified number of d6 dice
+    /// 2. **Multiplier**: Applies entry's quantity multiplier
+    /// 3. **Population Modifier**: Adjusts based on world population
+    ///    - Population ≤3: -3 to quantity
+    ///    - Population ≥9: +3 to quantity
+    ///    - Population 4-8: No modifier
+    /// 
+    /// ## Duplicate Handling
+    /// 
+    /// If a good with the same trade table index already exists in the market,
+    /// the new quantity is added to the existing entry rather than creating
+    /// a duplicate listing.
+    /// 
+    /// ## Parameters
+    /// 
+    /// * `entry` - Trade table entry to add
+    /// * `rng` - Random number generator for quantity rolls
+    /// * `world_population` - Population code for quantity modifiers
+    /// 
+    /// ## Returns
+    /// 
+    /// `Result<(), String>` - Success or error message
     fn add_entry_rng(
         &mut self,
         entry: TradeTableEntry,
@@ -180,7 +338,61 @@ impl AvailableGoodsTable {
         self.goods.is_empty()
     }
 
-    /// Adjust the prices of goods based on broker skills and trade DMs
+    /// Calculate purchase prices based on broker skills and trade conditions
+    /// 
+    /// Adjusts the cost of all goods in the market based on the relative broker
+    /// skills of buyer and seller, plus trade classification bonuses/penalties.
+    /// Uses random rolls to simulate market fluctuations.
+    /// 
+    /// ## Price Calculation Formula
+    /// 
+    /// ```text
+    /// Modified Roll = 3d6 + Buyer Broker - Seller Broker + Purchase DM - Sale DM
+    /// Final Cost = Base Cost × Price Multiplier (based on Modified Roll)
+    /// ```
+    /// 
+    /// ## Price Multiplier Table
+    /// 
+    /// | Modified Roll | Multiplier | Discount |
+    /// |---------------|------------|----------|
+    /// | ≤-3          | 300%       | -200%    |
+    /// | -2           | 250%       | -150%    |
+    /// | -1           | 200%       | -100%    |
+    /// | 0            | 175%       | -75%     |
+    /// | 1            | 150%       | -50%     |
+    /// | 2            | 135%       | -35%     |
+    /// | 3            | 125%       | -25%     |
+    /// | 4-15         | 100%       | Base     |
+    /// | 16           | 90%        | 10%      |
+    /// | 17           | 80%        | 20%      |
+    /// | 18           | 70%        | 30%      |
+    /// | 19           | 45%        | 55%      |
+    /// | 20           | 40%        | 60%      |
+    /// | 21           | 35%        | 65%      |
+    /// | 22           | 30%        | 70%      |
+    /// | 23           | 25%        | 75%      |
+    /// | 24           | 20%        | 80%      |
+    /// | ≥25          | 15%        | 85%      |
+    /// 
+    /// ## Trade DMs
+    /// 
+    /// - **Purchase DM**: Bonus when world produces this good type
+    /// - **Sale DM**: Penalty when world consumes this good type
+    /// - **Net Effect**: Purchase DM - Sale DM affects final price
+    /// 
+    /// ## Parameters
+    /// 
+    /// * `origin_trade_classes` - Trade classes of the selling world
+    /// * `buyer_broker_skill` - Buyer's broker skill level
+    /// * `supplier_broker_skill` - Seller's broker skill level
+    /// 
+    /// ## Examples
+    /// 
+    /// ```rust
+    /// // Skilled buyer (3) vs average seller (1) on agricultural world
+    /// market.price_goods_to_buy(&[TradeClass::Agricultural], 3, 1);
+    /// // Expect better prices due to +2 skill differential
+    /// ```
     pub fn price_goods_to_buy(
         &mut self,
         origin_trade_classes: &[TradeClass],
@@ -248,7 +460,48 @@ impl AvailableGoodsTable {
         }
     }
 
-    /// Adjust the prices of goods based on broker skills and trade DMs for a sale
+    /// Calculate selling prices for goods at potential destination worlds
+    /// 
+    /// Determines the selling price for goods when transported to worlds with
+    /// specific trade classifications. Uses the same pricing mechanics as
+    /// purchase pricing but from the seller's perspective.
+    /// 
+    /// ## Destination Pricing
+    /// 
+    /// When destination trade classes are provided:
+    /// - Calculates modified roll using destination world's trade DMs
+    /// - Applies same price multiplier table as purchase pricing
+    /// - Sets `sell_price` field for each good
+    /// 
+    /// When no destination is specified:
+    /// - Clears all `sell_price` fields (sets to `None`)
+    /// - Used for markets where destination is unknown
+    /// 
+    /// ## Trade DM Application
+    /// 
+    /// For selling, the DM calculation is reversed:
+    /// - **Purchase DM**: Applied as bonus (destination wants this good)
+    /// - **Sale DM**: Applied as penalty (destination produces this good)
+    /// 
+    /// ## Parameters
+    /// 
+    /// * `possible_destination_trade_classes` - Trade classes of destination world(s)
+    /// * `buyer_broker_skill` - Destination buyer's broker skill
+    /// * `supplier_broker_skill` - Current seller's broker skill
+    /// 
+    /// ## Examples
+    /// 
+    /// ```rust
+    /// // Calculate selling prices for industrial destination
+    /// market.price_goods_to_sell(
+    ///     Some(vec![TradeClass::Industrial, TradeClass::HighTech]),
+    ///     1, // Destination buyer skill
+    ///     2  // Our broker skill
+    /// );
+    /// 
+    /// // Clear selling prices (no destination selected)
+    /// market.price_goods_to_sell(None, 0, 0);
+    /// ```
     pub fn price_goods_to_sell(
         &mut self,
         possible_destination_trade_classes: Option<Vec<TradeClass>>,
@@ -328,7 +581,38 @@ impl AvailableGoodsTable {
     }
 }
 
-/// Find the best (highest) DM for a given set of trade classes
+/// Calculate total trade DMs for a set of world trade classes
+/// 
+/// Sums all applicable Difficulty Modifiers (DMs) from a trade good's DM map
+/// that match the world's trade classifications. This determines the total
+/// bonus or penalty applied to trade rolls for this good at this world.
+/// 
+/// ## DM Accumulation
+/// 
+/// Unlike some systems that take the best single DM, this function sums
+/// all applicable DMs, allowing worlds with multiple relevant trade classes
+/// to receive cumulative bonuses.
+/// 
+/// ## Parameters
+/// 
+/// * `dm_map` - HashMap mapping trade classes to their DM values
+/// * `world_trade_classes` - Trade classifications of the world
+/// 
+/// ## Returns
+/// 
+/// `i16` - Total DM (sum of all applicable modifiers)
+/// 
+/// ## Examples
+/// 
+/// ```rust
+/// // Agricultural world (+2) that's also Rich (+1) for electronics
+/// let total_dm = find_total_dm(&electronics_purchase_dm, &[Agricultural, Rich]);
+/// // Returns: 3 (2 + 1)
+/// 
+/// // Industrial world with no applicable DMs for agricultural products  
+/// let total_dm = find_total_dm(&ag_products_purchase_dm, &[Industrial]);
+/// // Returns: 0
+/// ```
 fn find_total_dm(
     dm_map: &std::collections::HashMap<TradeClass, i16>,
     world_trade_classes: &[TradeClass],
