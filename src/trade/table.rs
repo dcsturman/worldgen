@@ -28,19 +28,19 @@ pub struct TradeTable {
 #[derive(Debug, Clone)]
 pub struct TradeTableEntry {
     /// Two-digit index for dice roll lookup (11-66)
-    pub(crate) index: i16,
+    pub index: i16,
     /// Human-readable name of the trade good
-    pub(crate) name: String,
+    pub name: String,
     /// Availability restrictions based on world trade classes
-    pub(crate) availability: Availability,
+    pub availability: Availability,
     /// Dice formula for determining quantity available
-    pub(crate) quantity: Quantity,
+    pub quantity: Quantity,
     /// Base cost per unit in credits
-    pub(crate) base_cost: i32,
+    pub base_cost: i32,
     /// Purchase price modifiers by trade class
-    pub(crate) purchase_dm: HashMap<TradeClass, i16>,
+    pub purchase_dm: HashMap<TradeClass, i16>,
     /// Sale price modifiers by trade class
-    pub(crate) sale_dm: HashMap<TradeClass, i16>,
+    pub sale_dm: HashMap<TradeClass, i16>,
 }
 
 /// Availability restrictions for trade goods
@@ -48,7 +48,7 @@ pub struct TradeTableEntry {
 /// Determines which worlds can produce or have access to specific trade goods
 /// based on their trade classifications.
 #[derive(Debug, Clone)]
-pub(crate) enum Availability {
+pub enum Availability {
     /// Available on all worlds regardless of trade class
     All,
     /// Only available on worlds with specific trade classes
@@ -60,7 +60,7 @@ pub(crate) enum Availability {
 /// Represents the dice formula used to determine how much of a good
 /// is available for purchase (e.g., "2Dx10" means roll 2d6 and multiply by 10).
 #[derive(Debug, Clone)]
-pub(crate) struct Quantity {
+pub struct Quantity {
     /// Number of dice to roll (1-3 typically)
     pub dice: u8,
     /// Multiplier applied to dice result

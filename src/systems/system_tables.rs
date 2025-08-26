@@ -23,11 +23,22 @@
 //!
 //! ## Usage
 //!
-//! ```rust
+//! ```rust,ignore
 //! use worldgen::systems::system_tables::{get_zone, get_luminosity};
 //!
 //! let zones = get_zone(&star);
 //! let luminosity = get_luminosity(&star);
+//! ```
+//!
+//! Example of using `get_zone` with a `System`:
+//!
+//! ```rust,ignore
+//! use worldgen::systems::system_tables::get_zone;
+//! use worldgen::systems::system::System;
+//!
+//! let system = System::default();
+//! let zone_table = get_zone(&system.star);
+//! println!("Habitable zone: {}", zone_table.habitable);
 //! ```
 
 use crate::systems::system::{Star, StarSize, StarSubType, StarType};
@@ -53,9 +64,35 @@ use std::collections::HashMap;
 /// # Examples
 ///
 /// ```rust
+/// # use worldgen::systems::system_tables::get_zone;
+/// # use worldgen::systems::system::{Star, StarType, StarSize, StarSubType};
+/// # let orbit = 3;
+/// let star = Star {
+///     star_type: StarType::G,
+///     size: StarSize::V,
+///     subtype: 2,
+/// };
 /// let zones = get_zone(&star);
 /// if orbit <= zones.habitable {
 ///     // World is in habitable zone
+/// }
+/// ```
+///
+/// Example of using `get_zone` with a `Star`:
+///
+/// ```rust,ignore
+/// use worldgen::systems::system_tables::get_zone;
+/// use worldgen::systems::system::{System, Star, StarType, StarSize};
+///
+/// let star = Star {
+///     star_type: StarType::G,
+///     size: StarSize::V,
+///     subtype: 2,
+/// };
+/// let zones = get_zone(&star);
+/// let orbit = 3;
+/// if orbit <= zones.habitable {
+///     println!("Orbit {} is in the habitable zone", orbit);
 /// }
 /// ```
 pub fn get_zone(star: &Star) -> ZoneTable {
@@ -281,18 +318,18 @@ const AVG_WORLD_TEMP: [f32; 16] = [
 #[derive(Debug, Clone, Copy)]
 pub struct ZoneTable {
     /// Boundary of inside zone (orbital position)
-    pub(crate) inside: i32,
+    pub inside: i32,
     /// Boundary of hot zone (orbital position)
-    pub(crate) hot: i32,
+    pub hot: i32,
     /// Boundary of inner zone (orbital position)
-    pub(crate) inner: i32,
+    pub inner: i32,
     /// Boundary of habitable zone (orbital position)
-    pub(crate) habitable: i32,
+    pub habitable: i32,
     /// Boundary of outer zone (orbital position)
     ///
     /// Currently unused in calculations but included for completeness
     #[allow(dead_code)]
-    pub(crate) outer: i32,
+    pub outer: i32,
 }
 
 lazy_static! {

@@ -32,7 +32,7 @@ pub use rand::Rng;
 /// assert_eq!(arabic_to_roman(9), "IX");
 /// assert_eq!(arabic_to_roman(0), "N");
 /// ```
-pub(crate) fn arabic_to_roman(num: usize) -> String {
+pub fn arabic_to_roman(num: usize) -> String {
     if num > 20 {
         panic!("Input ({num}) must be an integer between 0 and 20");
     }
@@ -85,7 +85,7 @@ pub(crate) fn arabic_to_roman(num: usize) -> String {
 /// let result = roll_2d6();
 /// assert!(result >= 2 && result <= 12);
 /// ```
-pub(crate) fn roll_2d6() -> i32 {
+pub fn roll_2d6() -> i32 {
     let mut rng = rand::rng();
     rng.random_range(1..=6) + rng.random_range(1..=6)
 }
@@ -107,7 +107,7 @@ pub(crate) fn roll_2d6() -> i32 {
 /// let result = roll_1d6();
 /// assert!(result >= 1 && result <= 6);
 /// ```
-pub(crate) fn roll_1d6() -> i32 {
+pub fn roll_1d6() -> i32 {
     let mut rng = rand::rng();
     rng.random_range(1..=6)
 }
@@ -129,7 +129,7 @@ pub(crate) fn roll_1d6() -> i32 {
 /// let result = roll_10();
 /// assert!(result >= 0 && result <= 9);
 /// ```
-pub(crate) fn roll_10() -> i32 {
+pub fn roll_10() -> i32 {
     let mut rng = rand::rng();
     rng.random_range(0..=9)
 }

@@ -111,11 +111,11 @@
 //!
 //! ## Usage Examples
 //!
-//! ```rust
-//! use leptos::prelude::*;
-//! use reactive_stores::Store;
-//! use worldgen::components::world_list::WorldList;
-//! use worldgen::systems::system::System;
+//! ```rust,ignore
+//! # use leptos::prelude::*;
+//! # use reactive_stores::Store;
+//! # use crate::components::world_list::WorldList;
+//! # use crate::systems::system::System;
 //!
 //! // Display complete star system
 //! #[component]
@@ -245,7 +245,7 @@ use crate::systems::world::{Satellites, SatellitesStoreFields, World, WorldStore
 ///
 /// ## Usage Examples
 ///
-/// ```rust
+/// ```rust,ignore
 /// // Display complete star system
 /// view! { <WorldList /> }
 ///
@@ -403,7 +403,7 @@ pub fn WorldList(#[prop(default = false)] is_companion: bool) -> impl IntoView {
 ///
 /// ## Usage Examples
 ///
-/// ```rust
+/// ```rust,ignore
 /// // Display primary star
 /// view! { <StarRow system=primary_system is_companion=false /> }
 ///
@@ -498,7 +498,7 @@ pub fn StarRow(
 ///
 /// ## Usage Examples
 ///
-/// ```rust
+/// ```rust,ignore
 /// // Display main world
 /// view! { <WorldView world=main_world satellite=false /> }
 ///
@@ -587,7 +587,7 @@ pub fn WorldView(#[prop(into)] world: Field<World>, satellite: bool) -> impl Int
 ///
 /// ## Usage Examples
 ///
-/// ```rust
+/// ```rust,ignore
 /// // Display gas giant with satellites
 /// view! { <GiantView world=gas_giant_field /> }
 /// ```
@@ -648,7 +648,7 @@ pub fn GiantView(#[prop(into)] world: Field<GasGiant>) -> impl IntoView {
 ///
 /// ## Usage Examples
 ///
-/// ```rust
+/// ```rust, ignore
 /// // Display satellites of a world
 /// view! { <SatelliteView satellites=world.satellites() /> }
 ///

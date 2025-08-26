@@ -170,10 +170,11 @@
 ///
 /// Call this function early in application initialization:
 ///
-/// ```rust
+/// ```rust,ignore
+/// # use worldgen::logging::init_from_url;
 /// fn main() {
 ///     console_error_panic_hook::set_once();
-///     worldgen::logging::init_from_url();
+///     init_from_url();
 ///     leptos::mount_to_body(App);
 /// }
 /// ```

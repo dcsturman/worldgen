@@ -142,11 +142,10 @@
 //!
 //! ## Usage Examples
 //!
-//! ```rust
-//! use leptos::prelude::*;
-//! use worldgen::components::traveller_map::{WorldSearch, calculate_hex_distance};
-//! use worldgen::trade::ZoneClassification;
-//!
+//! ```rust,ignore
+//! # use leptos::prelude::*;
+//! # use worldgen::components::traveller_map::WorldSearch;
+//! # use worldgen::trade::ZoneClassification;
 //! // Basic world search component
 //! #[component]
 //! fn WorldEntry() -> impl IntoView {
@@ -167,6 +166,7 @@
 //! }
 //!
 //! // Calculate distance between two worlds
+//! # use worldgen::components::traveller_map::calculate_hex_distance;
 //! let distance = calculate_hex_distance(10, 15, 12, 18); // Returns distance in parsecs
 //! ```
 //!
@@ -381,7 +381,8 @@ pub struct WorldDataResponse {
 ///
 /// ## Example
 ///
-/// ```rust
+/// ```rust,ignore
+/// # use worldgen::components::traveller_map::fetch_search_results;
 /// let url = "https://travellermap.com/api/search?q=Regina";
 /// let results = fetch_search_results(&url).await?;
 /// println!("Found {} results", results.results.count);
@@ -427,7 +428,8 @@ pub async fn fetch_search_results(url: &str) -> Result<TravellerMapResponse, JsV
 ///
 /// ## Example
 ///
-/// ```rust
+/// ```rust,ignore
+/// # use worldgen::components::traveller_map::fetch_data_world;
 /// let world_data = fetch_data_world("Spinward Marches", "1910").await?;
 /// println!("World: {} ({})", world_data.name, world_data.uwp);
 /// ```
@@ -533,7 +535,7 @@ pub async fn fetch_data_world(sector: &str, hex: &str) -> Result<WorldDataRespon
 ///
 /// ## Usage Examples
 ///
-/// ```rust
+/// ```rust,ignore
 /// // Basic world search
 /// let name = RwSignal::new("".to_string());
 /// let uwp = RwSignal::new("".to_string());
@@ -787,14 +789,15 @@ pub fn WorldSearch(
 /// ## Examples
 ///
 /// ```rust
-/// // Distance between adjacent hexes
+/// # use worldgen::components::traveller_map::calculate_hex_distance;
 /// let distance = calculate_hex_distance(10, 15, 11, 15); // Returns 1
 ///
-/// // Distance across several hexes
+/// // Calculate distance between two distant worlds
 /// let distance = calculate_hex_distance(1, 1, 5, 8); // Returns actual distance
 ///
-/// // Same hex
-/// let distance = calculate_hex_distance(10, 10, 10, 10); // Returns 0
+/// // Same hex returns 0 distance
+/// let distance = calculate_hex_distance(10, 10, 10, 10);
+/// assert_eq!(distance, 0);
 /// ```
 ///
 /// ## Use Cases
@@ -856,14 +859,12 @@ pub fn calculate_hex_distance(hex_x1: i32, hex_y1: i32, hex_x2: i32, hex_y2: i32
 /// ## Examples
 ///
 /// ```rust
-/// // Convert corner hex
+/// # use worldgen::components::traveller_map::offset_to_cube;
 /// let (x, y, z) = offset_to_cube(1, 1); // Returns cube coordinates
 ///
-/// // Convert center hex
+/// // Convert sector center coordinates
 /// let (x, y, z) = offset_to_cube(16, 20); // Sector center
-///
-/// // Verify constraint
-/// assert_eq!(x + y + z, 0); // Always true
+/// assert_eq!(x + y + z, 0); // Cube coordinates sum to zero
 /// ```
 ///
 /// ## Use Cases

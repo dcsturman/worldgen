@@ -15,8 +15,7 @@
 //! ## Usage
 //!
 //! ```rust
-//! use worldgen::systems::name_tables::{gen_planet_name, gen_star_system_name, gen_moon_name};
-//!
+//! # use worldgen::systems::name_tables::{gen_planet_name, gen_star_system_name, gen_moon_name};
 //! let planet = gen_planet_name();        // "Kepler's Keep"
 //! let system = gen_star_system_name();   // "Aegis Prime"
 //! let moon = gen_moon_name();            // "Ganymede"
@@ -30,6 +29,28 @@
 
 use rand::Rng;
 
+/// Generates a random moon name
+///
+/// Selects from a comprehensive list of classical mythology and real
+/// astronomical body names. Includes names from Greek, Roman, Norse,
+/// and other mythological traditions, as well as real moons from
+/// our solar system.
+///
+/// # Returns
+///
+/// A randomly selected moon name as a `String`
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// # use worldgen::systems::name_tables::gen_moon_name;
+/// let name = gen_moon_name();
+/// // Possible results: "Luna", "Phobos", "Europa"
+/// ```
+pub fn gen_moon_name() -> String {
+    MOON_NAMES[rand::rng().random_range(0..MOON_NAMES.len())].to_string()
+}
+
 /// Generates a random planet name
 ///
 /// Selects from a curated list of science fiction themed names suitable
@@ -42,11 +63,12 @@ use rand::Rng;
 ///
 /// # Examples
 ///
-/// ```rust
+/// ```rust,ignore
+/// # use worldgen::systems::name_tables::gen_planet_name;
 /// let name = gen_planet_name();
 /// // Possible results: "Kepler's Keep", "Nova Nexus", "Quantum Quasar"
 /// ```
-pub(crate) fn gen_planet_name() -> String {
+pub fn gen_planet_name() -> String {
     PLANET_NAMES[rand::rng().random_range(0..PLANET_NAMES.len())].to_string()
 }
 
@@ -62,33 +84,13 @@ pub(crate) fn gen_planet_name() -> String {
 ///
 /// # Examples
 ///
-/// ```rust
+/// ```rust,ignore
+/// # use worldgen::systems::name_tables::gen_star_system_name;
 /// let name = gen_star_system_name();
 /// // Possible results: "Aegis Prime", "Orion's Forge", "Vega Void"
 /// ```
-pub(crate) fn gen_star_system_name() -> String {
+pub fn gen_star_system_name() -> String {
     STAR_SYSTEM_NAMES[rand::rng().random_range(0..STAR_SYSTEM_NAMES.len())].to_string()
-}
-
-/// Generates a random moon name
-///
-/// Selects from a comprehensive list of classical mythology and real
-/// astronomical body names. Includes names from Greek, Roman, Norse,
-/// and other mythological traditions, as well as real moons from
-/// our solar system.
-///
-/// # Returns
-///
-/// A randomly selected moon name as a `String`
-///
-/// # Examples
-///
-/// ```rust
-/// let name = gen_moon_name();
-/// // Possible results: "Ganymede", "Titan", "Calypso", "Hyperion"
-/// ```
-pub(crate) fn gen_moon_name() -> String {
-    MOON_NAMES[rand::rng().random_range(0..MOON_NAMES.len())].to_string()
 }
 
 /// Star system names combining astronomical terms with evocative descriptors

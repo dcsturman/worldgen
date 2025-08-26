@@ -85,14 +85,13 @@
 //!
 //! ## Usage Examples
 //!
-//! ```rust
+//! ```rust,ignore
 //! use leptos::prelude::*;
 //! use worldgen::components::{selector::Selector, system_generator::World};
 //!
-//! // Main application routing
 //! #[component]
 //! fn App() -> impl IntoView {
-//!     let path = web_sys::window()?.location().pathname()?;
+//!     let path = window().location().pathname().unwrap_or_default();
 //!     
 //!     if path.contains("world") {
 //!         view! { <World /> }

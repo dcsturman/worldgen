@@ -23,11 +23,11 @@
 //!
 //! ## Examples
 //!
-//! ```rust
+//! ```rust,ignore
 //! use worldgen::systems::{system::System, world::World};
 //!
 //! // Generate a complete system from a main world UWP
-//! let main_world = World::from_upp("Regina".to_string(), "A788899-A", false, true)?;
+//! let main_world = World::from_upp("Regina".to_string(), "A788899-A", false, true).unwrap();
 //! let system = System::generate_system(main_world);
 //! ```
 

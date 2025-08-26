@@ -4,7 +4,7 @@ Worldgen started as a world generator, but has evolved into a set of tools for T
 
 ## Overview
 
-Worldgen combines stellar mechanics, world generation, and trade economics into an integrated suite of tools for the Traveller universe. The application generates realistic star systems following official Traveller rules while providing modern web-based interfaces for system exploration and trade route planning.
+Worldgen combines stellar mechanics, world generation, and trade economics into tools for the Traveller universe. The application generates realistic star systems following official Traveller rules while providing modern web-based interfaces for system development and the trade mini-game.  The tools are hosted at [http://worldgen.callisot.com]
 
 ## Key Features
 

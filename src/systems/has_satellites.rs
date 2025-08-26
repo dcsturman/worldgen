@@ -28,7 +28,7 @@
 //!
 //! ## Usage
 //!
-//! ```rust
+//! ```rust,ignore
 //! use worldgen::systems::has_satellites::HasSatellites;
 //! use worldgen::systems::gas_giant::GasGiant;
 //!

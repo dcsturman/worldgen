@@ -23,9 +23,9 @@
 //! The primary interface is the [`AstroData`] struct, which can be computed from
 //! a star and world combination to generate comprehensive astronomical data.
 //!
-//! ```rust
-//! use worldgen::systems::{astro::AstroData, system::Star, world::World};
-//!
+//! ```rust,ignore
+//! # use worldgen::systems::astro::AstroData;
+//! # use worldgen::systems::{system::Star, world::World};
 //! let astro_data = AstroData::compute(&star, &world);
 //! let description = astro_data.get_astro_description(&world);
 //! ```

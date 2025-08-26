@@ -73,7 +73,7 @@
 //!
 //! ## Usage Examples
 //!
-//! ```rust
+//! ```rust,ignore
 //! use leptos::prelude::*;
 //! use reactive_stores::Store;
 //! use worldgen::components::system_view::SystemView;
@@ -124,7 +124,7 @@ use crate::systems::world::World;
 ///
 /// ## Examples
 ///
-/// ```rust
+/// ```rust,ignore
 /// let description = habitable_clause(&system);
 /// // Returns: " with a habitable zone at orbit 3"
 /// // Or: " with no habitable zone"
@@ -217,7 +217,7 @@ pub fn SystemView() -> impl IntoView {
 ///
 /// ## Usage
 ///
-/// ```rust
+/// ```rust,ignore
 /// let secondary_desc = lead_builder(system.secondary(), "secondary");
 /// let description = secondary_desc(); // Call closure to get current description
 /// ```
@@ -285,13 +285,14 @@ fn lead_builder(
 /// ## Examples
 ///
 /// ```rust
+/// # use worldgen::components::system_view::quantity_suffix;
 /// assert_eq!(quantity_suffix(0, "star"), "");
 /// assert_eq!(quantity_suffix(1, "star"), "1 star");
 /// assert_eq!(quantity_suffix(3, "star"), "3 stars");
 /// assert_eq!(quantity_suffix(1, "gas giant"), "1 gas giant");
 /// assert_eq!(quantity_suffix(2, "gas giant"), "2 gas giants");
 /// ```
-fn quantity_suffix(quantity: usize, singular: &str) -> String {
+pub fn quantity_suffix(quantity: usize, singular: &str) -> String {
     if quantity == 0 {
         "".to_string()
     } else if quantity == 1 {

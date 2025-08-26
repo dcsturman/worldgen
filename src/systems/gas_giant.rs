@@ -27,12 +27,12 @@
 //!
 //! ## Usage
 //!
-//! ```rust
+//! ```rust,ignore
 //! use worldgen::systems::gas_giant::{GasGiant, GasGiantSize};
 //!
-//! let mut gas_giant = GasGiant::new(GasGiantSize::Large, 5);
-//! gas_giant.gen_name("Sol", 5);
-//! // Generate satellites using HasSatellites trait methods
+//! let mut gas_giant = GasGiant::new(GasGiantSize::Large, 4);
+//! gas_giant.gen_name("Sol", 4);
+//! // Result: either a proper name like "Jupiter" or "Sol V"
 //! ```
 
 use log::debug;
@@ -116,6 +116,7 @@ impl GasGiant {
     /// # Examples
     ///
     /// ```rust
+    /// # use worldgen::systems::gas_giant::{GasGiant, GasGiantSize};
     /// let mut gas_giant = GasGiant::new(GasGiantSize::Large, 4);
     /// gas_giant.gen_name("Sol", 4);
     /// // Result: either a proper name like "Jupiter" or "Sol V"

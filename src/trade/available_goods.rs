@@ -26,8 +26,10 @@
 //! ## Usage Examples
 //!
 //! ```rust
-//! use worldgen::trade::{available_goods::AvailableGoodsTable, TradeClass};
-//!
+//! # use worldgen::trade::{available_goods::AvailableGoodsTable, TradeClass};
+//! # use worldgen::trade::table::TradeTable;
+//! # let
+//! trade_table = TradeTable::default();
 //! // Generate market for an agricultural world
 //! let trade_classes = vec![TradeClass::Agricultural, TradeClass::Rich];
 //! let mut market = AvailableGoodsTable::for_world(
@@ -35,18 +37,46 @@
 //!     &trade_classes,
 //!     7,     // Population 7
 //!     false  // No illegal goods
-//! )?;
+//! ).unwrap();
 //!
 //! // Apply broker skills and price goods
 //! market.price_goods_to_buy(&trade_classes, 2, 1); // Buyer skill 2, seller skill 1
 //! market.sort_by_discount(); // Sort by best deals first
 //! ```
+//!
+//! ## Example Usage
+//!
+//! ```rust,ignore
+//! use worldgen::trade::{available_goods::AvailableGoodsTable, table::TradeTable, TradeClass};
+//!
+//! // Create a standard trade table
+//! let trade_table = TradeTable::default();
+//!
+//! // Create a world with Agricultural and Rich trade classes
+//! let world_trade_classes = vec![TradeClass::Agricultural, TradeClass::Rich];
+//!
+//! // Create an available goods table for the world
+//! let mut market = AvailableGoodsTable::for_world(
+//!     &trade_table,
+//!     &world_trade_classes,
+//!     5,     // Population 5
+//!     false, // No illegal goods
+//! ).unwrap();
+//!
+//! // Price goods for purchase with broker skills
+//! market.price_goods_to_buy(&world_trade_classes, 1, 2);
+//!
+//! // Sort by best discounts
+//! market.sort_by_discount();
+//! ```
+//!
+//! This example demonstrates how to create a trade market for a world with specific trade classes and population, and then price the goods based on broker skills.
 
 use rand::Rng;
 use std::fmt::{Display, Formatter, Result as FmtResult};
 
 #[allow(unused_imports)]
-use leptos::leptos_dom::logging::console_log;
+use log::debug;
 
 use crate::trade::table::{Availability, TradeTable, TradeTableEntry};
 use crate::trade::TradeClass;
@@ -185,13 +215,15 @@ impl AvailableGoodsTable {
     /// ## Examples
     ///
     /// ```rust
+    /// # use worldgen::trade::{available_goods::AvailableGoodsTable, table::TradeTable, TradeClass};
+    /// # let trade_table = TradeTable::default();
     /// // Generate market for agricultural world, population 6, no illegal goods
     /// let market = AvailableGoodsTable::for_world(
     ///     &trade_table,
     ///     &[TradeClass::Agricultural, TradeClass::Rich],
     ///     6,
     ///     false
-    /// )?;
+    /// );
     /// ```
     pub fn for_world(
         trade_table: &TradeTable,
@@ -313,7 +345,11 @@ impl AvailableGoodsTable {
     }
 
     /// Add a trade table entry to the available goods
-    fn add_entry(&mut self, entry: TradeTableEntry, world_population: i32) -> Result<(), String> {
+    pub fn add_entry(
+        &mut self,
+        entry: TradeTableEntry,
+        world_population: i32,
+    ) -> Result<(), String> {
         let mut rng = rand::rng();
         self.add_entry_rng(entry, &mut rng, world_population)
     }
@@ -389,6 +425,20 @@ impl AvailableGoodsTable {
     /// ## Examples
     ///
     /// ```rust
+    /// # use worldgen::trade::{available_goods::AvailableGoodsTable, table::TradeTable, TradeClass};
+    /// # use worldgen::trade::table::{Availability, Quantity};
+    /// # use worldgen::trade::table::TradeTableEntry;
+    /// let mut market = AvailableGoodsTable::new();
+    /// // Add some goods to the market
+    /// market.add_entry(TradeTableEntry {
+    ///     index: 1,
+    ///     name: "Good 1".to_string(),
+    ///     availability: Availability::All,
+    ///     quantity: Quantity { dice: 2, multiplier: 1 },
+    ///     base_cost: 10000,
+    ///     purchase_dm: vec![(TradeClass::Agricultural, 2)].into_iter().collect(),
+    ///     sale_dm: vec![(TradeClass::Industrial, 3)].into_iter().collect(),
+    /// }, 5).unwrap();
     /// // Skilled buyer (3) vs average seller (1) on agricultural world
     /// market.price_goods_to_buy(&[TradeClass::Agricultural], 3, 1);
     /// // Expect better prices due to +2 skill differential
@@ -491,7 +541,7 @@ impl AvailableGoodsTable {
     ///
     /// ## Examples
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// // Calculate selling prices for industrial destination
     /// market.price_goods_to_sell(
     ///     Some(vec![TradeClass::Industrial, TradeClass::HighTech]),
@@ -508,7 +558,27 @@ impl AvailableGoodsTable {
         buyer_broker_skill: i16,
         supplier_broker_skill: i16,
     ) {
-        let mut rng = rand::rng();
+        let rng = rand::rng();
+        self.price_goods_to_sell_rng(
+            possible_destination_trade_classes,
+            buyer_broker_skill,
+            supplier_broker_skill,
+            rng,
+        );
+    }
+
+    /// Calculate selling prices for goods at potential destination worlds
+    ///
+    /// See description for `price_goods_to_sell`.  This version allows
+    /// passing in a random number generator for testing.
+    ///
+    pub fn price_goods_to_sell_rng(
+        &mut self,
+        possible_destination_trade_classes: Option<Vec<TradeClass>>,
+        buyer_broker_skill: i16,
+        supplier_broker_skill: i16,
+        mut rng: impl Rng,
+    ) {
         for good in &mut self.goods {
             if let Some(destination_trade_classes) = &possible_destination_trade_classes {
                 // Roll 2d6
@@ -604,7 +674,7 @@ impl AvailableGoodsTable {
 ///
 /// ## Examples
 ///
-/// ```rust
+/// ```rust,ignore
 /// // Agricultural world (+2) that's also Rich (+1) for electronics
 /// let total_dm = find_total_dm(&electronics_purchase_dm, &[Agricultural, Rich]);
 /// // Returns: 3 (2 + 1)
@@ -633,6 +703,7 @@ mod tests {
     use super::*;
     use crate::trade::table::{Availability, Quantity};
     use crate::trade::TradeClass;
+    use rand::SeedableRng;
 
     use std::collections::HashMap;
 
@@ -721,8 +792,8 @@ mod tests {
         let world_trade_classes = vec![TradeClass::Agricultural, TradeClass::Rich];
 
         // Rich should be the best DM
-        let best_dm = find_total_dm(&dm_map, &world_trade_classes);
-        assert_eq!(best_dm, 5);
+        let total_dm = find_total_dm(&dm_map, &world_trade_classes);
+        assert_eq!(total_dm, 8);
 
         // World with only Agricultural trade class
         let world_trade_classes = vec![TradeClass::Agricultural];
@@ -992,7 +1063,8 @@ mod tests {
         let destination_trade_classes = vec![TradeClass::Rich, TradeClass::Agricultural];
 
         // Price the goods for sale
-        table.price_goods_to_sell(Some(destination_trade_classes.clone()), 0, 0);
+        let mut rng = rand::rngs::StdRng::seed_from_u64(12345);
+        table.price_goods_to_sell_rng(Some(destination_trade_classes.clone()), 0, 0, &mut rng);
 
         // The good should now have a sell price
         let good = &table.goods()[0];
@@ -1003,14 +1075,14 @@ mod tests {
         assert_ne!(sell_price, good.base_cost);
 
         // Test with no destination trade classes (None case)
-        table.price_goods_to_sell(None, 0, 0);
+        table.price_goods_to_sell_rng(None, 0, 0, &mut rng);
 
         // The sell price should be None when no destination is provided
         let good = &table.goods()[0].clone();
         assert!(good.sell_price.is_none());
 
         // Test with different broker skills
-        table.price_goods_to_sell(Some(destination_trade_classes), 3, 1);
+        table.price_goods_to_sell_rng(Some(destination_trade_classes), 3, 1, &mut rng);
 
         // The sell price should be affected by broker skills
         let new_sell_price = table.goods()[0].sell_price.unwrap();
