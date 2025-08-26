@@ -56,16 +56,19 @@ You'll need the following tools installed:
 ### Installation
 
 1. Install the WebAssembly compilation target:
+
    ```bash
    rustup target add wasm32-unknown-unknown
    ```
 
 2. Install Trunk build tool:
+
    ```bash
    cargo install trunk
    ```
 
 3. Clone and run the application:
+
    ```bash
    git clone <repository-url>
    cd worldgen
@@ -77,11 +80,13 @@ This will compile the application, start a development server, and open your bro
 ## Application Structure
 
 ### URL Routing
+
 - **/** - Main selector interface for choosing tools
 - **/world** - Solar system generator interface
 - **/trade** - Trade computer and route planning
 
 ### Component Architecture
+
 - **Selector**: Main application entry point and tool selection
 - **System Generator**: Complete star system creation interface
 - **Trade Computer**: Market analysis and route planning tools
@@ -92,20 +97,24 @@ This will compile the application, start a development server, and open your bro
 ## Usage Examples
 
 ### Basic System Generation
+
 1. Navigate to the system generator (/world)
 2. Enter a world name and UWP (e.g., "Regina A788899-A")
 3. View the generated star system with orbital details
 4. Export or share the system data
 
 ### Trade Route Planning
+
 1. Navigate to the trade computer (/trade)
 2. Select source and destination worlds
 3. Review available goods and passenger opportunities
 4. Build ship manifest and calculate profitability
 
 ### Debug Logging
+
 Enable detailed logging through URL parameters:
-```
+
+```text
 # Debug system generation
 http://localhost:8080/world?log=debug&module=worldgen::systems
 
@@ -116,7 +125,8 @@ http://localhost:8080/trade?log=trace&module=worldgen::trade
 ## Development
 
 ### Project Structure
-```
+
+```text
 src/
 ├── components/          # UI components and interfaces
 │   ├── selector.rs     # Main application selector
@@ -138,11 +148,13 @@ src/
 ```
 
 ### Building for Production
+
 ```bash
 trunk build --release
 ```
 
 ### Docker Deployment
+
 ```bash
 docker build -t worldgen .
 docker run -p 8080:80 worldgen
@@ -151,6 +163,7 @@ docker run -p 8080:80 worldgen
 ## Contributing
 
 Worldgen follows standard Rust development practices:
+
 - Use `cargo fmt` for code formatting
 - Run `cargo clippy` for linting
 - Add tests for new functionality
@@ -162,6 +175,6 @@ Worldgen follows standard Rust development practices:
 
 ## Acknowledgments
 
-- **Traveller RPG**: Classic science fiction role-playing game by Marc Miller
+- **Traveller RPG**: Classic science fiction role-playing game by Marc Miller. All rights owned by Mongoose Publishing.
 - **Traveller Map**: Official universe mapping service and API
 - **Leptos Community**: Reactive web framework development and support
