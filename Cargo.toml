@@ -26,3 +26,11 @@ wasm-logger = "0.2"
 [[bin]]
 name = "main"
 path = "src/bin/main.rs"
+
+[[bin]]
+name = "trade"
+path = "src/bin/trade.rs"
+
+[[bin]]
+name = "world"
+path = "src/bin/world.rs"

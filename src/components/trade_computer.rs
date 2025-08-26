@@ -1,120 +1,120 @@
 //! # Trade Computer Component
-//! 
+//!
 //! This module provides a comprehensive trade calculation interface for the Traveller universe,
 //! enabling players to calculate trade opportunities, passenger transport, and cargo manifests
 //! between worlds. It combines market analysis, route planning, and profit calculation into
 //! a unified trading interface.
-//! 
+//!
 //! ## Component Overview
-//! 
+//!
 //! The trade computer consists of three main components that work together:
-//! 
+//!
 //! - **Trade**: Main container managing world selection and trade calculations
 //! - **TradeView**: Market display showing available goods and pricing
 //! - **ShipManifestView**: Cargo and passenger manifest with revenue calculations
 //! - **PassengerView**: Available passenger and freight opportunities
-//! 
+//!
 //! ## Key Features
-//! 
+//!
 //! ### Dynamic Market Generation
 //! - Generates available goods based on world trade classifications
 //! - Calculates buy/sell prices with broker skill modifiers
 //! - Updates pricing automatically when worlds or skills change
 //! - Supports speculation trading with profit/loss analysis
-//! 
+//!
 //! ### Passenger and Freight System
 //! - Generates passenger opportunities by class (High, Medium, Basic, Low)
 //! - Creates freight lots with varying tonnage and destinations
 //! - Calculates passenger revenue based on distance and steward skill
 //! - Handles freight revenue with standard Traveller rates
-//! 
+//!
 //! ### Ship Manifest Management
 //! - Interactive cargo selection and quantity management
 //! - Real-time manifest updates with tonnage tracking
 //! - Revenue and profit calculations for complete voyages
 //! - Support for mixed cargo (goods, passengers, freight)
-//! 
+//!
 //! ### Broker Skill Integration
 //! - Player broker skill affects purchase prices
 //! - System broker skill affects selling prices
 //! - Steward skill influences passenger generation and revenue
 //! - Realistic skill-based market advantages
-//! 
+//!
 //! ## State Architecture
-//! 
+//!
 //! The component uses Leptos reactive stores for complex state management:
-//! 
+//!
 //! ### Core World Data
 //! - `Store<World>`: Origin world (always exists, starts with default)
 //! - `Store<Option<World>>`: Destination world (optional for valid operation)
-//! 
+//!
 //! ### Market Data
 //! - `Store<AvailableGoodsTable>`: Current market goods with pricing
 //! - `Store<Option<AvailablePassengers>>`: Available passenger opportunities
-//! 
+//!
 //! ### Ship Data
 //! - `Store<ShipManifest>`: Current cargo and passenger manifest
 //! - `Store<ShowSellPriceType>`: Toggle for showing destination sell prices
-//! 
+//!
 //! ### User Input Signals
 //! - World names, UWPs, coordinates, and zone classifications
 //! - Skill levels for broker and steward abilities
 //! - Distance between worlds (manual or calculated)
-//! 
+//!
 //! ## Reactive Effects System
-//! 
+//!
 //! The component uses multiple reactive effects for automatic updates:
-//! 
+//!
 //! ### World Management Effects
 //! 1. **Origin World Update**: Rebuilds origin world from name/UWP changes
 //! 2. **Destination World Update**: Rebuilds destination world from input
 //! 3. **Zone Reset**: Resets travel zones when world names change
-//! 
+//!
 //! ### Market Effects
 //! 4. **Goods Pricing**: Updates buy/sell prices when worlds or skills change
 //! 5. **Price Display Reset**: Hides sell prices when worlds change
-//! 
+//!
 //! ### Distance and Travel Effects
 //! 6. **Distance Calculation**: Auto-calculates hex distance from coordinates
 //! 7. **Passenger Generation**: Creates passenger opportunities based on worlds/distance
-//! 
+//!
 //! ## Trade Calculations
-//! 
+//!
 //! ### Available Goods Generation
 //! Uses world trade classifications to determine:
 //! - Which goods are available for purchase
 //! - Base quantities available in the market
 //! - Population-based availability modifiers
-//! 
+//!
 //! ### Price Calculation
 //! Applies Traveller trade rules with broker skill modifiers:
 //! - **Buy Prices**: Base cost modified by origin world and player broker skill
 //! - **Sell Prices**: Base cost modified by destination world and system broker skill
 //! - **Discounts**: Percentage savings/markup displayed for player reference
-//! 
+//!
 //! ### Passenger Revenue
 //! Calculates passenger income using standard Traveller rates:
 //! - **High Passage**: Premium passenger service
 //! - **Medium Passage**: Standard passenger service  
 //! - **Basic Passage**: Economy passenger service
 //! - **Low Passage**: Cryogenic passenger transport
-//! 
+//!
 //! ### Freight Revenue
 //! Applies standard freight rates based on:
 //! - Tonnage of freight lots selected
 //! - Distance between origin and destination
 //! - Standard Traveller freight rate tables
-//! 
+//!
 //! ## Error Handling
-//! 
+//!
 //! The component includes comprehensive error handling:
 //! - **UWP Validation**: Checks for proper 9-character UWP format
 //! - **World Parsing**: Handles malformed world data gracefully
 //! - **Coordinate Validation**: Manages missing or invalid coordinate data
 //! - **Skill Bounds**: Ensures skill values remain within valid ranges
-//! 
+//!
 //! ## User Interface Structure
-//! 
+//!
 //! ```text
 //! Trade Computer
 //! ├── World Entry Form
@@ -134,25 +134,25 @@
 //!     ├── Available Passengers (PassengerView)
 //!     └── Available Goods Table
 //! ```
-//! 
+//!
 //! ## Integration Points
-//! 
+//!
 //! ### Traveller Map Integration
 //! - Uses `WorldSearch` component for official world data
 //! - Automatically populates UWP, coordinates, and zone data
 //! - Calculates hex distances using galactic coordinate system
-//! 
+//!
 //! ### Trade System Integration
 //! - Leverages `AvailableGoodsTable` for market generation
 //! - Uses `AvailablePassengers` for passenger opportunity calculation
 //! - Integrates with `ShipManifest` for cargo tracking
-//! 
+//!
 //! ## Usage Examples
-//! 
+//!
 //! ```rust
 //! use leptos::prelude::*;
 //! use worldgen::components::trade_computer::Trade;
-//! 
+//!
 //! // Mount the trade computer as main application
 //! #[component]
 //! fn App() -> impl IntoView {
@@ -161,18 +161,18 @@
 //!     }
 //! }
 //! ```
-//! 
+//!
 //! ## Default Configuration
-//! 
+//!
 //! The component initializes with:
 //! - **Origin World**: "Main World" with UWP "A788899-A"
 //! - **Destination**: None (optional for basic functionality)
 //! - **Skills**: All set to 0 (no skill bonuses)
 //! - **Distance**: 0 (calculated automatically if coordinates available)
 //! - **Zone**: Green (safe travel zone)
-//! 
+//!
 //! ## Print Support
-//! 
+//!
 //! Includes print functionality for generating hard copies of trade data,
 //! though this feature is currently disabled but available for future use.
 
@@ -196,7 +196,7 @@ use crate::INITIAL_NAME;
 use crate::INITIAL_UPP;
 
 /// Internal type for managing sell price display state
-/// 
+///
 /// Wraps a boolean flag indicating whether sell prices should be displayed
 /// in the trade goods table. Used as a reactive store type for managing
 /// the "Show Sell Price" toggle functionality.
@@ -204,13 +204,13 @@ use crate::INITIAL_UPP;
 struct ShowSellPriceType(bool);
 
 /// Main trade computer component providing comprehensive trading interface
-/// 
+///
 /// Creates the complete trade calculation interface including world selection,
 /// market analysis, passenger opportunities, and ship manifest management.
 /// Serves as the primary entry point for all trade-related functionality.
-/// 
+///
 /// ## Component Initialization
-/// 
+///
 /// Sets up global reactive stores for:
 /// - **Origin World**: Always exists, starts with default world
 /// - **Destination World**: Optional, starts as None
@@ -218,9 +218,9 @@ struct ShowSellPriceType(bool);
 /// - **Available Passengers**: Passenger and freight opportunities
 /// - **Ship Manifest**: Current cargo and passenger load
 /// - **Show Sell Price**: Toggle for destination pricing display
-/// 
+///
 /// ## Reactive Effects
-/// 
+///
 /// Manages multiple reactive effects for automatic updates:
 /// 1. Origin world rebuilding from name/UWP changes
 /// 2. Destination world rebuilding from input changes
@@ -229,22 +229,22 @@ struct ShowSellPriceType(bool);
 /// 5. Zone reset when world names change
 /// 6. Distance calculation from coordinates
 /// 7. Passenger generation based on worlds and distance
-/// 
+///
 /// ## User Interface
-/// 
+///
 /// Renders the complete trade interface including:
 /// - World search and entry forms
 /// - Skill and distance input controls
 /// - Ship manifest display and management
 /// - Trade goods and passenger opportunity tables
-/// 
+///
 /// ## Context Provision
-/// 
+///
 /// Provides reactive stores to child components through Leptos context,
 /// enabling shared state management across the trade interface.
-/// 
+///
 /// ## Returns
-/// 
+///
 /// Complete trade computer interface with all interactive elements
 /// and automatic reactive updates.
 #[component]
@@ -523,13 +523,13 @@ pub fn Trade() -> impl IntoView {
 }
 
 /// Print the current page (currently unused but available for future use)
-/// 
+///
 /// Provides a wrapper around the browser's print functionality for generating
 /// hard copies of trade data and manifests. Currently disabled but maintained
 /// for potential future print features.
-/// 
+///
 /// ## Error Handling
-/// 
+///
 /// Logs errors to the console if printing fails, but does not propagate
 /// errors to avoid disrupting the main application flow.
 #[allow(dead_code)]
@@ -540,46 +540,46 @@ fn print() {
 }
 
 /// Trade view component displaying available goods and market information
-/// 
+///
 /// Renders the market interface showing available trade goods with pricing,
 /// passenger opportunities, and interactive purchase controls. Provides
 /// the main market interaction interface for the trade computer.
-/// 
+///
 /// ## Display Elements
-/// 
+///
 /// ### Market Header
 /// - Origin world name and trade classifications
 /// - Current trade class modifiers affecting availability
-/// 
+///
 /// ### Passenger Section
 /// - Conditionally displayed when destination world exists
 /// - Shows available passengers by class and freight opportunities
 /// - Interactive buttons for adding passengers to manifest
-/// 
+///
 /// ### Trade Goods Table
 /// - Dynamic table headers based on destination world presence
 /// - Shows goods, quantities, base prices, buy prices, and discounts
 /// - Includes sell prices and profit margins when destination selected
 /// - Interactive quantity inputs for purchasing goods
-/// 
+///
 /// ## Reactive Behavior
-/// 
+///
 /// - Table headers change based on destination world availability
 /// - Sell price columns appear only when destination world exists
 /// - Purchase inputs update ship manifest in real-time
 /// - Discount percentages calculated dynamically from broker skills
-/// 
+///
 /// ## Context Requirements
-/// 
+///
 /// Expects reactive stores in Leptos context:
 /// - `Store<World>`: Origin world data
 /// - `Store<Option<World>>`: Destination world data
 /// - `Store<AvailableGoodsTable>`: Current market goods
 /// - `Store<Option<AvailablePassengers>>`: Passenger opportunities
 /// - `Store<ShowSellPriceType>`: Sell price display toggle
-/// 
+///
 /// ## Returns
-/// 
+///
 /// Complete market interface with conditional sections based on
 /// destination world availability and current market conditions.
 #[component]
@@ -759,59 +759,59 @@ pub fn TradeView() -> impl IntoView {
 }
 
 /// Passenger view component displaying available passenger and freight opportunities
-/// 
+///
 /// Renders interactive passenger booking interface showing available passengers
 /// by class and freight lots available for transport. Provides buttons for
 /// adding passengers and freight to the ship manifest.
-/// 
+///
 /// ## Passenger Classes
-/// 
+///
 /// Displays four passenger types with remaining availability:
 /// - **High Passage**: Luxury accommodations with premium pricing
 /// - **Medium Passage**: Standard passenger service
 /// - **Basic Passage**: Economy passenger transport
 /// - **Low Passage**: Cryogenic passenger transport (cheapest option)
-/// 
+///
 /// ## Freight System
-/// 
+///
 /// Shows available freight lots with:
 /// - **Tonnage**: Size of each freight lot
 /// - **Destination**: Where freight needs to be delivered
 /// - **Selection**: Toggle buttons for adding/removing from manifest
-/// 
+///
 /// ## Interactive Elements
-/// 
+///
 /// ### Passenger Buttons
 /// - Click to add one passenger of selected class to manifest
 /// - Buttons disabled when no passengers of that class remain
 /// - Real-time updates of remaining passenger counts
-/// 
+///
 /// ### Freight Buttons
 /// - Toggle freight lot selection on/off
 /// - Visual indication of selected freight lots
 /// - Prevents double-booking of freight lots
-/// 
+///
 /// ## Reactive Calculations
-/// 
+///
 /// - Passenger counts update based on current ship manifest
 /// - Remaining availability calculated dynamically
 /// - Freight selection state maintained in ship manifest
-/// 
+///
 /// ## Context Requirements
-/// 
+///
 /// Expects reactive stores in Leptos context:
 /// - `Store<Option<AvailablePassengers>>`: Current passenger opportunities
 /// - `Store<ShipManifest>`: Current ship cargo and passenger load
-/// 
+///
 /// ## Display Conditions
-/// 
+///
 /// Only renders when:
 /// - Destination world exists
 /// - Distance between worlds is greater than 0
 /// - Passenger opportunities have been generated
-/// 
+///
 /// ## Returns
-/// 
+///
 /// Interactive passenger and freight booking interface with real-time
 /// availability updates and manifest integration.
 #[component]
@@ -974,76 +974,76 @@ fn PassengerView() -> impl IntoView {
 }
 
 /// Ship manifest view component displaying current cargo and revenue calculations
-/// 
+///
 /// Renders the complete ship manifest showing current passenger load, freight
 /// selection, trade goods, and comprehensive revenue calculations. Provides
 /// interactive controls for removing items from the manifest and displays
 /// total profitability for the planned voyage.
-/// 
+///
 /// ## Display Sections
-/// 
+///
 /// ### Manifest Summary
 /// - **Total Cargo**: Combined tonnage of goods and freight
 /// - **Total Passengers**: Count of all passenger types except Low
 /// - **Total Low**: Separate count for Low passage passengers
-/// 
+///
 /// ### Passenger Manifest
 /// Interactive buttons showing current passenger counts by class:
 /// - Click to remove one passenger of that class
 /// - Real-time updates of passenger counts
 /// - Separate tracking for High, Medium, Basic, and Low passage
-/// 
+///
 /// ### Freight Manifest
 /// - Lists selected freight lots with tonnage
 /// - Shows freight lot destinations and sizes
 /// - Displays total freight tonnage
-/// 
+///
 /// ### Trade Goods Manifest
 /// - Lists purchased goods with quantities and costs
 /// - Shows sell prices when destination world available
 /// - Calculates profit/loss for each good type
-/// 
+///
 /// ### Revenue Calculations
 /// - **Passenger Revenue**: Income from all passenger types
 /// - **Freight Revenue**: Income from freight transport
 /// - **Goods Profit**: Profit/loss from trade goods (when sell prices shown)
 /// - **Total Revenue**: Combined income from all sources
-/// 
+///
 /// ## Interactive Elements
-/// 
+///
 /// ### Passenger Removal
 /// - Click passenger type buttons to remove one passenger
 /// - Buttons show current counts and update manifest immediately
 /// - Prevents removal when count is already zero
-/// 
+///
 /// ### Revenue Display
 /// - Passenger and freight revenue always shown
 /// - Goods profit only shown when sell prices are available
 /// - All amounts displayed in MCr (millions of credits)
-/// 
+///
 /// ## Reactive Calculations
-/// 
+///
 /// All values update automatically when:
 /// - Ship manifest changes (passengers, freight, goods)
 /// - Distance changes (affects passenger/freight revenue)
 /// - Sell prices become available (affects goods profit)
 /// - Broker skills change (affects goods pricing)
-/// 
+///
 /// ## Context Requirements
-/// 
+///
 /// Expects reactive stores in Leptos context:
 /// - `Store<ShipManifest>`: Current ship cargo and passenger data
 /// - `Store<Option<AvailablePassengers>>`: Available freight lot data
 /// - `Store<AvailableGoodsTable>`: Trade goods with pricing
 /// - `Store<ShowSellPriceType>`: Sell price display toggle
-/// 
+///
 /// ## Parameters
-/// 
+///
 /// * `distance` - RwSignal containing current distance between worlds,
 ///   used for passenger and freight revenue calculations
-/// 
+///
 /// ## Returns
-/// 
+///
 /// Complete ship manifest interface with interactive controls and
 /// comprehensive revenue analysis for the planned voyage.
 #[component]

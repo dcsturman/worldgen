@@ -1,31 +1,31 @@
 //! # Astronomical Data Module
-//! 
+//!
 //! This module provides astronomical calculations and data structures for worlds in the Traveller universe.
 //! It handles orbital mechanics, planetary physics, atmospheric modeling, and temperature calculations
 //! to generate realistic astronomical data for worlds based on their star system characteristics.
-//! 
+//!
 //! ## Key Features
-//! 
+//!
 //! - **Orbital Mechanics**: Calculates orbital periods and distances using Kepler's laws
 //! - **Planetary Physics**: Computes mass, gravity, and surface conditions
 //! - **Climate Modeling**: Determines temperature, albedo, and ice cap coverage
 //! - **Atmospheric Effects**: Models greenhouse effects and cloud coverage
 //! - **Stellar Interactions**: Accounts for star type, luminosity, and habitable zones
-//! 
+//!
 //! ## Constants
-//! 
+//!
 //! The module defines several physical constants used in calculations:
 //! - Surface albedo values for different terrain types (water, land, ice, clouds)
 //! - Earth's average temperature as a reference point for climate calculations
-//! 
+//!
 //! ## Usage
-//! 
+//!
 //! The primary interface is the [`AstroData`] struct, which can be computed from
 //! a star and world combination to generate comprehensive astronomical data.
-//! 
+//!
 //! ```rust
 //! use worldgen::systems::{astro::AstroData, system::Star, world::World};
-//! 
+//!
 //! let astro_data = AstroData::compute(&star, &world);
 //! let description = astro_data.get_astro_description(&world);
 //! ```
@@ -53,7 +53,7 @@ const CLOUD_ALBEDO: f32 = 0.5;
 const EARTH_TEMP: f32 = 288.0;
 
 /// Comprehensive astronomical data for a world
-/// 
+///
 /// Contains all calculated astronomical and physical properties of a world,
 /// including orbital characteristics, surface conditions, and atmospheric data.
 /// This data is used for generating realistic world descriptions and determining
@@ -82,7 +82,7 @@ pub struct AstroData {
 
 impl AstroData {
     /// Creates a new `AstroData` instance with default values
-    /// 
+    ///
     /// All values are initialized to zero except `ice_cap_percent` which defaults to 0.1 (10%).
     /// This provides a baseline for subsequent calculations.
     pub fn new() -> AstroData {
@@ -100,22 +100,22 @@ impl AstroData {
     }
 
     /// Computes comprehensive astronomical data for a world
-    /// 
+    ///
     /// This is the main calculation method that determines all astronomical properties
     /// of a world based on its star system and physical characteristics. The calculation
     /// process includes orbital mechanics, mass/gravity relationships, and climate modeling.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `star` - The primary star of the system
     /// * `world` - The world to calculate data for
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Complete `AstroData` with all calculated values
-    /// 
+    ///
     /// # Climate Model
-    /// 
+    ///
     /// The ice cap calculation uses a linear relationship between temperature and ice coverage:
     /// - At 273K (0°C): 50% of hydrographics becomes ice
     /// - At 223K (-50°C): 200% of hydrographics becomes ice
@@ -132,7 +132,7 @@ impl AstroData {
             world.hydro,
             star,
         );
-        
+
         // Ice cap calculation based on temperature and hydrographics
         // Linear relationship: at 273K = 0.5x hydro, at 223K = 2x hydro
         astro.ice_cap_percent =
@@ -142,14 +142,14 @@ impl AstroData {
     }
 
     /// Calculates orbital period and distance using Kepler's laws
-    /// 
+    ///
     /// Uses the formula P = sqrt(M * D³) where:
     /// - P = orbital period in years
     /// - M = stellar mass in solar masses  
     /// - D = orbital distance in AU
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `star` - The primary star
     /// * `orbit` - Orbital position index in the system
     fn compute_orbital_period(&mut self, star: &Star, orbit: usize) {
@@ -160,16 +160,16 @@ impl AstroData {
     }
 
     /// Calculates planetary mass and surface gravity
-    /// 
+    ///
     /// Mass scales with the cube of size ratio to Earth (size 8).
     /// Gravity scales linearly with size ratio.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `size` - World size code (0-10+ in Traveller system)
-    /// 
+    ///
     /// # Note
-    /// 
+    ///
     /// The gravity calculation may need validation - currently uses simple linear scaling.
     fn compute_mass_gravity(&mut self, size: i32) {
         // Mass scales as cube of radius (size/8)³
@@ -179,17 +179,17 @@ impl AstroData {
     }
 
     /// Calculates surface albedo and temperature
-    /// 
+    ///
     /// This complex calculation models:
     /// - Surface composition (water, land, ice percentages)
     /// - Cloud coverage effects
     /// - Greenhouse warming from atmosphere
     /// - Stellar heating based on luminosity and distance
-    /// 
+    ///
     /// Uses different temperature formulas for habitable zone vs. other orbits.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `position` - Orbital position in system
     /// * `atmosphere` - Atmospheric density code
     /// * `hydro` - Hydrographics percentage
@@ -199,7 +199,7 @@ impl AstroData {
         let mut water_percent = hydro as f32 / 10.0;
         let mut land_percent = 1.0 - water_percent;
         let mut ice_percent = self.ice_cap_percent;
-        
+
         // Distribute ice caps between water and land surfaces
         if water_percent >= ice_percent / 2.0 && land_percent >= ice_percent / 2.0 {
             land_percent -= 0.5 * self.ice_cap_percent;
@@ -244,21 +244,21 @@ impl AstroData {
     }
 
     /// Generates a human-readable description of the world's astronomical data
-    /// 
+    ///
     /// Returns a formatted string containing temperature (in Celsius relative to Earth),
     /// ice cap percentage, surface gravity, and orbital period. Returns empty string
     /// for worlds with very thin atmospheres (≤1) as they lack meaningful climate data.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `world` - The world to describe
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Formatted string like "+15.23 °C, 25% ice, 1.2G, 1.1 yrs" or empty string
-    /// 
+    ///
     /// # Example Output
-    /// 
+    ///
     /// ```text
     /// "+12.50 °C, 15% ice, 0.8G, 2.3 yrs"
     /// ```
