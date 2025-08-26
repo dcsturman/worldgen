@@ -1,9 +1,14 @@
-use log::debug;
+//! # World System Module
+//! 
+//! This module defines the core World structure and related types for representing
+//! planets and worlds in the Traveller universe, including their physical characteristics,
+//! facilities, and trade classifications.
+//! use log::debug;
 use reactive_stores::Store;
 use std::fmt::Display;
 
 #[allow(unused_imports)]
-use leptos::leptos_dom::logging::console_log;
+use log::debug;
 
 use crate::systems::astro::AstroData;
 use crate::systems::has_satellites::HasSatellites;
@@ -16,6 +21,9 @@ use crate::trade::PortCode;
 use crate::trade::TradeClass;
 use crate::trade::ZoneClassification;
 
+/// Container for world satellites
+/// 
+/// Stores a vector of satellite worlds with a key based on the parent world's name.
 #[derive(Debug, Clone, Store, PartialEq)]
 pub struct World {
     pub name: String,
@@ -39,6 +47,8 @@ pub struct World {
     pub coordinates: Option<(i32, i32)>,
 }
 
+
+/// Enum for facilities that can be present on a world
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Facility {
     Naval,
@@ -50,6 +60,10 @@ pub enum Facility {
     Military,
 }
 
+
+/// Container for world (or gas giant) satellites
+/// each satellite is in its own right a world, though
+/// orbit numbering uses a different system than in the main system.
 #[derive(Debug, Clone, Store, PartialEq)]
 pub struct Satellites {
     #[store(key: String = |world| world.name.clone())]
@@ -57,6 +71,19 @@ pub struct Satellites {
 }
 
 impl World {
+    /// Creates a new world with the specified characteristics
+    /// 
+    /// # Arguments
+    /// 
+    /// * `name` - The name of the world
+    /// * `orbit` - Orbital position around the primary star
+    /// * `position_in_system` - Position within the star system for ordering
+    /// * `size` - World size (0-A in hex)
+    /// * `atmosphere` - Atmospheric composition and density (0-F in hex)
+    /// * `hydro` - Hydrographic percentage (0-A in hex)
+    /// * `population` - Population level (0-A+ in hex)
+    /// * `is_satellite` - Whether this world is a satellite of another body
+    /// * `is_mainworld` - Whether this is the main world of the system
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         name: String,
@@ -91,6 +118,15 @@ impl World {
             coordinates: None,
         }
     }
+    /// Generates a name for the world based on system name and orbital position
+    /// 
+    /// If the world has population, generates a random planet name.
+    /// Otherwise, uses the system name with a Roman numeral for the orbit.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `system_name` - Name of the parent star system
+    /// * `orbit` - Orbital position (0-based index)
     pub fn gen_name(&mut self, system_name: &str, orbit: usize) {
         if self.population > 0 {
             self.name = gen_planet_name()
@@ -99,14 +135,29 @@ impl World {
         }
     }
 
+    /// Returns the population level of the world
     pub fn get_population(&self) -> i32 {
         self.population
     }
 
+    /// Sets the starport code for the world
+    /// 
+    /// # Arguments
+    /// 
+    /// * `port` - The starport quality code to set
     pub(crate) fn set_port(&mut self, port: PortCode) {
         self.port = port;
     }
 
+    /// Sets multiple subordinate statistics for the world
+    /// 
+    /// # Arguments
+    /// 
+    /// * `port` - Starport quality code
+    /// * `government` - Government type
+    /// * `law_level` - Law level restrictions
+    /// * `tech_level` - Technology level
+    /// * `facilities` - List of facilities present
     pub fn set_subordinate_stats(
         &mut self,
         port: PortCode,
@@ -121,7 +172,9 @@ impl World {
         self.tech_level = tech_level;
         self.facilities = facilities;
     }
-    pub fn to_upp(&self) -> String {
+
+    /// Converts the world's characteristics to a Traveller UWP string
+    pub fn to_uwp(&self) -> String {
         let size_digit = if self.is_satellite && self.size == -1 {
             "S"
         } else if self.is_satellite && self.size == 0 {
@@ -149,6 +202,17 @@ impl World {
             self.tech_level
         )
     }
+
+    /// Creates a new world from a Traveller UWP string.  
+    /// 
+    /// # Arguments
+    /// 
+    /// * `name` - The name of the world
+    /// * `upp` - The Traveller UWP string
+    /// * `is_satellite` - Whether this world is a satellite of another body used to just record in the returned world. It does not
+    ///   impact parsing of the UWP.
+    /// * `is_mainworld` - Whether this is the main world of the system used to just record in the returned world. It does not
+    ///   impact parsing of the UWP.
     pub fn from_upp(
         name: String,
         upp: &str,
@@ -178,6 +242,13 @@ impl World {
         Ok(world)
     }
 
+    /// Generates facilities based on the world's characteristics and the main world's characteristics
+    /// 
+    /// # Arguments
+    /// 
+    /// * `system_zones` - Reference to the star system's zone table
+    /// * `orbit` - The world's orbital position
+    /// * `main_world` - Reference to the system's main world
     pub fn gen_subordinate_facilities(
         &mut self,
         system_zones: &ZoneTable,
@@ -246,6 +317,14 @@ impl World {
         }
     }
 
+    /// Generates subordinate statistics based on the main world's characteristics
+    /// 
+    /// Calculates government, law level, technology level, and starport quality
+    /// based on the world's population and the main world's statistics.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `main_world` - Reference to the system's main world
     pub fn gen_subordinate_stats(&mut self, main_world: &World) {
         let population = self.get_population();
         let modifier = if main_world.government == 6 {
@@ -302,10 +381,16 @@ impl World {
         self.set_subordinate_stats(port, government, law_level, tech_level, Vec::new());
     }
 
+    /// Returns a copy of the world's trade classifications
     pub fn get_trade_classes(&self) -> Vec<TradeClass> {
         self.trade_classes.clone()
     }
 
+    /// Generates trade classifications based on the world's UWP characteristics
+    /// 
+    /// Analyzes the world's atmosphere, hydrographics, population, size, and other
+    /// factors to determine applicable trade classifications like Agricultural,
+    /// Non-Agricultural, Industrial, etc.
     pub fn gen_trade_classes(&mut self) {
         self.trade_classes = Vec::new();
         if self.atmosphere >= 4
@@ -381,11 +466,17 @@ impl World {
         }
     }
 
+    /// Sets the facilities present on the world
+    /// 
+    /// # Arguments
+    /// 
+    /// * `facilities` - Vector of facilities to set
     #[allow(dead_code)]
     pub fn set_facilities(&mut self, facilities: Vec<Facility>) {
         self.facilities = facilities;
     }
 
+    /// Returns a formatted string of all facilities on the world
     pub fn facilities_string(&self) -> String {
         self.facilities
             .iter()
@@ -394,6 +485,7 @@ impl World {
             .join(", ")
     }
 
+    /// Returns a formatted string of all trade classifications
     pub fn trade_classes_string(&self) -> String {
         let res = self
             .trade_classes
@@ -404,11 +496,17 @@ impl World {
         res
     }
 
+    /// Computes astronomical data for the world based on its star
+    /// 
+    /// # Arguments
+    /// 
+    /// * `star` - Reference to the star this world orbits
     pub fn compute_astro_data(&mut self, star: &Star) {
         let astro = AstroData::compute(star, self);
         self.astro_data = astro;
     }
 
+    /// Returns a formatted description of the world's astronomical characteristics
     pub fn get_astro_description(&self) -> String {
         self.astro_data.get_astro_description(self)
     }
@@ -506,6 +604,7 @@ impl World {
     }
 }
 
+/// Implements Display for World.  Used extensively in displaying the output from the app.
 impl Display for World {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(
@@ -513,7 +612,7 @@ impl Display for World {
             "{:<7}{:<24}{:<12}{:<18}",
             self.orbit,
             self.name,
-            self.to_upp(),
+            self.to_uwp(),
             self.facilities_string()
         )?;
         for satellite in self.satellites.sats.iter() {
@@ -523,19 +622,33 @@ impl Display for World {
     }
 }
 
+/// Implements the HasSatellites trait for World.  Worlds and GasGiants can both have satellites.
 impl HasSatellites for World {
+    /// Returns the number of satellites orbiting this world
     fn get_num_satellites(&self) -> usize {
         self.satellites.sats.len()
     }
 
+    /// Returns a mutable reference to the satellites
     fn get_satellites_mut(&mut self) -> &mut Satellites {
         &mut self.satellites
     }
 
+    /// Adds a satellite onto the world.  Note that the orbit of the satellite is stored in the satellite description
+    /// and satellites may be added out of order.  This method also does not check for duplicate orbits.
     fn push_satellite(&mut self, satellite: World) {
         self.satellites.sats.push(satellite);
     }
 
+    /// Returns a reference to a satellite by its orbit
+    /// 
+    /// # Arguments
+    /// 
+    /// * `orbit` - Orbit of the satellite to return
+    /// 
+    /// # Returns
+    /// 
+    /// * `Option<&World>` - Reference to the satellite if it exists. None otherwise.
     fn get_satellite(&self, orbit: usize) -> Option<&World> {
         self.satellites.sats.iter().find(|&x| x.orbit == orbit)
     }

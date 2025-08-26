@@ -1,3 +1,37 @@
+//! # Star System Generation Module
+//! 
+//! This module contains the core functionality for generating complete Traveller star systems,
+//! including stellar mechanics, orbital dynamics, and system-wide coordination. It serves as
+//! the primary orchestrator for creating realistic multi-star systems with worlds, gas giants,
+//! and their satellites.
+//! 
+//! ## Key Features
+//! 
+//! - **Multi-Star Systems**: Supports primary, secondary, and tertiary star configurations
+//! - **Orbital Mechanics**: Realistic orbital slot management and companion star placement
+//! - **World Generation**: Coordinates placement of main worlds, gas giants, and planetoids
+//! - **Satellite Systems**: Manages satellite generation for all orbital bodies
+//! - **Zone Management**: Handles stellar zones and habitability calculations
+//! 
+//! ## System Architecture
+//! 
+//! The [`System`] struct represents a complete star system with:
+//! - A primary star with its orbital slots
+//! - Optional secondary and tertiary companion stars
+//! - Various orbital contents (worlds, gas giants, blocked orbits)
+//! - Hierarchical satellite systems
+//! 
+//! ## Generation Process
+//! 
+//! 1. **Star Generation**: Creates primary star and determines companions
+//! 2. **Orbit Allocation**: Assigns orbital slots and blocks inappropriate orbits
+//! 3. **Gas Giant Placement**: Generates gas giants in suitable orbits
+//! 4. **Planetoid Generation**: Creates asteroid belts and planetoid systems
+//! 5. **Main World Placement**: Places the system's primary inhabited world
+//! 6. **World Generation**: Fills remaining orbits with generated worlds
+//! 7. **Satellite Generation**: Creates moons for all applicable bodies
+//! 8. **Companion Processing**: Recursively processes secondary/tertiary systems
+
 use log::{debug, error, warn};
 use rand::prelude::IndexedRandom;
 use rand::Rng;
@@ -11,6 +45,26 @@ use crate::systems::system_tables::get_zone;
 use crate::systems::world::World;
 use crate::util::{roll_10, roll_1d6, roll_2d6};
 
+/// A complete star system with primary star and optional companions
+/// 
+/// Represents a Traveller star system containing a primary star, optional
+/// secondary and tertiary companion stars, and all orbital bodies including
+/// worlds, gas giants, and blocked orbits. The system manages orbital slots
+/// and coordinates the generation of all system components.
+/// 
+/// ## System Hierarchy
+/// 
+/// - **Primary System**: The main star with its orbital slots
+/// - **Secondary System**: Optional companion star (close, far, or orbital)
+/// - **Tertiary System**: Optional third star (typically far orbit)
+/// 
+/// ## Orbital Management
+/// 
+/// Each system maintains a vector of orbital slots that can contain:
+/// - Worlds (rocky planets with full UWP characteristics)
+/// - Gas giants (with their own satellite systems)
+/// - Secondary/tertiary star markers
+/// - Blocked orbits (intentionally empty for realism)
 #[derive(Debug, Clone, Store)]
 pub struct System {
     pub name: String,
@@ -25,6 +79,21 @@ pub struct System {
 }
 
 // Enums
+/// Stellar spectral classification types
+/// 
+/// Represents the seven main stellar spectral classes in order from
+/// hottest to coolest. Each type has distinct characteristics affecting
+/// luminosity, habitable zones, and system generation.
+/// 
+/// ## Spectral Classes
+/// 
+/// - **O**: Blue supergiants, extremely hot (30,000-50,000K), very rare
+/// - **B**: Blue giants, very hot (10,000-30,000K), short-lived
+/// - **A**: White stars, hot (7,500-10,000K), rapid rotation
+/// - **F**: Yellow-white stars, moderately hot (6,000-7,500K)
+/// - **G**: Yellow stars like Sol (5,200-6,000K), stable main sequence
+/// - **K**: Orange stars, cooler (3,700-5,200K), long-lived
+/// - **M**: Red dwarfs, coolest (2,400-3,700K), most common, very long-lived
 #[derive(Debug, Store, Clone, Copy, PartialEq, Eq, PartialOrd, Hash)]
 pub enum StarType {
     O,
@@ -36,8 +105,27 @@ pub enum StarType {
     M,
 }
 
+/// Stellar subtype refinement (0-9)
+/// 
+/// Provides finer classification within each spectral type.
+/// Lower numbers indicate hotter stars within the type.
+/// For example, G0 is hotter than G9.
 pub type StarSubType = u8;
 
+/// Stellar luminosity class (size classification)
+/// 
+/// Indicates the star's luminosity and evolutionary stage.
+/// Affects stellar zones, companion generation, and system characteristics.
+/// 
+/// ## Size Classes
+/// 
+/// - **Ia/Ib**: Supergiants, extremely luminous, short-lived
+/// - **II**: Bright giants, evolved stars with extended zones
+/// - **III**: Giants, evolved stars past main sequence
+/// - **IV**: Subgiants, transitioning from main sequence
+/// - **V**: Main sequence (dwarfs), stable hydrogen burning
+/// - **VI**: Subdwarfs, metal-poor, lower luminosity
+/// - **D**: White dwarfs, stellar remnants, very compact zones
 #[derive(Debug, Store, Clone, Copy, PartialEq, Eq, PartialOrd, Hash)]
 pub enum StarSize {
     Ia,
@@ -53,6 +141,16 @@ pub enum StarSize {
     D,
 }
 
+/// Orbital relationship of companion stars
+/// 
+/// Defines how companion stars relate to the primary system,
+/// affecting their orbital mechanics and zone interactions.
+/// 
+/// ## Orbit Types
+/// 
+/// - **Primary**: Contact binary or very close orbit
+/// - **Far**: Distant orbit, independent zone system
+/// - **System(n)**: Orbits within primary's zone system at position n
 #[derive(Debug, Store, Clone, Copy, PartialEq, Eq)]
 pub enum StarOrbit {
     Primary,
@@ -61,6 +159,17 @@ pub enum StarOrbit {
 }
 
 // Structs
+/// Complete stellar classification
+/// 
+/// Combines spectral type, subtype, and size class to fully
+/// specify a star's characteristics. Used for zone calculations,
+/// luminosity lookup, and system generation parameters.
+/// 
+/// ## Examples
+/// 
+/// - Sol: G2V (G-type, subtype 2, main sequence)
+/// - Rigel: B8Ia (B-type, subtype 8, supergiant)
+/// - Proxima Centauri: M5.5V (M-type, subtype 5-6, main sequence)
 #[derive(Debug, Store, Clone, Copy, PartialEq, Eq)]
 pub struct Star {
     pub star_type: StarType,
@@ -68,6 +177,18 @@ pub struct Star {
     pub size: StarSize,
 }
 
+/// Contents of an orbital slot
+/// 
+/// Represents what occupies a specific orbital position in the system.
+/// Each orbit can contain at most one type of content, though some
+/// contents (like gas giants) can host their own satellite systems.
+/// 
+/// ## Content Types
+/// 
+/// - **Secondary/Tertiary**: Markers for companion star locations
+/// - **World**: Rocky planets with full UWP characteristics
+/// - **GasGiant**: Gas giants with satellite systems
+/// - **Blocked**: Intentionally empty orbits for realism
 #[derive(Debug, Store, Clone)]
 pub enum OrbitContent {
     // This orbit contains the secondary star system of the primary.

@@ -1,13 +1,20 @@
-use rand::Rng;
+//! # Available Passengers Module
+//! 
+//! This module handles the generation of available passengers and freight
+//! for interstellar travel between worlds in the Traveller universe.
 
+use crate::util::{roll_1d6, roll_2d6};
 use crate::trade::{PortCode, ZoneClassification};
+
+/// Represents a lot of freight available for shipping at a specific world
 #[derive(Debug, Clone)]
 pub struct FreightLot {
     /// Size in tons (1-60)
     pub size: i32,
 }
 
-#[derive(Debug, Clone)]
+/// Represents available passengers (by class of passage) and freight for a route between two worlds
+#[derive(Debug, Clone, Default)]
 pub struct AvailablePassengers {
     /// Number of high passage passengers
     pub high: i32,
@@ -22,16 +29,24 @@ pub struct AvailablePassengers {
 }
 
 impl AvailablePassengers {
-    pub fn new() -> Self {
-        Self {
-            high: 0,
-            medium: 0,
-            basic: 0,
-            low: 0,
-            freight_lots: Vec::new(),
-        }
-    }
-
+    /// Generates available passengers and freight for a route between two worlds
+    /// 
+    /// # Arguments
+    /// 
+    /// * `origin_population` - Population level of the origin world
+    /// * `origin_port` - Starport quality of the origin world
+    /// * `origin_zone` - Travel zone classification of the origin world
+    /// * `origin_tech_level` - Technology level of the origin world
+    /// * `destination_population` - Population level of the destination world
+    /// * `destination_port` - Starport quality of the destination world
+    /// * `destination_zone` - Travel zone classification of the destination world
+    /// * `destination_tech_level` - Technology level of the destination world
+    /// * `distance_parsecs` - Distance between worlds in parsecs
+    /// * `steward_skill` - Steward skill level of the ship's crew
+    /// 
+    /// # Returns
+    /// 
+    /// A new `AvailablePassengers` instance with generated passengers and freight
     #[allow(clippy::too_many_arguments)]
     pub fn generate(
         origin_population: i32,
@@ -45,7 +60,7 @@ impl AvailablePassengers {
         distance_parsecs: i32,
         steward_skill: i32,
     ) -> Self {
-        let mut passengers = Self::new();
+        let mut passengers = Self::default();
 
         // Generate passengers
         Self::generate_passengers(
@@ -77,6 +92,19 @@ impl AvailablePassengers {
         passengers
     }
 
+    /// Generates passengers for all passenger classes
+    /// 
+    /// # Arguments
+    /// 
+    /// * `passengers` - Mutable reference to the passengers structure to populate
+    /// * `origin_population` - Population level of the origin world
+    /// * `origin_port` - Starport quality of the origin world
+    /// * `origin_zone` - Travel zone classification of the origin world
+    /// * `destination_population` - Population level of the destination world
+    /// * `destination_port` - Starport quality of the destination world
+    /// * `destination_zone` - Travel zone classification of the destination world
+    /// * `distance_parsecs` - Distance between worlds in parsecs
+    /// * `steward_skill` - Steward skill level of the ship's crew
     #[allow(clippy::too_many_arguments)]
     fn generate_passengers(
         passengers: &mut AvailablePassengers,
@@ -138,6 +166,20 @@ impl AvailablePassengers {
         );
     }
 
+    /// Generates freight lots for all cargo classes
+    /// 
+    /// # Arguments
+    /// 
+    /// * `passengers` - Mutable reference to the passengers structure to populate
+    /// * `origin_population` - Population level of the origin world
+    /// * `origin_port` - Starport quality of the origin world
+    /// * `origin_zone` - Travel zone classification of the origin world
+    /// * `origin_tech_level` - Technology level of the origin world
+    /// * `destination_population` - Population level of the destination world
+    /// * `destination_port` - Starport quality of the destination world
+    /// * `destination_zone` - Travel zone classification of the destination world
+    /// * `destination_tech_level` - Technology level of the destination world
+    /// * `distance_parsecs` - Distance between worlds in parsecs
     #[allow(clippy::too_many_arguments)]
     fn generate_freight(
         passengers: &mut AvailablePassengers,
@@ -181,6 +223,24 @@ impl AvailablePassengers {
         passengers.freight_lots.sort_by(|a, b| b.size.cmp(&a.size));
     }
 
+    /// Generates the number of cargo lots for a specific cargo class
+    /// 
+    /// # Arguments
+    /// 
+    /// * `origin_population` - Population level of the origin world
+    /// * `origin_port` - Starport quality of the origin world
+    /// * `origin_zone` - Travel zone classification of the origin world
+    /// * `origin_tech_level` - Technology level of the origin world
+    /// * `destination_population` - Population level of the destination world
+    /// * `destination_port` - Starport quality of the destination world
+    /// * `destination_zone` - Travel zone classification of the destination world
+    /// * `destination_tech_level` - Technology level of the destination world
+    /// * `distance_parsecs` - Distance between worlds in parsecs
+    /// * `cargo_class` - The class of cargo to generate
+    /// 
+    /// # Returns
+    /// 
+    /// The number of cargo lots available for the specified class
     #[allow(clippy::too_many_arguments)]
     fn generate_cargo_class(
         origin_population: i32,
@@ -279,6 +339,23 @@ impl AvailablePassengers {
         total
     }
 
+    /// Generates the number of passengers for a specific passenger class
+    /// 
+    /// # Arguments
+    /// 
+    /// * `origin_population` - Population level of the origin world
+    /// * `origin_port` - Starport quality of the origin world
+    /// * `origin_zone` - Travel zone classification of the origin world
+    /// * `destination_population` - Population level of the destination world
+    /// * `destination_port` - Starport quality of the destination world
+    /// * `destination_zone` - Travel zone classification of the destination world
+    /// * `distance_parsecs` - Distance between worlds in parsecs
+    /// * `steward_skill` - Steward skill level of the ship's crew
+    /// * `passenger_class` - The class of passenger to generate
+    /// 
+    /// # Returns
+    /// 
+    /// The number of passengers available for the specified class
     #[allow(clippy::too_many_arguments)]
     fn generate_passenger_class(
         origin_population: i32,
@@ -371,6 +448,7 @@ impl AvailablePassengers {
     }
 }
 
+/// Enum representing the class of passenger
 #[derive(Debug, Clone, Copy)]
 enum PassengerClass {
     High,
@@ -379,23 +457,10 @@ enum PassengerClass {
     Low,
 }
 
+/// Enum representing the class of cargo
 #[derive(Debug, Clone, Copy)]
 enum CargoClass {
     Major,
     Minor,
     Incidental,
-}
-
-impl Default for AvailablePassengers {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-fn roll_1d6() -> i32 {
-    rand::rng().random_range(1..=6)
-}
-
-fn roll_2d6() -> i32 {
-    roll_1d6() + roll_1d6()
 }
