@@ -1,5 +1,5 @@
 //! # Worldgen Main Application Entry Point
-//! 
+//!
 //! This is the main entry point for the Worldgen web application.
 //! It sets up routing based on URL paths and renders the appropriate components.
 
@@ -28,10 +28,10 @@ fn App() -> impl IntoView {
 }
 
 /// Application entry point
-/// 
+///
 /// Sets up panic hooks, initializes logging from URL parameters,
 /// and mounts the main App component to the document body.  App
-/// simply provides a selector for the two main applications based on the 
+/// simply provides a selector for the two main applications based on the
 /// URL path.  See index.html for the entry point and routing to the appropriate
 /// URLs.  This means if you go to the root URL, you will see the selector.  If you
 /// go to the /world URL, you will see the world generator.  If you go to

@@ -1,31 +1,31 @@
 //! # System Generation Tables Module
-//! 
+//!
 //! This module provides lookup tables and utility functions for stellar zone boundaries,
 //! luminosity data, and environmental calculations used in Traveller solar system generation.
 //! It implements the astronomical rules for determining habitable zones, temperature zones,
 //! and stellar characteristics based on star type, size, and subtype.
-//! 
+//!
 //! ## Key Features
-//! 
+//!
 //! - **Zone Calculations**: Determines orbital zone boundaries for different star types
 //! - **Stellar Data**: Luminosity and mass lookup tables for all star classifications
 //! - **Environmental Tables**: Atmospheric and temperature calculation constants
 //! - **Orbital Mechanics**: Distance calculations for planetary orbits
-//! 
+//!
 //! ## Zone System
-//! 
+//!
 //! The module defines five orbital zones around stars:
 //! - **Inside Zone**: Extremely close orbits, typically uninhabitable
 //! - **Hot Zone**: High temperature region, limited habitability  
 //! - **Inner Zone**: Warm region, some habitability potential
 //! - **Habitable Zone**: Optimal temperature range for life
 //! - **Outer Zone**: Cold region, limited habitability
-//! 
+//!
 //! ## Usage
-//! 
+//!
 //! ```rust
 //! use worldgen::systems::system_tables::{get_zone, get_luminosity};
-//! 
+//!
 //! let zones = get_zone(&star);
 //! let luminosity = get_luminosity(&star);
 //! ```
@@ -37,21 +37,21 @@ use log::debug;
 use std::collections::HashMap;
 
 /// Retrieves orbital zone boundaries for a given star
-/// 
+///
 /// Looks up pre-calculated zone boundaries based on the star's classification.
 /// The zones determine where different types of worlds can exist and their
 /// environmental characteristics.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `star` - Star to calculate zones for
-/// 
+///
 /// # Returns
-/// 
+///
 /// `ZoneTable` containing zone boundaries in orbital positions
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```rust
 /// let zones = get_zone(&star);
 /// if orbit <= zones.habitable {
@@ -70,16 +70,16 @@ pub fn get_zone(star: &Star) -> ZoneTable {
 }
 
 /// Determines the habitable zone boundary for a star
-/// 
+///
 /// Returns the orbital position of the habitable zone, or -1 if the star
 /// has no habitable zone (habitable zone overlaps with inner zone).
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `star` - Star to check for habitable zone
-/// 
+///
 /// # Returns
-/// 
+///
 /// Orbital position of habitable zone, or -1 if none exists
 pub fn get_habitable(star: &Star) -> i32 {
     let habitable = get_zone(star).habitable;
@@ -91,21 +91,21 @@ pub fn get_habitable(star: &Star) -> i32 {
 }
 
 /// Rounds star subtype to nearest table entry
-/// 
+///
 /// Stellar subtypes 0-9 are grouped into early (0-4) and late (5-9) variants
 /// for table lookup purposes. This simplifies the lookup tables while
 /// maintaining sufficient granularity.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `subtype` - Raw subtype value (0-9)
-/// 
+///
 /// # Returns
-/// 
+///
 /// Rounded subtype (0 or 5)
-/// 
+///
 /// # Panics
-/// 
+///
 /// Panics if subtype is outside valid range (0-9)
 pub fn round_subtype(subtype: StarSubType) -> u8 {
     match subtype {
@@ -116,16 +116,16 @@ pub fn round_subtype(subtype: StarSubType) -> u8 {
 }
 
 /// Retrieves stellar luminosity for a given star
-/// 
+///
 /// Looks up luminosity from comprehensive tables based on star classification.
 /// Luminosity affects zone boundaries and world temperature calculations.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `star` - Star to look up luminosity for
-/// 
+///
 /// # Returns
-/// 
+///
 /// Stellar luminosity as multiple of Sol's luminosity
 pub(crate) fn get_luminosity(star: &Star) -> f32 {
     *LUMINOSITY_TABLE
@@ -134,16 +134,16 @@ pub(crate) fn get_luminosity(star: &Star) -> f32 {
 }
 
 /// Retrieves stellar mass for a given star
-/// 
+///
 /// Looks up mass from tables based on star classification.
 /// Mass affects orbital mechanics and companion star generation.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `star` - Star to look up mass for
-/// 
+///
 /// # Returns
-/// 
+///
 /// Stellar mass as multiple of Sol's mass
 pub(crate) fn get_solar_mass(star: &Star) -> f32 {
     *MASS_TABLE
@@ -152,65 +152,65 @@ pub(crate) fn get_solar_mass(star: &Star) -> f32 {
 }
 
 /// Converts orbital position to distance in millions of kilometers
-/// 
+///
 /// Translates abstract orbital positions (0-19) used in world generation
 /// to actual distances for astronomical calculations and display.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `orbit` - Orbital position (0-19)
-/// 
+///
 /// # Returns
-/// 
+///
 /// Distance from star in millions of kilometers
 pub(crate) fn get_orbital_distance(orbit: i32) -> f32 {
     ORBITAL_DISTANCE[orbit as usize]
 }
 
 /// Retrieves cloud coverage percentage for atmosphere type
-/// 
+///
 /// Different atmosphere types have characteristic cloud coverage patterns
 /// that affect albedo and temperature calculations.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `atmosphere` - Atmosphere code (0-10)
-/// 
+///
 /// # Returns
-/// 
+///
 /// Cloud coverage as percentage (0-70)
 pub(crate) fn get_cloudiness(atmosphere: i32) -> i32 {
     CLOUDINESS[atmosphere as usize]
 }
 
 /// Retrieves greenhouse effect multiplier for atmosphere type
-/// 
+///
 /// Different atmospheres trap heat to varying degrees, affecting
 /// world temperature calculations beyond simple stellar heating.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `atmosphere` - Atmosphere code (0-15)
-/// 
+///
 /// # Returns
-/// 
+///
 /// Greenhouse effect multiplier (0.0-0.5)
 pub(crate) fn get_greenhouse(atmosphere: i32) -> f32 {
     GREENHOUSE[atmosphere as usize]
 }
 
 /// Generates random world temperature with modifier
-/// 
+///
 /// Rolls 2d6 plus modifier and looks up result on temperature table.
 /// Used for determining base world temperature before environmental
 /// adjustments.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `modifier` - Temperature modifier based on stellar and orbital factors
-/// 
+///
 /// # Returns
-/// 
+///
 /// Base world temperature in degrees Celsius
 pub(crate) fn get_world_temp(modifier: i32) -> f32 {
     let roll = (roll_2d6() + modifier).clamp(0, AVG_WORLD_TEMP.len() as i32 - 1) as usize;
@@ -218,11 +218,11 @@ pub(crate) fn get_world_temp(modifier: i32) -> f32 {
 }
 
 /// Orbital distances in millions of kilometers
-/// 
+///
 /// Maps orbital positions 0-19 to actual distances from the star.
 /// Based on a geometric progression that provides realistic
 /// spacing for planetary orbits.
-/// 
+///
 /// Position 0 ≈ 30 million km (very close, like Mercury)
 /// Position 19 ≈ 5.9 billion km (very far, like Pluto)
 const ORBITAL_DISTANCE: [f32; 20] = [
@@ -231,10 +231,10 @@ const ORBITAL_DISTANCE: [f32; 20] = [
 ];
 
 /// Cloud coverage percentages by atmosphere type
-/// 
+///
 /// Maps atmosphere codes (0-10) to typical cloud coverage.
 /// Used in albedo and temperature calculations.
-/// 
+///
 /// - 0-1: No atmosphere, no clouds (0%)
 /// - 2-3: Thin atmosphere, minimal clouds (10%)
 /// - 4-9: Various thick atmospheres (20-70%)
@@ -242,10 +242,10 @@ const ORBITAL_DISTANCE: [f32; 20] = [
 const CLOUDINESS: [i32; 11] = [0, 0, 10, 10, 20, 30, 40, 50, 60, 70, 70];
 
 /// Greenhouse effect multipliers by atmosphere type
-/// 
+///
 /// Maps atmosphere codes (0-15) to greenhouse heating effects.
 /// Higher values indicate stronger heat retention.
-/// 
+///
 /// - 0-3: No greenhouse effect (0.0)
 /// - 4-9: Moderate greenhouse effect (0.05-0.15)
 /// - 10-12: Strong greenhouse effect (0.5)
@@ -255,10 +255,10 @@ const GREENHOUSE: [f32; 16] = [
 ];
 
 /// Average world temperatures by 2d6+modifier roll
-/// 
+///
 /// Base temperature table for world generation. Roll 2d6 plus
 /// modifiers for stellar type, orbital position, etc.
-/// 
+///
 /// Results range from -2.5°C (frozen) to 35°C (very hot).
 /// Index 7 (roll of 7) gives 15°C, roughly Earth-like.
 const AVG_WORLD_TEMP: [f32; 16] = [
@@ -266,13 +266,13 @@ const AVG_WORLD_TEMP: [f32; 16] = [
 ];
 
 /// Orbital zone boundaries for a star system
-/// 
+///
 /// Defines the boundaries between different temperature and habitability
 /// zones around a star. All values are orbital positions (0-19), not
 /// actual distances.
-/// 
+///
 /// ## Zone Definitions
-/// 
+///
 /// - **Inside**: Closest stable orbits, extreme heat
 /// - **Hot**: High temperature zone, minimal habitability
 /// - **Inner**: Warm zone, some habitability potential  
@@ -289,7 +289,7 @@ pub struct ZoneTable {
     /// Boundary of habitable zone (orbital position)
     pub(crate) habitable: i32,
     /// Boundary of outer zone (orbital position)
-    /// 
+    ///
     /// Currently unused in calculations but included for completeness
     #[allow(dead_code)]
     pub(crate) outer: i32,
@@ -297,21 +297,21 @@ pub struct ZoneTable {
 
 lazy_static! {
     /// Comprehensive zone boundary lookup table
-    /// 
+    ///
     /// Contains pre-calculated zone boundaries for all valid combinations
     /// of star size, type, and subtype in the Traveller universe.
-    /// 
+    ///
     /// ## Table Structure
-    /// 
+    ///
     /// Key: `(StarSize, StarType, rounded_subtype)`
     /// Value: `ZoneTable` with zone boundaries
-    /// 
+    ///
     /// ## Coverage
-    /// 
+    ///
     /// - **Star Sizes**: Ia, Ib, II, III, IV, V, VI, D
-    /// - **Star Types**: O, B, A, F, G, K, M  
+    /// - **Star Types**: O, B, A, F, G, K, M
     /// - **Subtypes**: 0 (early) and 5 (late) variants
-    /// 
+    ///
     /// Total entries: 112 stellar classifications
     static ref ZONE_TABLE: HashMap<(StarSize, StarType, u8), ZoneTable> = HashMap::from_iter(vec![
         (
@@ -1556,7 +1556,7 @@ lazy_static! {
 
 lazy_static! {
     /// Stellar mass lookup table
-    /// 
+    ///
     /// Mass values are in units of solar masses (M☉)
     /// 0 means that case just shouldn't occur.
     static ref MASS_TABLE: HashMap<(StarType, u8, StarSize), f32> = HashMap::from_iter(vec![

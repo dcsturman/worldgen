@@ -1,5 +1,5 @@
 //! # Trade Module
-//! 
+//!
 //! This module provides core trade-related functionality for the Traveller universe,
 //! including trade classifications, starport codes, zone classifications, and
 //! utilities for generating trade data from Universal World Profiles (UWPs).
@@ -12,109 +12,109 @@ pub mod ship_manifest;
 pub mod table;
 
 /// Trade classifications that determine a world's economic characteristics
-/// 
+///
 /// These classifications affect trade good availability, pricing modifiers,
 /// and economic relationships between worlds. A world can have multiple
 /// trade classifications based on its physical and social characteristics.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub enum TradeClass {
     /// Agricultural world - produces food and organic materials
-    /// 
+    ///
     /// Requirements: Atmosphere 4-9, Hydrographics 4-8, Population 5-7
     Agricultural,
-    
+
     /// Asteroid belt or planetoid - mining and low-gravity manufacturing
-    /// 
+    ///
     /// Requirements: Size 0, Atmosphere 0, Hydrographics 0
     Asteroid,
-    
+
     /// Barren world - no permanent population or government
-    /// 
+    ///
     /// Requirements: Population 0, Government 0, Law Level 0
     Barren,
-    
+
     /// Desert world - arid conditions with minimal water
-    /// 
+    ///
     /// Requirements: Hydrographics 0, Atmosphere 2+
     Desert,
-    
+
     /// Fluid oceans world - exotic liquid oceans
-    /// 
+    ///
     /// Requirements: Hydrographics 1+, Atmosphere 10+
     FluidOceans,
-    
+
     /// Garden world - ideal living conditions
-    /// 
+    ///
     /// Requirements: Size 6-8, Atmosphere 5/6/8, Hydrographics 5-7
     Garden,
-    
+
     /// High population world - densely populated
-    /// 
+    ///
     /// Requirements: Population 9+
     HighPopulation,
-    
+
     /// High technology world - advanced manufacturing
-    /// 
+    ///
     /// Requirements: Tech Level 12+
     HighTech,
-    
+
     /// Ice-capped world - frozen water at poles or surface
-    /// 
+    ///
     /// Requirements: Atmosphere 0-1, Hydrographics 1+
     IceCapped,
-    
+
     /// Industrial world - heavy manufacturing and processing
-    /// 
+    ///
     /// Requirements: Atmosphere 0/1/2/4/7/9/10/11/12, Population 9+
     Industrial,
-    
+
     /// Low population world - sparsely populated
-    /// 
+    ///
     /// Requirements: Population 1-3
     LowPopulation,
-    
+
     /// Low technology world - primitive technology
-    /// 
+    ///
     /// Requirements: Population 1+, Tech Level 0-5
     LowTech,
-    
+
     /// Non-agricultural world - cannot produce sufficient food
-    /// 
+    ///
     /// Requirements: Atmosphere 0-3, Hydrographics 0-3, Population 6+
     NonAgricultural,
-    
+
     /// Non-industrial world - limited manufacturing capability
-    /// 
+    ///
     /// Requirements: Population 4-6
     NonIndustrial,
-    
+
     /// Poor world - limited economic development
-    /// 
+    ///
     /// Requirements: Population 1+, Atmosphere 2-5, Hydrographics 0-3
     Poor,
-    
+
     /// Rich world - prosperous economy
-    /// 
+    ///
     /// Requirements: Atmosphere 6/8, Population 6-8, Government 4-9
     Rich,
-    
+
     /// Vacuum world - no atmosphere
-    /// 
+    ///
     /// Requirements: Atmosphere 0
     Vacuum,
-    
+
     /// Water world - extensive water coverage
-    /// 
+    ///
     /// Requirements: Atmosphere 3-9/13+, Hydrographics 10
     WaterWorld,
-    
+
     /// Amber zone - travel advisory in effect
-    /// 
+    ///
     /// Dangerous conditions requiring caution
     AmberZone,
-    
+
     /// Red zone - travel prohibited
-    /// 
+    ///
     /// Extremely dangerous or interdicted world
     RedZone,
 }
@@ -148,20 +148,20 @@ impl Display for TradeClass {
 }
 
 /// Converts a two-character trade code string to a TradeClass enum
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `code` - Two-character trade classification code (e.g., "Ag", "Hi", "In")
-/// 
+///
 /// # Returns
-/// 
+///
 /// Some(TradeClass) if the code is recognized, None otherwise
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```
 /// use worldgen::trade::{string_to_trade_class, TradeClass};
-/// 
+///
 /// assert_eq!(string_to_trade_class("Ag"), Some(TradeClass::Agricultural));
 /// assert_eq!(string_to_trade_class("Hi"), Some(TradeClass::HighPopulation));
 /// assert_eq!(string_to_trade_class("XX"), None);
@@ -211,27 +211,27 @@ const UPP_LAW_LEVEL: usize = 6;
 const UPP_TECH_LEVEL: usize = 7;
 
 /// Converts a Universal World Profile (UWP) to applicable trade classifications
-/// 
+///
 /// Analyzes the physical and social characteristics encoded in a UWP string
 /// to determine which trade classifications apply to the world.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `upp` - Array of 8 characters representing the UWP (e.g., ['A','7','8','8','8','9','9','A'])
-/// 
+///
 /// # Returns
-/// 
+///
 /// Vector of applicable TradeClass enums
-/// 
+///
 /// # Panics
-/// 
+///
 /// Panics if the UWP is not exactly 8 characters long
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```
 /// use worldgen::trade::{upp_to_trade_classes, TradeClass};
-/// 
+///
 /// let upp: Vec<char> = "A788899A".chars().collect();
 /// let trade_classes = upp_to_trade_classes(&upp);
 /// // Returns applicable trade classes based on the UWP characteristics
@@ -350,7 +350,7 @@ pub fn upp_to_trade_classes(upp: &[char]) -> Vec<TradeClass> {
 }
 
 /// Starport quality classifications
-/// 
+///
 /// Represents the quality and capabilities of a world's starport facilities,
 /// affecting trade, refueling, maintenance, and shipyard services.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -379,13 +379,13 @@ pub enum PortCode {
 
 impl PortCode {
     /// Creates a PortCode from the first character of a UWP string
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `upp` - UWP string starting with the starport code
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// PortCode enum value, defaults to A if character is not recognized
     pub fn from_upp(upp: &str) -> PortCode {
         match upp.chars().next() {
@@ -418,7 +418,7 @@ impl std::fmt::Display for PortCode {
 }
 
 /// Travel zone classifications for worlds
-/// 
+///
 /// Indicates the safety level and travel restrictions for a world,
 /// affecting passenger traffic, trade, and insurance rates.
 #[derive(Debug, Clone, PartialEq, Copy)]

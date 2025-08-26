@@ -1,8 +1,8 @@
 //! # Trade Table Module
-//! 
+//!
 //! This module provides the core trade table functionality for the Traveller universe,
 //! including trade good definitions, availability rules, and pricing modifiers.
-//! 
+//!
 //! The trade table contains all standard trade goods with their base costs, availability
 //! restrictions, quantity dice, and trade class modifiers for buying and selling.
 
@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use crate::trade::string_to_trade_class;
 
 /// Main trade table containing all available trade goods
-/// 
+///
 /// Maps two-digit indices (11-66) to trade table entries. The indices correspond
 /// to 2d6 dice rolls used to randomly determine available goods.
 #[derive(Debug, Clone)]
@@ -22,7 +22,7 @@ pub struct TradeTable {
 }
 
 /// Individual entry in the trade table representing a specific trade good
-/// 
+///
 /// Contains all information needed to determine availability, quantity,
 /// base cost, and trade modifiers for a specific good.
 #[derive(Debug, Clone)]
@@ -44,7 +44,7 @@ pub struct TradeTableEntry {
 }
 
 /// Availability restrictions for trade goods
-/// 
+///
 /// Determines which worlds can produce or have access to specific trade goods
 /// based on their trade classifications.
 #[derive(Debug, Clone)]
@@ -56,7 +56,7 @@ pub(crate) enum Availability {
 }
 
 /// Quantity determination for trade goods
-/// 
+///
 /// Represents the dice formula used to determine how much of a good
 /// is available for purchase (e.g., "2Dx10" means roll 2d6 and multiply by 10).
 #[derive(Debug, Clone)]
@@ -69,7 +69,7 @@ pub(crate) struct Quantity {
 
 impl Default for TradeTable {
     /// Creates a new TradeTable with the standard trade goods
-    /// 
+    ///
     /// Loads the complete set of 36 standard trade goods from the
     /// embedded data array. Panics if the data cannot be parsed.
     fn default() -> Self {
@@ -87,46 +87,46 @@ impl Default for TradeTable {
 
 impl TradeTable {
     /// Creates a new empty trade table
-    /// 
+    ///
     /// Equivalent to `TradeTable::default()` but more explicit.
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Retrieves a trade table entry by its index
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `index` - Two-digit index (11-66) corresponding to 2d6 roll
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Reference to the trade table entry, or None if index not found
     pub fn get(&self, index: i16) -> Option<&TradeTableEntry> {
         self.entries.get(&index)
     }
 
     /// Inserts a trade table entry into the table
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `entry` - Trade table entry to insert
     pub fn insert(&mut self, entry: TradeTableEntry) {
         self.entries.insert(entry.index, entry);
     }
 
     /// Load trade goods from embedded data array
-    /// 
+    ///
     /// Parses trade good data from a structured array format and populates
     /// the trade table. Each row contains: index, name, availability, quantity,
     /// base_cost, purchase_dm, sale_dm.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `data` - Array of trade good data rows
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Result indicating success or error message
     pub fn load_from_data(&mut self, data: &[&[&str; 7]]) -> Result<(), String> {
         for (line_num, row) in data.iter().enumerate() {
@@ -138,14 +138,14 @@ impl TradeTable {
     }
 
     /// Parse a single data row into a TradeTableEntry
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `row` - Array of 7 strings containing trade good data
     /// * `line_num` - Line number for error reporting
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Parsed trade table entry or error message
     fn parse_data_row(row: &[&str; 7], line_num: usize) -> Result<TradeTableEntry, String> {
         TradeTableEntry::from_string_with_line(
@@ -161,27 +161,27 @@ impl TradeTable {
     }
 
     /// Get all entries in the table
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Iterator over all trade table entries
     pub fn entries(&self) -> impl Iterator<Item = &TradeTableEntry> {
         self.entries.values()
     }
 
     /// Get the number of entries in the table
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Number of trade goods in the table
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
     /// Check if the table is empty
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// True if no trade goods are loaded
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
@@ -190,12 +190,12 @@ impl TradeTable {
 
 impl TradeTableEntry {
     /// Create a new TradeTableEntry from a set of strings with line number
-    /// 
+    ///
     /// Parses all components of a trade table entry from string format.
     /// Provides detailed error messages including line numbers for debugging.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `index_str` - Two-digit index string (e.g., "11", "66")
     /// * `name` - Human-readable name of the trade good
     /// * `availability_str` - Availability string ("All" or space-separated trade codes)
@@ -204,9 +204,9 @@ impl TradeTableEntry {
     /// * `purchase_dm_str` - Purchase modifiers (e.g., "In+2 Ht+3")
     /// * `sale_dm_str` - Sale modifiers (e.g., "Ni+2 Lt+1")
     /// * `line_num` - Line number for error reporting
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Parsed trade table entry or detailed error message
     #[allow(clippy::too_many_arguments)]
     pub fn from_string_with_line(
@@ -308,16 +308,16 @@ impl TradeTableEntry {
     }
 
     /// Create a new TradeTableEntry from strings without line number tracking
-    /// 
+    ///
     /// Convenience wrapper around `from_string_with_line` for cases where
     /// line number tracking is not needed.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// Same as `from_string_with_line` except no `line_num` parameter
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Parsed trade table entry or error message
     pub fn from_string(
         index_str: &str,
@@ -342,22 +342,22 @@ impl TradeTableEntry {
 }
 
 /// Parse DM (Dice Modifier) strings with line number and optional index
-/// 
+///
 /// Parses strings like "In+2 Ht+3 Ri+1" into a HashMap mapping trade classes
 /// to their modifier values. Used for both purchase and sale modifiers.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `dm_str` - String containing space-separated trade class modifiers
 /// * `line_num` - Line number for error reporting
 /// * `index` - Optional trade good index for error reporting
-/// 
+///
 /// # Returns
-/// 
+///
 /// HashMap mapping trade classes to modifier values, or error message
-/// 
+///
 /// # Format
-/// 
+///
 /// Each modifier consists of a trade class code followed immediately by
 /// a + or - and a numeric value (e.g., "In+2", "Ag-1").
 fn parse_dm_string_with_line(
@@ -409,11 +409,11 @@ fn parse_dm_string_with_line(
 }
 
 /// Standard trade goods table in a compact format
-/// 
+///
 /// Contains all 36 standard trade goods from the Traveller rules.
 /// Each entry is an array of 7 strings:
 /// [index, name, availability, quantity, base_cost, purchase_dm, sale_dm]
-/// 
+///
 /// The table covers:
 /// - Common goods (11-16): Basic trade items available everywhere
 /// - Advanced goods (21-26): High-tech items with restricted availability  
