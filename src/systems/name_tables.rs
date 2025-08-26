@@ -1,29 +1,29 @@
 //! # Name Generation Tables Module
-//! 
+//!
 //! This module provides random name generation for various astronomical bodies
 //! in the Traveller universe. It contains curated lists of thematic names and
 //! functions to randomly select from them, ensuring consistent and immersive
 //! naming throughout generated solar systems.
-//! 
+//!
 //! ## Key Features
-//! 
+//!
 //! - **Planet Names**: Science fiction themed names for worlds and gas giants
 //! - **Star System Names**: Astronomical and mythological names for star systems
 //! - **Moon Names**: Classical and mythological names for satellite bodies
 //! - **Random Selection**: Thread-safe random generation using the `rand` crate
-//! 
+//!
 //! ## Usage
-//! 
+//!
 //! ```rust
 //! use worldgen::systems::name_tables::{gen_planet_name, gen_star_system_name, gen_moon_name};
-//! 
+//!
 //! let planet = gen_planet_name();        // "Kepler's Keep"
 //! let system = gen_star_system_name();   // "Aegis Prime"
 //! let moon = gen_moon_name();            // "Ganymede"
 //! ```
-//! 
+//!
 //! ## Thread Safety
-//! 
+//!
 //! All generation functions use `rand::rng()` which provides thread-local
 //! random number generation, making them safe for concurrent use across
 //! multiple threads during system generation.
@@ -31,17 +31,17 @@
 use rand::Rng;
 
 /// Generates a random planet name
-/// 
+///
 /// Selects from a curated list of science fiction themed names suitable
 /// for worlds and gas giants. Names evoke themes of exploration, technology,
 /// and distant frontiers.
-/// 
+///
 /// # Returns
-/// 
+///
 /// A randomly selected planet name as a `String`
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```rust
 /// let name = gen_planet_name();
 /// // Possible results: "Kepler's Keep", "Nova Nexus", "Quantum Quasar"
@@ -51,17 +51,17 @@ pub(crate) fn gen_planet_name() -> String {
 }
 
 /// Generates a random star system name
-/// 
+///
 /// Selects from a list of astronomical and mythological names that combine
 /// stellar phenomena with evocative descriptors. Names typically follow
 /// patterns like "Constellation Feature" or "Star Descriptor".
-/// 
+///
 /// # Returns
-/// 
+///
 /// A randomly selected star system name as a `String`
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```rust
 /// let name = gen_star_system_name();
 /// // Possible results: "Aegis Prime", "Orion's Forge", "Vega Void"
@@ -71,18 +71,18 @@ pub(crate) fn gen_star_system_name() -> String {
 }
 
 /// Generates a random moon name
-/// 
+///
 /// Selects from a comprehensive list of classical mythology and real
 /// astronomical body names. Includes names from Greek, Roman, Norse,
 /// and other mythological traditions, as well as real moons from
 /// our solar system.
-/// 
+///
 /// # Returns
-/// 
+///
 /// A randomly selected moon name as a `String`
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```rust
 /// let name = gen_moon_name();
 /// // Possible results: "Ganymede", "Titan", "Calypso", "Hyperion"
@@ -92,14 +92,14 @@ pub(crate) fn gen_moon_name() -> String {
 }
 
 /// Star system names combining astronomical terms with evocative descriptors
-/// 
+///
 /// A curated collection of 100 names that evoke the grandeur and mystery
 /// of space exploration. Names often reference real constellations,
 /// stellar phenomena, and astronomical concepts while maintaining
 /// a sense of adventure and discovery.
-/// 
+///
 /// ## Naming Patterns
-/// 
+///
 /// - **Constellation + Feature**: "Orion's Forge", "Cassiopeia Cluster"
 /// - **Star + Descriptor**: "Rigel Rift", "Vega Void"
 /// - **Phenomenon + Location**: "Nova Nexus", "Quantum Quasar"
@@ -208,21 +208,21 @@ const STAR_SYSTEM_NAMES: [&str; 100] = [
 ];
 
 /// Moon and satellite names from classical mythology and astronomy
-/// 
+///
 /// A comprehensive collection of 338+ names drawn from various sources:
 /// - **Real Moons**: Names of actual moons in our solar system
 /// - **Greek Mythology**: Classical names from Greek pantheon
 /// - **Roman Mythology**: Roman equivalents and unique names
 /// - **Norse Mythology**: Names from Scandinavian traditions
 /// - **Astronomical Objects**: Names of asteroids, dwarf planets, and other bodies
-/// 
+///
 /// ## Name Categories
-/// 
+///
 /// - **Major Moons**: Well-known names like "Ganymede", "Titan", "Europa"
 /// - **Minor Moons**: Lesser-known but real astronomical names
 /// - **Mythological**: Classical names from various pantheons
 /// - **Descriptive**: Names that evoke lunar or celestial qualities
-/// 
+///
 /// Names are suitable for any type of satellite, from small rocky moons
 /// to large satellite worlds with their own atmospheres and populations.
 const MOON_NAMES: [&str; 338] = [
@@ -567,18 +567,18 @@ const MOON_NAMES: [&str; 338] = [
 ];
 
 /// Planet names with science fiction and space exploration themes
-/// 
+///
 /// A collection of evocative names suitable for worlds and gas giants.
 /// Names are designed to sound futuristic and adventurous while
 /// maintaining pronounceability and memorability.
-/// 
+///
 /// ## Naming Themes
-/// 
+///
 /// - **Astronomical**: References to stars, phenomena, and exploration
 /// - **Technological**: Evokes advanced civilizations and space travel
 /// - **Mythological**: Classical references adapted for space settings
 /// - **Descriptive**: Names that suggest planetary characteristics
-/// 
+///
 /// These names are used for significant worlds that warrant proper names
 /// rather than systematic designations (e.g., populated gas giant systems).
 const PLANET_NAMES: [&str; 400] = [

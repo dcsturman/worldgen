@@ -1,35 +1,35 @@
 //! # Gas Giant Generation Module
-//! 
+//!
 //! This module handles the generation and management of gas giants in Traveller solar systems.
 //! Gas giants are major planetary bodies that can host multiple satellites (moons) and play
 //! important roles in system dynamics, trade, and exploration.
-//! 
+//!
 //! ## Key Features
-//! 
+//!
 //! - **Size Classification**: Small and Large gas giants with different characteristics
 //! - **Satellite Generation**: Automatic generation of moons, rings, and orbital bodies
 //! - **Naming System**: Intelligent naming based on population and system importance
 //! - **Orbital Mechanics**: Realistic satellite orbit generation with collision avoidance
 //! - **World Generation**: Full UWP generation for satellites including atmosphere, hydrographics, and population
-//! 
+//!
 //! ## Gas Giant Types
-//! 
+//!
 //! - **Small Gas Giants**: Fewer satellites, smaller overall system influence
 //! - **Large Gas Giants**: More satellites, can support extreme orbits, greater system presence
-//! 
+//!
 //! ## Satellite Types
-//! 
+//!
 //! - **Ring Systems**: Size 0 satellites representing planetary rings
 //! - **Rocky Moons**: Various sizes with full world characteristics
 //! - **Close Orbits**: Satellites in tight orbits around the gas giant
 //! - **Far Orbits**: Distant satellites with different environmental conditions
 //! - **Extreme Orbits**: Very distant satellites only possible around large gas giants
-//! 
+//!
 //! ## Usage
-//! 
+//!
 //! ```rust
 //! use worldgen::systems::gas_giant::{GasGiant, GasGiantSize};
-//! 
+//!
 //! let mut gas_giant = GasGiant::new(GasGiantSize::Large, 5);
 //! gas_giant.gen_name("Sol", 5);
 //! // Generate satellites using HasSatellites trait methods
@@ -48,7 +48,7 @@ use crate::util::{arabic_to_roman, roll_1d6, roll_2d6};
 use std::fmt::Display;
 
 /// Represents a gas giant in a solar system
-/// 
+///
 /// Gas giants are major planetary bodies that can host multiple satellites and
 /// play important roles in system trade and exploration. They are classified
 /// by size which affects their satellite generation characteristics.
@@ -65,7 +65,7 @@ pub struct GasGiant {
 }
 
 /// Size classification for gas giants
-/// 
+///
 /// Determines the number and types of satellites that can be generated,
 /// as well as the maximum orbital distances possible for satellites.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,18 +78,18 @@ pub enum GasGiantSize {
 
 impl GasGiant {
     /// Creates a new gas giant with the specified size and orbital position
-    /// 
+    ///
     /// The gas giant starts with an empty name and no satellites. Use `gen_name()`
     /// to assign an appropriate name and satellite generation methods to populate
     /// the system.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `size` - Size classification (Small or Large)
     /// * `orbit` - Orbital position within the star system
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// New `GasGiant` instance ready for further configuration
     pub fn new(size: GasGiantSize, orbit: usize) -> GasGiant {
         GasGiant {
@@ -101,20 +101,20 @@ impl GasGiant {
     }
 
     /// Generates an appropriate name for the gas giant
-    /// 
+    ///
     /// Uses intelligent naming logic based on the population of the satellite system:
     /// - **Named**: Gas giants with significant population (≥100,000 residents) get proper names
     /// - **Designated**: Low-population systems get systematic names using Roman numerals
-    /// 
+    ///
     /// Population threshold of 5 on the Traveller scale represents approximately 100,000 residents.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `system_name` - Name of the parent star system
     /// * `orbit` - Orbital position for systematic naming (converted to Roman numerals)
-    /// 
+    ///
     /// # Examples
-    /// 
+    ///
     /// ```rust
     /// let mut gas_giant = GasGiant::new(GasGiantSize::Large, 4);
     /// gas_giant.gen_name("Sol", 4);
@@ -140,13 +140,13 @@ impl HasSatellites for GasGiant {
     }
 
     /// Retrieves a satellite at the specified orbital position
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `orbit` - Orbital position to search for
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Reference to the satellite world if found, None otherwise
     fn get_satellite(&self, orbit: usize) -> Option<&World> {
         self.satellites.sats.iter().find(|&x| x.orbit == orbit)
@@ -158,38 +158,38 @@ impl HasSatellites for GasGiant {
     }
 
     /// Adds a new satellite to this gas giant's system
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `satellite` - World to add as a satellite
     fn push_satellite(&mut self, satellite: World) {
         self.satellites.sats.push(satellite);
     }
 
     /// Generates an orbital position for a new satellite
-    /// 
+    ///
     /// Uses different algorithms based on whether the satellite is a ring system
     /// or a regular moon. Automatically avoids orbital collisions by incrementing
     /// the orbit until a free position is found.
-    /// 
+    ///
     /// # Orbital Types
-    /// 
+    ///
     /// ## Ring Systems (is_ring = true)
     /// - **Orbit 1**: 50% chance (rolls 1-3 on 1d6)
     /// - **Orbit 2**: 33% chance (rolls 4-5 on 1d6)  
     /// - **Orbit 3**: 17% chance (rolls 6 on 1d6)
-    /// 
+    ///
     /// ## Regular Satellites (is_ring = false)
     /// - **Close Orbit**: 2d6+3 (rolls ≤7 after satellite count modifier)
     /// - **Far Orbit**: (2d6+3)×5 (rolls 8-11 after modifier)
     /// - **Extreme Orbit**: (2d6+3)×25 (roll 12 after modifier, Large gas giants only)
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `is_ring` - Whether this satellite is a ring system
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Available orbital position for the new satellite
     fn gen_satellite_orbit(&self, is_ring: bool) -> usize {
         let mut orbit: usize = if is_ring {
@@ -222,13 +222,13 @@ impl HasSatellites for GasGiant {
     }
 
     /// Determines the number of satellites this gas giant should have
-    /// 
+    ///
     /// Uses different probability distributions based on gas giant size:
     /// - **Small Gas Giants**: (2d6-4), minimum 0 satellites
     /// - **Large Gas Giants**: 2d6 satellites (2-12 range)
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Number of satellites to generate for this gas giant
     fn determine_num_satellites(&self) -> i32 {
         match self.size {
@@ -238,13 +238,13 @@ impl HasSatellites for GasGiant {
     }
 
     /// Generates a complete satellite world for this gas giant
-    /// 
+    ///
     /// Creates a fully detailed satellite with all UWP characteristics including
     /// size, atmosphere, hydrographics, population, and supporting infrastructure.
     /// Special handling for ring systems (size 0) which get minimal characteristics.
-    /// 
+    ///
     /// # Generation Process
-    /// 
+    ///
     /// 1. **Size Determination**: Based on gas giant size with random variation
     /// 2. **Orbit Assignment**: Uses `gen_satellite_orbit()` for positioning
     /// 3. **Ring Check**: Size 0 creates ring systems with Y-class starports
@@ -253,19 +253,19 @@ impl HasSatellites for GasGiant {
     /// 6. **Population**: Influenced by orbit position and atmospheric conditions
     /// 7. **Infrastructure**: Generates subordinate stats, trade classes, and facilities
     /// 8. **Astronomy**: Computes orbital mechanics and environmental data
-    /// 
+    ///
     /// # Size Generation
     /// - **Small Gas Giants**: 2d6-6 (minimum -1, representing size S)
     /// - **Large Gas Giants**: 2d6-4 (minimum -1, representing size S)
-    /// 
+    ///
     /// # Environmental Modifiers
     /// - **Inner Zone**: -4 to atmosphere, hydro = 0
     /// - **Outer Zone**: -4 to atmosphere and hydrographics
     /// - **Small Worlds**: Size ≤1 forces atmosphere = 0
     /// - **Extreme Atmospheres**: Size ≤0 or inner zone forces hydro = 0
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `system_zones` - Zone boundaries for environmental calculations
     /// * `main_world` - Primary world for trade and facility generation
     /// * `star` - Primary star for astronomical calculations
@@ -374,9 +374,9 @@ impl HasSatellites for GasGiant {
 
 impl Display for GasGiantSize {
     /// Formats gas giant size for display
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// - "Small GG" for Small gas giants
     /// - "Large GG" for Large gas giants
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -389,12 +389,12 @@ impl Display for GasGiantSize {
 
 impl Display for GasGiant {
     /// Formats the gas giant and all its satellites for display
-    /// 
+    ///
     /// Outputs the gas giant's orbital position, name, and size classification,
     /// followed by an indented list of all satellite worlds with their details.
-    /// 
+    ///
     /// # Format
-    /// 
+    ///
     /// ```text
     /// 5      Jupiter              Large GG
     ///     1   Io               Ring System    Y

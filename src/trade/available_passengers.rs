@@ -1,10 +1,10 @@
 //! # Available Passengers Module
-//! 
+//!
 //! This module handles the generation of available passengers and freight
 //! for interstellar travel between worlds in the Traveller universe.
 
-use crate::util::{roll_1d6, roll_2d6};
 use crate::trade::{PortCode, ZoneClassification};
+use crate::util::{roll_1d6, roll_2d6};
 
 /// Represents a lot of freight available for shipping at a specific world
 #[derive(Debug, Clone)]
@@ -30,9 +30,9 @@ pub struct AvailablePassengers {
 
 impl AvailablePassengers {
     /// Generates available passengers and freight for a route between two worlds
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `origin_population` - Population level of the origin world
     /// * `origin_port` - Starport quality of the origin world
     /// * `origin_zone` - Travel zone classification of the origin world
@@ -43,9 +43,9 @@ impl AvailablePassengers {
     /// * `destination_tech_level` - Technology level of the destination world
     /// * `distance_parsecs` - Distance between worlds in parsecs
     /// * `steward_skill` - Steward skill level of the ship's crew
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A new `AvailablePassengers` instance with generated passengers and freight
     #[allow(clippy::too_many_arguments)]
     pub fn generate(
@@ -93,9 +93,9 @@ impl AvailablePassengers {
     }
 
     /// Generates passengers for all passenger classes
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `passengers` - Mutable reference to the passengers structure to populate
     /// * `origin_population` - Population level of the origin world
     /// * `origin_port` - Starport quality of the origin world
@@ -167,9 +167,9 @@ impl AvailablePassengers {
     }
 
     /// Generates freight lots for all cargo classes
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `passengers` - Mutable reference to the passengers structure to populate
     /// * `origin_population` - Population level of the origin world
     /// * `origin_port` - Starport quality of the origin world
@@ -224,9 +224,9 @@ impl AvailablePassengers {
     }
 
     /// Generates the number of cargo lots for a specific cargo class
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `origin_population` - Population level of the origin world
     /// * `origin_port` - Starport quality of the origin world
     /// * `origin_zone` - Travel zone classification of the origin world
@@ -237,9 +237,9 @@ impl AvailablePassengers {
     /// * `destination_tech_level` - Technology level of the destination world
     /// * `distance_parsecs` - Distance between worlds in parsecs
     /// * `cargo_class` - The class of cargo to generate
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// The number of cargo lots available for the specified class
     #[allow(clippy::too_many_arguments)]
     fn generate_cargo_class(
@@ -340,9 +340,9 @@ impl AvailablePassengers {
     }
 
     /// Generates the number of passengers for a specific passenger class
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `origin_population` - Population level of the origin world
     /// * `origin_port` - Starport quality of the origin world
     /// * `origin_zone` - Travel zone classification of the origin world
@@ -352,9 +352,9 @@ impl AvailablePassengers {
     /// * `distance_parsecs` - Distance between worlds in parsecs
     /// * `steward_skill` - Steward skill level of the ship's crew
     /// * `passenger_class` - The class of passenger to generate
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// The number of passengers available for the specified class
     #[allow(clippy::too_many_arguments)]
     fn generate_passenger_class(
