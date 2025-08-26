@@ -1,6 +1,6 @@
-# Worldgen - A Traveller Solar System Generator
+# Worldgen - A Set of Tools for Traveller
 
-Worldgen started a a world generator, but has evolved into a set of tools for Traveller. Built entirely in Rust using the Leptos reactive framework, it provides two primary tools for Traveller RPG players and referees.
+Worldgen started as a world generator, but has evolved into a set of tools for Traveller. Built entirely in Rust using the Leptos reactive framework, it currently provides two primary tools for Traveller RPG players and referees.
 
 ## Overview
 
