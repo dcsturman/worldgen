@@ -171,7 +171,7 @@ Worldgen follows standard Rust development practices:
 
 ## License
 
-[Add your license information here]
+License is the MIT License, see [LICENSE](LICENSE)
 
 ## Acknowledgments
 
