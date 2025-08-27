@@ -15,7 +15,7 @@ ENV RUSTFLAGS='--cfg getrandom_backend="wasm_js"'
 
 RUN mkdir ./src && mkdir ./src/bin && echo 'fn main() {}' > ./src/bin/main.rs && touch ./src/lib.rs
 
-RUN cargo build --release --target wasm32-unknown-unknown
+RUN cargo build --release --target wasm32-unknown-unknown --bin main
 RUN rm -rf ./src
 COPY src /web/src/
 
