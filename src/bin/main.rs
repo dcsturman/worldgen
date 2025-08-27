@@ -3,11 +3,28 @@
 //! This is the main entry point for the Worldgen web application.
 //! It sets up routing based on URL paths and renders the appropriate components.
 
+use web_sys::js_sys::{Function, Object, Reflect};
+
 use leptos::prelude::*;
 use worldgen::components::selector::Selector;
 use worldgen::components::system_generator::World;
 use worldgen::components::trade_computer::Trade;
 use worldgen::logging;
+
+const GA_MEASUREMENT_ID: &str = "G-L26P5SCYR2";
+/// Track page view for analytics
+fn track_page_view(_path: &str) {
+    if let Some(window) = web_sys::window() {
+        if let Ok(gtag) = Reflect::get(&window, &"gtag".into()) {
+            let _ = Function::from(gtag).call3(
+                &window,
+                &"config".into(),
+                &GA_MEASUREMENT_ID.into(),
+                &Object::new(),
+            );
+        }
+    }
+}
 
 /// Main application component that handles routing based on URL path
 #[component]
@@ -17,6 +34,9 @@ fn App() -> impl IntoView {
         .location()
         .pathname()
         .unwrap_or_default();
+
+    // Track the page view
+    track_page_view(&path);
 
     if path.contains("world") {
         view! { <World /> }.into_any()
