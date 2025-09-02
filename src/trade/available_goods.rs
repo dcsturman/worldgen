@@ -114,19 +114,24 @@ pub struct AvailableGood {
     /// Original base cost of the good
     pub base_cost: i32,
     /// Current cost of the good (after pricing)
-    pub cost: i32,
+    pub buy_cost: i32,
+    /// Comment on the buy cost, used with hover.
+    pub buy_cost_comment: String,
+    /// Optional sell price if destination world is known
     pub sell_price: Option<i32>,
+    /// Comment on the sell price, used with hover.
+    pub sell_price_comment: String,
     /// Original trade table entry this good was derived from
     pub source_entry: TradeTableEntry,
 }
 
 impl Display for AvailableGood {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        let discount_percent = (self.cost as f64 / self.base_cost as f64 * 100.0).round();
+        let discount_percent = (self.buy_cost as f64 / self.base_cost as f64 * 100.0).round();
         write!(
             f,
             "{}: {} @ {} ({}% of base)",
-            self.name, self.quantity, self.cost, discount_percent as i32
+            self.name, self.quantity, self.buy_cost, discount_percent as i32
         )
     }
 }
@@ -335,8 +340,10 @@ impl AvailableGoodsTable {
             quantity,
             purchased: 0,
             base_cost: entry.base_cost,
-            cost: entry.base_cost,
+            buy_cost: entry.base_cost,
+            buy_cost_comment: String::default(),
             sell_price: None,
+            sell_price_comment: String::default(),
             source_entry: entry,
         };
 
@@ -454,14 +461,13 @@ impl AvailableGoodsTable {
             // Roll 2d6
             let roll = rng.random_range(1..=6) + rng.random_range(1..=6) + rng.random_range(1..=6);
 
-            let best_purchase_origin_dm =
+            let purchase_origin_dm =
                 find_total_dm(&good.source_entry.purchase_dm, origin_trade_classes);
-            let best_sale_origin_dm =
-                find_total_dm(&good.source_entry.sale_dm, origin_trade_classes);
+            let sale_origin_dm = find_total_dm(&good.source_entry.sale_dm, origin_trade_classes);
             // Calculate the modified roll
             let modified_roll = roll as i16 + buyer_broker_skill - supplier_broker_skill
-                + best_purchase_origin_dm
-                - best_sale_origin_dm;
+                + purchase_origin_dm
+                - sale_origin_dm;
 
             // Determine the price multiplier based on the modified roll
             let price_multiplier = match modified_roll {
@@ -496,6 +502,15 @@ impl AvailableGoodsTable {
                 25.. => 0.15,         // 15%
             };
 
+            good.buy_cost_comment = format!(
+                "(roll) {} + (broker) {} + (trade mod) {} = {} which gives a multiplier of {}",
+                roll,
+                buyer_broker_skill - supplier_broker_skill,
+                purchase_origin_dm - sale_origin_dm,
+                modified_roll,
+                price_multiplier
+            );
+
             /* console_log(
                 format!(
                     "Pricing {}: Roll {roll}, Modified roll: {modified_roll}, Price multiplier: {}",
@@ -506,7 +521,7 @@ impl AvailableGoodsTable {
             */
 
             // Apply the multiplier to the cost
-            good.cost = (good.base_cost as f64 * price_multiplier).round() as i32;
+            good.buy_cost = (good.base_cost as f64 * price_multiplier).round() as i32;
         }
     }
 
@@ -585,15 +600,15 @@ impl AvailableGoodsTable {
                 let roll =
                     rng.random_range(1..=6) + rng.random_range(1..=6) + rng.random_range(1..=6);
 
-                let best_purchase_origin_dm =
+                let purchase_origin_dm =
                     find_total_dm(&good.source_entry.purchase_dm, destination_trade_classes);
-                let best_sale_origin_dm =
+                let sale_origin_dm =
                     find_total_dm(&good.source_entry.sale_dm, destination_trade_classes);
 
                 // Calculate the modified roll
                 let modified_roll = roll as i16 - buyer_broker_skill + supplier_broker_skill
-                    - best_purchase_origin_dm
-                    + best_sale_origin_dm;
+                    - purchase_origin_dm
+                    + sale_origin_dm;
 
                 // Determine the price multiplier based on the modified roll
                 let price_multiplier = match modified_roll {
@@ -628,6 +643,15 @@ impl AvailableGoodsTable {
                     25.. => 4.0,
                 };
 
+                good.sell_price_comment = format!(
+                    "(roll) {} + (broker) {} + (trade mod) {} = {} which gives a multiplier of {}",
+                    roll,
+                    supplier_broker_skill - buyer_broker_skill,
+                    sale_origin_dm - purchase_origin_dm,
+                    modified_roll,
+                    price_multiplier
+                );
+
                 // Apply the multiplier to the cost
                 good.sell_price = Some((good.base_cost as f64 * price_multiplier).round() as i32);
             } else {
@@ -640,8 +664,8 @@ impl AvailableGoodsTable {
     pub fn sort_by_discount(&mut self) {
         self.goods.sort_by(|a, b| {
             // Calculate discount percentage for each good
-            let a_discount = a.cost as f64 / a.base_cost as f64;
-            let b_discount = b.cost as f64 / b.base_cost as f64;
+            let a_discount = a.buy_cost as f64 / a.base_cost as f64;
+            let b_discount = b.buy_cost as f64 / b.base_cost as f64;
 
             // Sort from lowest ratio (biggest discount) to highest ratio (smallest discount)
             a_discount
@@ -840,7 +864,7 @@ mod tests {
         table.add_entry(entry.clone(), 5).unwrap();
 
         // Get the original cost
-        let original_cost = table.goods()[0].cost;
+        let original_cost = table.goods()[0].buy_cost;
 
         // Price the goods with equal broker skills
         // This will use a random roll, so we can't predict the exact price,
@@ -849,7 +873,7 @@ mod tests {
 
         // The price should be different due to the DMs (purchase +2, sale -3)
         // and the random roll
-        assert_ne!(table.goods()[0].cost, original_cost);
+        assert_ne!(table.goods()[0].buy_cost, original_cost);
 
         // Create another table for a more controlled test
         let mut table2 = AvailableGoodsTable::new();
@@ -865,7 +889,7 @@ mod tests {
 
         // The price should be affected by the skills and DMs
         // We can't assert an exact value due to the random roll
-        let new_cost = table2.goods()[0].cost;
+        let new_cost = table2.goods()[0].buy_cost;
         println!("Original cost: {original_cost}, New cost: {new_cost}");
 
         // The price should be within a reasonable range
@@ -882,8 +906,10 @@ mod tests {
             name: "Test Good".to_string(),
             quantity: 10,
             base_cost: 5000,
-            cost: 5000,
+            buy_cost: 5000,
+            buy_cost_comment: String::default(),
             purchased: 0,
+            sell_price_comment: String::default(),
             sell_price: None,
             source_entry: TradeTableEntry {
                 index: 1,
@@ -957,8 +983,10 @@ mod tests {
             name: "Good 1".to_string(),
             quantity: 10,
             base_cost: 10000,
-            cost: 5000, // 50% of base
+            buy_cost: 5000, // 50% of base
+            buy_cost_comment: String::default(),
             purchased: 0,
+            sell_price_comment: String::default(),
             sell_price: None,
             source_entry: TradeTableEntry {
                 index: 1,
@@ -978,8 +1006,10 @@ mod tests {
             name: "Good 2".to_string(),
             quantity: 10,
             base_cost: 10000,
-            cost: 8000, // 80% of base
+            buy_cost: 8000, // 80% of base
+            buy_cost_comment: String::default(),
             purchased: 0,
+            sell_price_comment: String::default(),
             sell_price: None,
             source_entry: TradeTableEntry {
                 index: 2,
@@ -999,8 +1029,10 @@ mod tests {
             name: "Good 3".to_string(),
             quantity: 10,
             base_cost: 10000,
-            cost: 2000, // 20% of base
+            buy_cost: 2000, // 20% of base
+            buy_cost_comment: String::default(),
             purchased: 0,
+            sell_price_comment: String::default(),
             sell_price: None,
             source_entry: TradeTableEntry {
                 index: 3,

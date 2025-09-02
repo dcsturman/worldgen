@@ -663,11 +663,14 @@ pub fn TradeView() -> impl IntoView {
                                 .iter()
                                 .enumerate()
                                 .map(|(index, good)| {
-                                    let discount_percent = (good.cost as f64 / good.base_cost as f64
+                                    let discount_percent = (good.buy_cost as f64 / good.base_cost as f64
                                         * 100.0)
                                         .round() as i32;
 
                                     let purchased_amount = good.purchased;
+                                    let buy_cost_comment = good.buy_cost_comment.clone();
+                                    let sell_price_comment = good.sell_price_comment.clone();
+
                                     let update_purchased = move |ev| {
                                         let new_value = event_target_value(&ev).parse::<i32>().unwrap_or(0);
                                         let mut ag = available_goods.write();
@@ -685,7 +688,7 @@ pub fn TradeView() -> impl IntoView {
                                                 <td class="table-entry">{good.name.clone()}</td>
                                                 <td class="table-entry">{good.quantity.to_string()}</td>
                                                 <td class="table-entry">{good.base_cost.to_string()}</td>
-                                                <td class="table-entry">{good.cost.to_string()}</td>
+                                                <td class="table-entry" title=buy_cost_comment.clone()>{good.buy_cost.to_string()}</td>
                                                 <td class="table-entry">
                                                     {discount_percent.to_string()}"%"
                                                 </td>
@@ -706,7 +709,7 @@ pub fn TradeView() -> impl IntoView {
                                                     />
                                                 </td>
                                                 <Show when=move || show_sell_price.read().0>
-                                                    <td class="table-entry">{sell_price.to_string()}</td>
+                                                    <td class="table-entry" title=sell_price_comment.clone()>{sell_price.to_string()}</td>
                                                     <td class="table-entry">
                                                         {sell_discount_percent.to_string()}"%"
                                                     </td>
@@ -719,7 +722,7 @@ pub fn TradeView() -> impl IntoView {
                                                 <td class="table-entry">{good.name.clone()}</td>
                                                 <td class="table-entry">{good.quantity.to_string()}</td>
                                                 <td class="table-entry">{good.base_cost.to_string()}</td>
-                                                <td class="table-entry">{good.cost.to_string()}</td>
+                                                <td class="table-entry" title=buy_cost_comment>{good.buy_cost.to_string()}</td>
                                                 <td class="table-entry">
                                                     {discount_percent.to_string()}"%"
                                                 </td>
@@ -1164,7 +1167,7 @@ fn ShipManifestView(distance: RwSignal<i32>) -> impl IntoView {
                         };
 
                         let goods_tons: i32 = goods.goods.iter().map(|good| good.purchased).sum();
-                        let goods_cost: i64 = goods.goods.iter().map(|good| good.purchased as i64 * good.cost as i64).sum();
+                        let goods_cost: i64 = goods.goods.iter().map(|good| good.purchased as i64 * good.buy_cost as i64).sum();
                         let goods_proceeds: i64 = goods.goods.iter().map(|good| {
                             if let Some(sell_price) = good.sell_price {
                                 good.purchased as i64 * sell_price as i64
@@ -1231,7 +1234,7 @@ fn ShipManifestView(distance: RwSignal<i32>) -> impl IntoView {
                                 {move || {
                                     let goods = available_goods.get();
                                     let cost: i64 = goods.goods.iter()
-                                        .map(|good| good.purchased as i64 * good.cost as i64)
+                                        .map(|good| good.purchased as i64 * good.buy_cost as i64)
                                         .sum();
                                     let proceeds: i64 = goods.goods.iter()
                                         .map(|good| {
@@ -1261,7 +1264,7 @@ fn ShipManifestView(distance: RwSignal<i32>) -> impl IntoView {
 
                                 let goods_profit = if show_sell {
                                     let cost: i64 = goods.goods.iter()
-                                        .map(|good| good.purchased as i64 * good.cost as i64)
+                                        .map(|good| good.purchased as i64 * good.buy_cost as i64)
                                         .sum();
                                     let proceeds: i64 = goods.goods.iter()
                                         .map(|good| {
