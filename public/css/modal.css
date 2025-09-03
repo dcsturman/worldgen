@@ -1,0 +1,128 @@
+:root {
+  --tg-modal-bg: #0b0f12;
+  --tg-modal-surface: #2e3136; /* neutral grey */
+  --tg-modal-border: #42474d;
+  --tg-modal-text: #edf2f7; /* light but not stark white */
+  --tg-modal-muted: #b7c0c9;
+  --tg-blue: #51A9EE;
+  --tg-blue-dark: #1976d2;
+  --tg-red: #ff5575;
+}
+
+@keyframes tg-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes tg-slide-in {
+  from { opacity: 0; transform: translate(-50%, -6%); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+.tg-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 1000;
+  animation: tg-fade-in .18s ease-out both;
+}
+
+.tg-modal-panel {
+  position: fixed;
+  z-index: 1001;
+  left: 50%;
+  top: 15%;
+  transform: translate(-50%, 0);
+  background: var(--tg-modal-surface);
+  color: var(--tg-modal-text);
+  border: 1px solid var(--tg-modal-border);
+  padding: 16px 16px 14px 16px;
+  border-radius: 10px;
+  min-width: 380px;
+  max-width: 92vw;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  animation: tg-slide-in .22s cubic-bezier(.2,.7,.2,1) both;
+}
+
+.tg-modal-panel h5 {
+  margin: 0 0 12px 0;
+  color: var(--tg-blue);
+  font-weight: 700;
+  letter-spacing: .25px;
+}
+
+.tg-modal-panel .modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tg-modal-panel .modal-label {
+  font-size: 11pt;
+  color: var(--tg-modal-muted);
+}
+
+.tg-modal-panel select,
+.tg-modal-panel input[type="number"],
+.tg-modal-panel input[type="text"] {
+  appearance: none;
+  -webkit-appearance: none;
+  background: #0e151b;
+  border: 1px solid var(--tg-modal-border);
+  color: var(--tg-modal-text);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-family: "Space Mono", monospace;
+}
+
+.tg-modal-panel select:focus,
+.tg-modal-panel input:focus {
+  outline: none;
+  border-color: var(--tg-blue);
+  box-shadow: 0 0 0 2px rgba(81,169,238,.2);
+}
+
+.tg-modal-panel input[type="number"]::-webkit-outer-spin-button,
+.tg-modal-panel input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.tg-modal-panel .modal-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
+.tg-btn {
+  font-family: inherit;
+  font-size: 10pt;
+  padding: 7px 16px;
+  cursor: pointer;
+  transition: all .15s ease;
+}
+
+.tg-btn-cancel {
+  background: transparent;
+  color: var(--tg-modal-muted);
+  border: 1px solid var(--tg-modal-border);
+  border-radius: 22px; /* match Done pill shape */
+}
+.tg-btn-cancel:hover { color: var(--tg-blue); border-color: var(--tg-blue); }
+
+.tg-btn-done {
+  background: linear-gradient(135deg, #51A9EE 0%, #1976d2 100%);
+  color: white;
+  border: 1px solid #1976d2;
+  border-radius: 22px;
+  box-shadow: 0 2px 6px rgba(0,0,0,.3);
+}
+.tg-btn-done:hover { filter: brightness(1.05); }
+.tg-btn-done:active { transform: translateY(1px); }
+
+.tg-error {
+  color: var(--tg-red);
+  font-size: 10pt;
+  margin-top: 4px;
+}
+

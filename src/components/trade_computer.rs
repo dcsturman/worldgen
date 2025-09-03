@@ -294,6 +294,7 @@ pub fn Trade() -> impl IntoView {
 
     let distance = RwSignal::new(0);
 
+
     // Keep origin world updated based on changes in name or uwp.
     Effect::new(move |_| {
         let name = origin_world_name.get();
@@ -1223,6 +1224,11 @@ fn ShipManifestView(distance: RwSignal<i32>) -> impl IntoView {
     let available_goods = expect_context::<Store<AvailableGoodsTable>>();
     let show_sell_price = expect_context::<Store<ShowSellPriceType>>() ;
 
+    // Dialog state for manually adding goods to manifest
+    let show_add_manual = RwSignal::new(false);
+    let manual_selected_index = RwSignal::new(11i16);
+    let manual_qty_input = RwSignal::new(String::new());
+
     let remove_high_passenger = move |_| {
         let mut manifest = ship_manifest.write();
         if manifest.high_passengers > 0 {
@@ -1364,7 +1370,11 @@ fn ShipManifestView(distance: RwSignal<i32>) -> impl IntoView {
             </div>
 
             <div class="manifest-section">
-                <h5>"Trade Goods in Manifest"</h5>
+                <h5>"Trade Goods in Manifest"
+                    <button class="sell-price-button" style="margin-left: .5rem;" on:click=move |_| { show_add_manual.set(true); }>
+                        "Add manually"
+                    </button>
+                </h5>
                 <div class="manifest-grid">
                     {move || {
                         let manifest = ship_manifest.get();
@@ -1400,6 +1410,8 @@ fn ShipManifestView(distance: RwSignal<i32>) -> impl IntoView {
                                                 // Remove from manifest
                                                 let mut manifest = ship_manifest.write();
                                                 manifest.remove_trade_good_by_index(good_index);
+
+
                                                 drop(manifest);
                                                 // Also reset the purchased amount in the available goods table so the input shows 0
                                                 let mut ag = available_goods.write();
@@ -1507,6 +1519,84 @@ fn ShipManifestView(distance: RwSignal<i32>) -> impl IntoView {
                         </span>
                     </div>
                 </div>
+
+            <Show when=move || show_add_manual.get()>
+                <div class="tg-modal-backdrop" on:click=move |_| show_add_manual.set(false)></div>
+                <div class="tg-modal-panel">
+                    <h5 style="margin: 0 0 .5rem 0;">"Add Trade Good"</h5>
+                    <div class="modal-body">
+                        <label class="modal-label">"Trade Good"</label>
+                        <select
+                            on:change=move |ev| {
+                                let v = event_target_value(&ev);
+                                if let Ok(idx) = v.parse::<i16>() { manual_selected_index.set(idx); }
+                            }
+                            prop:value=move || manual_selected_index.get().to_string()
+                        >
+                            {move || {
+                                let table = TradeTable::default();
+                                let mut entries: Vec<_> = table.entries().cloned().collect();
+                                entries.sort_by_key(|e| e.index);
+                                entries.into_iter().map(|entry| {
+                                    let label = format!("{:>2} - {}", entry.index, entry.name);
+                                    view! { <option value={entry.index.to_string()}>{label}</option> }
+                                }).collect::<Vec<_>>()
+                            }}
+                        </select>
+                        <label class="modal-label" style="margin-top: .5rem;">"Quantity (tons)"</label>
+                        <input
+                            type="number"
+                            min="1"
+                            prop:value=manual_qty_input
+                            on:input=move |ev| manual_qty_input.set(event_target_value(&ev))
+                        />
+                    </div>
+                    <div class="modal-actions">
+                        <button class="tg-btn tg-btn-cancel" on:click=move |_| show_add_manual.set(false)>"Cancel"</button>
+                        <button class="tg-btn tg-btn-done" on:click=move |_| {
+                            let qty_txt = manual_qty_input.get();
+                            let qty = qty_txt.parse::<i32>().unwrap_or(0);
+                            if qty <= 0 {
+                                // simple validation: show inline error
+                                web_sys::window().and_then(|w| w.document()).map(|d| {
+                                    if let Some(err) = d.get_element_by_id("tg-modal-error") {
+                                        err.set_text_content(Some("Please enter a quantity greater than zero."));
+                                    }
+                                });
+                                return;
+                            }
+                            let table = TradeTable::default();
+                            if let Some(entry) = table.get(manual_selected_index.get()) {
+                                let good = AvailableGood {
+                                    name: entry.name.clone(),
+                                    quantity: 0,
+                                    purchased: 0,
+                                    base_cost: entry.base_cost,
+                                    buy_cost: entry.base_cost,
+                                    buy_cost_comment: String::new(),
+                                    sell_price: None,
+                                    sell_price_comment: String::new(),
+                                    source_entry: entry.clone(),
+                                };
+                                // Insert into manifest
+                                let mut manifest = ship_manifest.write();
+                                manifest.update_trade_good(&good, qty);
+                                // Clear input, error and close
+                                manual_qty_input.set(String::new());
+                                web_sys::window().and_then(|w| w.document()).map(|d| {
+                                    if let Some(err) = d.get_element_by_id("tg-modal-error") {
+                                        err.set_text_content(None);
+                                    }
+                                });
+                                show_add_manual.set(false);
+                            }
+                        }>
+                            "Done"
+                        </button>
+                        <div id="tg-modal-error" class="tg-error" style="min-height: 1.2em;"></div>
+                    </div>
+                </div>
+            </Show>
             </div>
         </div>
     }
