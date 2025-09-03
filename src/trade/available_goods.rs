@@ -595,68 +595,12 @@ impl AvailableGoodsTable {
         mut rng: impl Rng,
     ) {
         for good in &mut self.goods {
-            if let Some(destination_trade_classes) = &possible_destination_trade_classes {
-                // Roll 2d6
-                let roll =
-                    rng.random_range(1..=6) + rng.random_range(1..=6) + rng.random_range(1..=6);
-
-                let purchase_origin_dm =
-                    find_total_dm(&good.source_entry.purchase_dm, destination_trade_classes);
-                let sale_origin_dm =
-                    find_total_dm(&good.source_entry.sale_dm, destination_trade_classes);
-
-                // Calculate the modified roll
-                let modified_roll = roll as i16 - buyer_broker_skill + supplier_broker_skill
-                    - purchase_origin_dm
-                    + sale_origin_dm;
-
-                // Determine the price multiplier based on the modified roll
-                let price_multiplier = match modified_roll {
-                    i16::MIN..=-3 => 0.1,
-                    -2 => 0.2,
-                    -1 => 0.3,
-                    0 => 0.4, // 175%
-                    1 => 0.45,
-                    2 => 0.5,
-                    3 => 0.55,
-                    4 => 0.60,
-                    5 => 0.65,
-                    6 => 0.70,
-                    7 => 0.75,
-                    8 => 0.80,
-                    9 => 0.85,
-                    10 => 0.9,
-                    11 => 1.0,
-                    12 => 1.05,
-                    13 => 1.10,
-                    14 => 1.15,
-                    15 => 1.20,
-                    16 => 1.25,
-                    17 => 1.30,
-                    18 => 1.40,
-                    19 => 1.50,
-                    20 => 1.60,
-                    21 => 1.75,
-                    22 => 2.0,
-                    23 => 2.5,
-                    24 => 3.0,
-                    25.. => 4.0,
-                };
-
-                good.sell_price_comment = format!(
-                    "(roll) {} + (broker) {} + (trade mod) {} = {} which gives a multiplier of {}",
-                    roll,
-                    supplier_broker_skill - buyer_broker_skill,
-                    sale_origin_dm - purchase_origin_dm,
-                    modified_roll,
-                    price_multiplier
-                );
-
-                // Apply the multiplier to the cost
-                good.sell_price = Some((good.base_cost as f64 * price_multiplier).round() as i32);
-            } else {
-                good.sell_price = None;
-            }
+            good.price_to_sell_rng(
+                possible_destination_trade_classes.as_deref(),
+                buyer_broker_skill,
+                supplier_broker_skill,
+                &mut rng,
+            );
         }
     }
 
@@ -674,6 +618,80 @@ impl AvailableGoodsTable {
         });
     }
 }
+
+impl AvailableGood {
+    /// Price this good for selling at a destination
+    /// - If destination trade classes are provided, computes a sell_price and comment
+    /// - If None, clears sell_price
+    pub fn price_to_sell_rng(
+        &mut self,
+        possible_destination_trade_classes: Option<&[crate::trade::TradeClass]>,
+        buyer_broker_skill: i16,
+        supplier_broker_skill: i16,
+        mut rng: impl rand::Rng,
+    ) {
+        if let Some(destination_trade_classes) = possible_destination_trade_classes {
+            // Roll 3d6
+            let roll = rng.random_range(1..=6) + rng.random_range(1..=6) + rng.random_range(1..=6);
+
+            let purchase_origin_dm = find_total_dm(&self.source_entry.purchase_dm, destination_trade_classes);
+            let sale_origin_dm = find_total_dm(&self.source_entry.sale_dm, destination_trade_classes);
+
+            // Calculate the modified roll (mirror price_goods_to_sell)
+            let modified_roll = roll as i16 - buyer_broker_skill + supplier_broker_skill
+                - purchase_origin_dm
+                + sale_origin_dm;
+
+            // Determine the price multiplier based on the modified roll
+            let price_multiplier = match modified_roll {
+                i16::MIN..=-3 => 0.1,
+                -2 => 0.2,
+                -1 => 0.3,
+                0 => 0.4,
+                1 => 0.45,
+                2 => 0.5,
+                3 => 0.55,
+                4 => 0.60,
+                5 => 0.65,
+                6 => 0.70,
+                7 => 0.75,
+                8 => 0.80,
+                9 => 0.85,
+                10 => 0.9,
+                11 => 1.0,
+                12 => 1.05,
+                13 => 1.10,
+                14 => 1.15,
+                15 => 1.20,
+                16 => 1.25,
+                17 => 1.30,
+                18 => 1.40,
+                19 => 1.50,
+                20 => 1.60,
+                21 => 1.75,
+                22 => 2.0,
+                23 => 2.5,
+                24 => 3.0,
+                25.. => 4.0,
+            };
+
+            self.sell_price_comment = format!(
+                "(roll) {} + (broker) {} + (trade mod) {} = {} which gives a multiplier of {}",
+                roll,
+                supplier_broker_skill - buyer_broker_skill,
+                sale_origin_dm - purchase_origin_dm,
+                modified_roll,
+                price_multiplier
+            );
+
+            self.sell_price = Some((self.base_cost as f64 * price_multiplier).round() as i32);
+        } else {
+            self.sell_price = None;
+            self.sell_price_comment.clear();
+        }
+    }
+}
+
 
 /// Calculate total trade DMs for a set of world trade classes
 ///
@@ -703,7 +721,7 @@ impl AvailableGoodsTable {
 /// let total_dm = find_total_dm(&electronics_purchase_dm, &[Agricultural, Rich]);
 /// // Returns: 3 (2 + 1)
 ///
-/// // Industrial world with no applicable DMs for agricultural products  
+/// // Industrial world with no applicable DMs for agricultural products
 /// let total_dm = find_total_dm(&ag_products_purchase_dm, &[Industrial]);
 /// // Returns: 0
 /// ```
