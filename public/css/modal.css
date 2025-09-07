@@ -43,6 +43,9 @@
   animation: tg-slide-in .22s cubic-bezier(.2,.7,.2,1) both;
 }
 
+.tg-modal-textstyle {
+  margin: 0 0 .5rem 0;
+}
 .tg-modal-panel h5 {
   margin: 0 0 12px 0;
   color: var(--tg-blue);
@@ -59,6 +62,7 @@
 .tg-modal-panel .modal-label {
   font-size: 11pt;
   color: var(--tg-modal-muted);
+  margin-top: .5rem;
 }
 
 .tg-modal-panel select,
@@ -92,6 +96,10 @@
   gap: 12px;
   justify-content: flex-end;
   margin-top: 14px;
+}
+
+.tg-modal-error {
+  min-height: 1.2em;
 }
 
 .tg-btn {

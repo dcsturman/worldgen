@@ -4,7 +4,7 @@
 //! including random number generation for dice rolls and number base conversion utilities.
 
 pub use rand::Rng;
-
+use std::fmt::Display;
 /// Converts Arabic numerals to Roman numerals for numbers 0-20
 ///
 /// Used primarily for displaying orbital positions and other small numbers
@@ -65,6 +65,46 @@ pub fn arabic_to_roman(num: usize) -> String {
         }
     }
     "".to_string()
+}
+
+/// Utility type to easily format and convert things from credits into MCr
+///
+/// Supports conversion from i64, i32, i16, and f64
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Mcr(i64);
+
+impl Display for Mcr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:.2}", self.0 as f64 / 1_000_000.0)
+    }
+}
+impl From<i64> for Mcr {
+    fn from(credits: i64) -> Self {
+        Mcr(credits)
+    }
+}
+
+impl From<i32> for Mcr {
+    fn from(credits: i32) -> Self {
+        Mcr(credits as i64)
+    }
+}
+
+impl From<i16> for Mcr {
+    fn from(credits: i16) -> Self {
+        Mcr(credits as i64)
+    }
+}
+
+impl From<f64> for Mcr {
+    fn from(credits: f64) -> Self {
+        Mcr((credits * 1_000_000.0) as i64)
+    }
+}
+
+/// Convert a i16 for Credits into MCr
+pub fn mcr(credits: i64) -> f64 {
+    credits as f64 / 1_000_000.0
 }
 
 /// Simulates rolling two six-sided dice (2d6)

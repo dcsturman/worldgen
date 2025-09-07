@@ -2,19 +2,22 @@
 //!
 //! This module handles the generation of available passengers and freight
 //! for interstellar travel between worlds in the Traveller universe.
-
 use crate::trade::{PortCode, ZoneClassification};
 use crate::util::{roll_1d6, roll_2d6};
+use serde::{Deserialize, Serialize};
+
+#[allow(unused_imports)]
+use log::debug;
 
 /// Represents a lot of freight available for shipping at a specific world
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct FreightLot {
     /// Size in tons (1-60)
     pub size: i32,
 }
 
 /// Represents available passengers (by class of passage) and freight for a route between two worlds
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct AvailablePassengers {
     /// Number of high passage passengers
     pub high: i32,
@@ -59,6 +62,7 @@ impl AvailablePassengers {
         destination_tech_level: i32,
         distance_parsecs: i32,
         steward_skill: i32,
+        player_broker_skill: i32,
     ) -> Self {
         let mut passengers = Self::default();
 
@@ -87,6 +91,7 @@ impl AvailablePassengers {
             destination_zone,
             destination_tech_level,
             distance_parsecs,
+            player_broker_skill,
         );
 
         passengers
@@ -192,6 +197,7 @@ impl AvailablePassengers {
         destination_zone: ZoneClassification,
         destination_tech_level: i32,
         distance_parsecs: i32,
+        player_broker_skill: i32,
     ) {
         // Generate each cargo class
         for cargo_class in [CargoClass::Major, CargoClass::Minor, CargoClass::Incidental] {
@@ -205,6 +211,7 @@ impl AvailablePassengers {
                 destination_zone,
                 destination_tech_level,
                 distance_parsecs,
+                player_broker_skill,
                 cargo_class,
             );
 
@@ -252,10 +259,15 @@ impl AvailablePassengers {
         destination_zone: ZoneClassification,
         destination_tech_level: i32,
         distance_parsecs: i32,
+        player_broker_skill: i32,
         cargo_class: CargoClass,
     ) -> i32 {
         // Initial 2d6 roll
         let mut roll = roll_2d6();
+
+        // Modify by effect of player broker skill check
+        let check = player_broker_skill + roll_2d6() - 8;
+        roll += check;
 
         // Cargo class modifiers
         match cargo_class {
@@ -265,16 +277,10 @@ impl AvailablePassengers {
         }
 
         // Population modifiers
-        if origin_population <= 1 {
-            roll -= 4;
-        }
-        if destination_population <= 1 {
-            roll -= 4;
-        }
-
-        // Population bonuses
         for pop in [origin_population, destination_population] {
-            if pop >= 8 {
+            if pop <= 1 {
+                roll -= 4;
+            } else if pop >= 8 {
                 roll += 4;
             } else if pop >= 6 {
                 roll += 2;
@@ -315,28 +321,7 @@ impl AvailablePassengers {
             roll -= distance_parsecs - 1;
         }
 
-        // Determine number of dice to roll based on modified result
-        let dice_count = match roll {
-            i32::MIN..=1 => return 0,
-            2..=3 => 1,
-            4..=6 => 2,
-            7..=10 => 3,
-            11..=13 => 4,
-            14..=15 => 5,
-            16 => 6,
-            17 => 7,
-            18 => 8,
-            19 => 9,
-            20..=i32::MAX => 10,
-        };
-
-        // Roll the determined number of d6
-        let mut total = 0;
-        for _ in 0..dice_count {
-            total += roll_1d6();
-        }
-
-        total
+        roll
     }
 
     /// Generates the number of passengers for a specific passenger class

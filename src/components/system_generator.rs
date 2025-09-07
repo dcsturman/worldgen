@@ -184,7 +184,7 @@ fn print() {
 pub fn World() -> impl IntoView {
     // Initialize global context stores with default world and empty system
     provide_context(Store::new(
-        World::from_upp(INITIAL_NAME.to_string(), INITIAL_UPP, false, true).unwrap(),
+        World::from_upp(INITIAL_NAME, INITIAL_UPP, false, true).unwrap(),
     ));
     provide_context(Store::new(System::default()));
 
@@ -206,7 +206,7 @@ pub fn World() -> impl IntoView {
         debug!("Building world {name} with UPP {upp}");
 
         // Attempt to parse the UWP string into a world object
-        let Ok(mut w) = World::from_upp(name, upp.as_str(), false, true) else {
+        let Ok(mut w) = World::from_upp(&name, upp.as_str(), false, true) else {
             // If parsing fails, log error and bail out to prevent crashes
             log::error!("Failed to parse UWP in hook to build main world: {upp}");
             return;

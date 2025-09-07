@@ -5,6 +5,7 @@
 //! facilities, and trade classifications.
 //! use log::debug;
 use reactive_stores::Store;
+use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 
 #[allow(unused_imports)]
@@ -24,7 +25,7 @@ use crate::trade::ZoneClassification;
 /// Container for world satellites
 ///
 /// Stores a vector of satellite worlds with a key based on the parent world's name.
-#[derive(Debug, Clone, Store, PartialEq)]
+#[derive(Debug, Clone, Store, PartialEq, Serialize, Deserialize, Default)]
 pub struct World {
     pub name: String,
     pub orbit: usize,
@@ -48,7 +49,7 @@ pub struct World {
 }
 
 /// Enum for facilities that can be present on a world
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Facility {
     Naval,
     Scout,
@@ -62,7 +63,7 @@ pub enum Facility {
 /// Container for world (or gas giant) satellites
 /// each satellite is in its own right a world, though
 /// orbit numbering uses a different system than in the main system.
-#[derive(Debug, Clone, Store, PartialEq)]
+#[derive(Debug, Clone, Store, PartialEq, Serialize, Deserialize, Default)]
 pub struct Satellites {
     #[store(key: String = |world| world.name.clone())]
     pub sats: Vec<World>,
@@ -212,7 +213,7 @@ impl World {
     /// * `is_mainworld` - Whether this is the main world of the system used to just record in the returned world. It does not
     ///   impact parsing of the UWP.
     pub fn from_upp(
-        name: String,
+        name: &str,
         upp: &str,
         is_satellite: bool,
         is_mainworld: bool,
@@ -226,7 +227,7 @@ impl World {
         let law_level = i32::from_str_radix(&upp[6..7], 16)?;
         let tech_level = i32::from_str_radix(&upp[8..9], 16)?;
         let mut world = World::new(
-            name,
+            name.to_string(),
             0,
             0,
             size,
