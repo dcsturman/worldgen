@@ -7,9 +7,18 @@
 //! restrictions, quantity dice, and trade class modifiers for buying and selling.
 
 use super::TradeClass;
+use lazy_static::lazy_static;
 use std::collections::HashMap;
 
 use crate::trade::string_to_trade_class;
+
+lazy_static! {
+    /// Global trade table instance initialized once with standard trade goods
+    ///
+    /// Contains all 36 standard trade goods from the Traveller rules.
+    /// Initialized once on first access and reused throughout the application.
+    static ref TRADE_TABLE: TradeTable = TradeTable::default();
+}
 
 /// Main trade table containing all available trade goods
 ///
@@ -21,6 +30,15 @@ pub struct TradeTable {
     entries: HashMap<i16, TradeTableEntry>,
 }
 
+impl TradeTable {
+    /// Get reference to the global trade table
+    ///
+    /// Returns a reference to the lazily-initialized global trade table
+    /// containing all standard trade goods.
+    pub fn global() -> &'static TradeTable {
+        &TRADE_TABLE
+    }
+}
 /// Individual entry in the trade table representing a specific trade good
 ///
 /// Contains all information needed to determine availability, quantity,

@@ -73,6 +73,7 @@
 //! This example demonstrates how to create a trade market for a world with specific trade classes and population, and then price the goods based on broker skills.
 
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter, Result as FmtResult};
 
 #[allow(unused_imports)]
@@ -103,7 +104,7 @@ use crate::trade::TradeClass;
 /// Each good maintains a reference to its source trade table entry, allowing
 /// access to trade DMs, availability restrictions, and other metadata needed
 /// for advanced trade calculations.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct AvailableGood {
     /// Name of the good
     pub name: String,
@@ -121,8 +122,8 @@ pub struct AvailableGood {
     pub sell_price: Option<i32>,
     /// Comment on the sell price, used with hover.
     pub sell_price_comment: String,
-    /// Original trade table entry this good was derived from
-    pub source_entry: TradeTableEntry,
+    /// Index into the trade table for this good.
+    pub source_index: i16,
 }
 
 impl Display for AvailableGood {
@@ -163,7 +164,7 @@ impl Display for AvailableGood {
 /// - **Sorting**: Goods can be sorted by discount percentage
 /// - **Lookup**: Fast access to specific goods by trade table index
 /// - **Display**: Human-readable market summaries with pricing information
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct AvailableGoodsTable {
     /// List of available goods
     pub goods: Vec<AvailableGood>,
@@ -314,9 +315,8 @@ impl AvailableGoodsTable {
         for _ in 0..dice_count {
             total += rng.random_range(1..=6);
         }
-        let mut quantity = total * multiplier;
 
-        quantity += if world_population <= 3 {
+        total += if world_population <= 3 {
             -3
         } else if world_population >= 9 {
             3
@@ -324,11 +324,18 @@ impl AvailableGoodsTable {
             0
         };
 
+        let quantity = total * multiplier;
+
+        // If we ended up with no quantity, we don't add this to the list.
+        if quantity <= 0 {
+            return Ok(());
+        }
+
         // If the good is already in the table, add to its quantity
         if let Some(existing) = self
             .goods
             .iter_mut()
-            .find(|g| g.source_entry.index == entry.index)
+            .find(|g| g.source_index == entry.index)
         {
             existing.quantity += quantity;
             return Ok(());
@@ -344,7 +351,7 @@ impl AvailableGoodsTable {
             buy_cost_comment: String::default(),
             sell_price: None,
             sell_price_comment: String::default(),
-            source_entry: entry,
+            source_index: entry.index,
         };
 
         self.goods.push(good);
@@ -363,7 +370,7 @@ impl AvailableGoodsTable {
 
     /// Get a specific good by its index
     pub fn get_by_index(&self, index: i16) -> Option<&AvailableGood> {
-        self.goods.iter().find(|g| g.source_entry.index == index)
+        self.goods.iter().find(|g| g.source_index == index)
     }
 
     /// Get all available goods
@@ -436,19 +443,11 @@ impl AvailableGoodsTable {
     /// # use worldgen::trade::table::{Availability, Quantity};
     /// # use worldgen::trade::table::TradeTableEntry;
     /// let mut market = AvailableGoodsTable::new();
-    /// // Add some goods to the market
-    /// market.add_entry(TradeTableEntry {
-    ///     index: 1,
-    ///     name: "Good 1".to_string(),
-    ///     availability: Availability::All,
-    ///     quantity: Quantity { dice: 2, multiplier: 1 },
-    ///     base_cost: 10000,
-    ///     purchase_dm: vec![(TradeClass::Agricultural, 2)].into_iter().collect(),
-    ///     sale_dm: vec![(TradeClass::Industrial, 3)].into_iter().collect(),
-    /// }, 5).unwrap();
+    /// // Add a good to the market for a pop 5 world
+    /// market.add_entry(TradeTable::global().get(14).unwrap().clone(), 5).unwrap();
     /// // Skilled buyer (3) vs average seller (1) on agricultural world
     /// market.price_goods_to_buy(&[TradeClass::Agricultural], 3, 1);
-    /// // Expect better prices due to +2 skill differential
+    /// // Expect better prices due to +2 skill differential and +3 Ag DM
     /// ```
     pub fn price_goods_to_buy(
         &mut self,
@@ -461,9 +460,16 @@ impl AvailableGoodsTable {
             // Roll 2d6
             let roll = rng.random_range(1..=6) + rng.random_range(1..=6) + rng.random_range(1..=6);
 
-            let purchase_origin_dm =
-                find_total_dm(&good.source_entry.purchase_dm, origin_trade_classes);
-            let sale_origin_dm = find_total_dm(&good.source_entry.sale_dm, origin_trade_classes);
+            let entry = TradeTable::global()
+                .get(good.source_index)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Failed to get trade table entry for index {}",
+                        &good.source_index
+                    )
+                });
+            let purchase_origin_dm = find_max_dm(&entry.purchase_dm, origin_trade_classes);
+            let sale_origin_dm = find_max_dm(&entry.sale_dm, origin_trade_classes);
             // Calculate the modified roll
             let modified_roll = roll as i16 + buyer_broker_skill - supplier_broker_skill
                 + purchase_origin_dm
@@ -595,68 +601,12 @@ impl AvailableGoodsTable {
         mut rng: impl Rng,
     ) {
         for good in &mut self.goods {
-            if let Some(destination_trade_classes) = &possible_destination_trade_classes {
-                // Roll 2d6
-                let roll =
-                    rng.random_range(1..=6) + rng.random_range(1..=6) + rng.random_range(1..=6);
-
-                let purchase_origin_dm =
-                    find_total_dm(&good.source_entry.purchase_dm, destination_trade_classes);
-                let sale_origin_dm =
-                    find_total_dm(&good.source_entry.sale_dm, destination_trade_classes);
-
-                // Calculate the modified roll
-                let modified_roll = roll as i16 - buyer_broker_skill + supplier_broker_skill
-                    - purchase_origin_dm
-                    + sale_origin_dm;
-
-                // Determine the price multiplier based on the modified roll
-                let price_multiplier = match modified_roll {
-                    i16::MIN..=-3 => 0.1,
-                    -2 => 0.2,
-                    -1 => 0.3,
-                    0 => 0.4, // 175%
-                    1 => 0.45,
-                    2 => 0.5,
-                    3 => 0.55,
-                    4 => 0.60,
-                    5 => 0.65,
-                    6 => 0.70,
-                    7 => 0.75,
-                    8 => 0.80,
-                    9 => 0.85,
-                    10 => 0.9,
-                    11 => 1.0,
-                    12 => 1.05,
-                    13 => 1.10,
-                    14 => 1.15,
-                    15 => 1.20,
-                    16 => 1.25,
-                    17 => 1.30,
-                    18 => 1.40,
-                    19 => 1.50,
-                    20 => 1.60,
-                    21 => 1.75,
-                    22 => 2.0,
-                    23 => 2.5,
-                    24 => 3.0,
-                    25.. => 4.0,
-                };
-
-                good.sell_price_comment = format!(
-                    "(roll) {} + (broker) {} + (trade mod) {} = {} which gives a multiplier of {}",
-                    roll,
-                    supplier_broker_skill - buyer_broker_skill,
-                    sale_origin_dm - purchase_origin_dm,
-                    modified_roll,
-                    price_multiplier
-                );
-
-                // Apply the multiplier to the cost
-                good.sell_price = Some((good.base_cost as f64 * price_multiplier).round() as i32);
-            } else {
-                good.sell_price = None;
-            }
+            good.price_to_sell_rng(
+                possible_destination_trade_classes.as_deref(),
+                buyer_broker_skill,
+                supplier_broker_skill,
+                &mut rng,
+            );
         }
     }
 
@@ -675,17 +625,93 @@ impl AvailableGoodsTable {
     }
 }
 
-/// Calculate total trade DMs for a set of world trade classes
+impl AvailableGood {
+    /// Price this good for selling at a destination
+    /// - If destination trade classes are provided, computes a sell_price and comment
+    /// - If None, clears sell_price
+    pub fn price_to_sell_rng(
+        &mut self,
+        possible_destination_trade_classes: Option<&[crate::trade::TradeClass]>,
+        buyer_broker_skill: i16,
+        supplier_broker_skill: i16,
+        mut rng: impl rand::Rng,
+    ) {
+        if let Some(destination_trade_classes) = possible_destination_trade_classes {
+            // Roll 3d6
+            let roll = rng.random_range(1..=6) + rng.random_range(1..=6) + rng.random_range(1..=6);
+
+            let entry = TradeTable::global()
+                .get(self.source_index)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Failed to get trade table entry for index {}",
+                        &self.source_index
+                    )
+                });
+
+            let purchase_origin_dm = find_max_dm(&entry.purchase_dm, destination_trade_classes);
+            let sale_origin_dm = find_max_dm(&entry.sale_dm, destination_trade_classes);
+
+            // Calculate the modified roll (mirror price_goods_to_sell)
+            let modified_roll = roll as i16 - buyer_broker_skill + supplier_broker_skill
+                - purchase_origin_dm
+                + sale_origin_dm;
+
+            // Determine the price multiplier based on the modified roll
+            let price_multiplier = match modified_roll {
+                i16::MIN..=-3 => 0.1,
+                -2 => 0.2,
+                -1 => 0.3,
+                0 => 0.4,
+                1 => 0.45,
+                2 => 0.5,
+                3 => 0.55,
+                4 => 0.60,
+                5 => 0.65,
+                6 => 0.70,
+                7 => 0.75,
+                8 => 0.80,
+                9 => 0.85,
+                10 => 0.9,
+                11 => 1.0,
+                12 => 1.05,
+                13 => 1.10,
+                14 => 1.15,
+                15 => 1.20,
+                16 => 1.25,
+                17 => 1.30,
+                18 => 1.40,
+                19 => 1.50,
+                20 => 1.60,
+                21 => 1.75,
+                22 => 2.0,
+                23 => 2.5,
+                24 => 3.0,
+                25.. => 4.0,
+            };
+
+            self.sell_price_comment = format!(
+                "(roll) {} + (broker) {} + (trade mod) {} = {} which gives a multiplier of {}",
+                roll,
+                supplier_broker_skill - buyer_broker_skill,
+                sale_origin_dm - purchase_origin_dm,
+                modified_roll,
+                price_multiplier
+            );
+
+            self.sell_price = Some((self.base_cost as f64 * price_multiplier).round() as i32);
+        } else {
+            self.sell_price = None;
+            self.sell_price_comment.clear();
+        }
+    }
+}
+
+/// Calculate max DM for a set of world trade classes
 ///
-/// Sums all applicable Difficulty Modifiers (DMs) from a trade good's DM map
-/// that match the world's trade classifications. This determines the total
-/// bonus or penalty applied to trade rolls for this good at this world.
-///
-/// ## DM Accumulation
-///
-/// Unlike some systems that take the best single DM, this function sums
-/// all applicable DMs, allowing worlds with multiple relevant trade classes
-/// to receive cumulative bonuses.
+/// Find all relevant DMs given the world trade classes adn the map
+/// of DMs for this world to trade classes.  Return the max DM or 0
+/// if there are no applicable DMs.
 ///
 /// ## Parameters
 ///
@@ -700,32 +726,29 @@ impl AvailableGoodsTable {
 ///
 /// ```rust,ignore
 /// // Agricultural world (+2) that's also Rich (+1) for electronics
-/// let total_dm = find_total_dm(&electronics_purchase_dm, &[Agricultural, Rich]);
-/// // Returns: 3 (2 + 1)
+/// let max_dm = find_max_dm(&electronics_purchase_dm, &[Agricultural, Rich]);
+/// // Returns: 2 max(2, 1)
 ///
-/// // Industrial world with no applicable DMs for agricultural products  
-/// let total_dm = find_total_dm(&ag_products_purchase_dm, &[Industrial]);
+/// // Industrial world with no applicable DMs for agricultural products
+/// let max_dm = find_max_dm(&ag_products_purchase_dm, &[Industrial]);
 /// // Returns: 0
 /// ```
-fn find_total_dm(
+fn find_max_dm(
     dm_map: &std::collections::HashMap<TradeClass, i16>,
     world_trade_classes: &[TradeClass],
 ) -> i16 {
-    let mut total_dm: i16 = 0;
+    let eligible_dms: Vec<i16> = world_trade_classes
+        .iter()
+        .filter_map(|tc| dm_map.get(tc))
+        .cloned()
+        .collect();
 
-    for trade_class in world_trade_classes {
-        if let Some(&dm) = dm_map.get(trade_class) {
-            total_dm += dm;
-        }
-    }
-
-    total_dm
+    eligible_dms.into_iter().max().unwrap_or(0)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::trade::table::{Availability, Quantity};
     use crate::trade::TradeClass;
     use rand::SeedableRng;
 
@@ -780,14 +803,26 @@ mod tests {
         // Common Electronics (11) has purchase DM for Rich+1
         let electronics = available_goods.get_by_index(11).unwrap();
         assert_eq!(
-            find_total_dm(&electronics.source_entry.purchase_dm, &world_trade_classes),
+            find_max_dm(
+                &TradeTable::global()
+                    .get(electronics.source_index)
+                    .unwrap()
+                    .purchase_dm,
+                &world_trade_classes
+            ),
             1
         );
 
         // Agricultural Products (33) has purchase DM for Agricultural+2
         let ag_products = available_goods.get_by_index(33).unwrap();
         assert_eq!(
-            find_total_dm(&ag_products.source_entry.purchase_dm, &world_trade_classes),
+            find_max_dm(
+                &TradeTable::global()
+                    .get(ag_products.source_index)
+                    .unwrap()
+                    .purchase_dm,
+                &world_trade_classes
+            ),
             2
         );
 
@@ -816,48 +851,30 @@ mod tests {
         let world_trade_classes = vec![TradeClass::Agricultural, TradeClass::Rich];
 
         // Rich should be the best DM
-        let total_dm = find_total_dm(&dm_map, &world_trade_classes);
-        assert_eq!(total_dm, 8);
+        let total_dm = find_max_dm(&dm_map, &world_trade_classes);
+        assert_eq!(total_dm, 5);
 
         // World with only Agricultural trade class
         let world_trade_classes = vec![TradeClass::Agricultural];
 
         // Agricultural should be the best (and only) DM
-        let best_dm = find_total_dm(&dm_map, &world_trade_classes);
+        let best_dm = find_max_dm(&dm_map, &world_trade_classes);
         assert_eq!(best_dm, 3);
 
         // World with no matching trade classes
         let world_trade_classes = vec![TradeClass::Industrial, TradeClass::Poor];
 
         // No DM should be found
-        let best_dm = find_total_dm(&dm_map, &world_trade_classes);
+        let best_dm = find_max_dm(&dm_map, &world_trade_classes);
         assert_eq!(best_dm, 0);
     }
 
     #[test_log::test]
     fn test_price_goods() {
-        // Create a simple trade table entry for testing
-        let mut purchase_dm = HashMap::new();
-        purchase_dm.insert(TradeClass::Rich, 2);
-
-        let mut sale_dm = HashMap::new();
-        sale_dm.insert(TradeClass::Agricultural, 3);
-
-        let entry = TradeTableEntry {
-            index: 1,
-            name: "Test Good".to_string(),
-            availability: Availability::All,
-            quantity: Quantity {
-                dice: 2,
-                multiplier: 1,
-            },
-            base_cost: 10000,
-            purchase_dm,
-            sale_dm,
-        };
+        let entry = TradeTable::global().get(11).unwrap().clone();
 
         // Create a world with both trade classes
-        let world_trade_classes = vec![TradeClass::Rich, TradeClass::Agricultural];
+        let world_trade_classes = vec![TradeClass::Rich, TradeClass::Industrial];
 
         // Create a table with a single good
         let mut table = AvailableGoodsTable::new();
@@ -903,7 +920,7 @@ mod tests {
     fn test_display() {
         // Create a simple good
         let good = AvailableGood {
-            name: "Test Good".to_string(),
+            name: "Common Electronics".to_string(),
             quantity: 10,
             base_cost: 5000,
             buy_cost: 5000,
@@ -911,29 +928,21 @@ mod tests {
             purchased: 0,
             sell_price_comment: String::default(),
             sell_price: None,
-            source_entry: TradeTableEntry {
-                index: 1,
-                name: "Test Good".to_string(),
-                availability: Availability::All,
-                quantity: Quantity {
-                    dice: 2,
-                    multiplier: 1,
-                },
-                base_cost: 5000,
-                purchase_dm: HashMap::new(),
-                sale_dm: HashMap::new(),
-            },
+            source_index: 11,
         };
 
         // Check the display output
-        assert_eq!(format!("{good}"), "Test Good: 10 @ 5000 (100% of base)");
+        assert_eq!(
+            format!("{good}"),
+            "Common Electronics: 10 @ 5000 (100% of base)"
+        );
 
         // Create a table with a single good
         let mut table = AvailableGoodsTable::new();
         table.goods.push(good);
 
         // Check the display output
-        let expected = "Test Good: 10 @ 5000 (100% of base)\n";
+        let expected = "Common Electronics: 10 @ 5000 (100% of base)\n";
         assert_eq!(format!("{table}"), expected);
 
         // Create an empty table
@@ -980,7 +989,7 @@ mod tests {
 
         // Add goods with different discounts
         let good1 = AvailableGood {
-            name: "Good 1".to_string(),
+            name: "Common Electronics".to_string(),
             quantity: 10,
             base_cost: 10000,
             buy_cost: 5000, // 50% of base
@@ -988,22 +997,11 @@ mod tests {
             purchased: 0,
             sell_price_comment: String::default(),
             sell_price: None,
-            source_entry: TradeTableEntry {
-                index: 1,
-                name: "Good 1".to_string(),
-                availability: Availability::All,
-                quantity: Quantity {
-                    dice: 2,
-                    multiplier: 1,
-                },
-                base_cost: 10000,
-                purchase_dm: HashMap::new(),
-                sale_dm: HashMap::new(),
-            },
+            source_index: 11,
         };
 
         let good2 = AvailableGood {
-            name: "Good 2".to_string(),
+            name: "Common Industrial Goods".to_string(),
             quantity: 10,
             base_cost: 10000,
             buy_cost: 8000, // 80% of base
@@ -1011,22 +1009,11 @@ mod tests {
             purchased: 0,
             sell_price_comment: String::default(),
             sell_price: None,
-            source_entry: TradeTableEntry {
-                index: 2,
-                name: "Good 2".to_string(),
-                availability: Availability::All,
-                quantity: Quantity {
-                    dice: 2,
-                    multiplier: 1,
-                },
-                base_cost: 10000,
-                purchase_dm: HashMap::new(),
-                sale_dm: HashMap::new(),
-            },
+            source_index: 12,
         };
 
         let good3 = AvailableGood {
-            name: "Good 3".to_string(),
+            name: "Common Manufactured Goods".to_string(),
             quantity: 10,
             base_cost: 10000,
             buy_cost: 2000, // 20% of base
@@ -1034,18 +1021,7 @@ mod tests {
             purchased: 0,
             sell_price_comment: String::default(),
             sell_price: None,
-            source_entry: TradeTableEntry {
-                index: 3,
-                name: "Good 3".to_string(),
-                availability: Availability::All,
-                quantity: Quantity {
-                    dice: 2,
-                    multiplier: 1,
-                },
-                base_cost: 10000,
-                purchase_dm: HashMap::new(),
-                sale_dm: HashMap::new(),
-            },
+            source_index: 13,
         };
 
         // Add goods in random order
@@ -1057,9 +1033,9 @@ mod tests {
         table.sort_by_discount();
 
         // Check that goods are sorted from most discounted to least discounted
-        assert_eq!(table.goods[0].name, "Good 3"); // 20% of base
-        assert_eq!(table.goods[1].name, "Good 1"); // 50% of base
-        assert_eq!(table.goods[2].name, "Good 2"); // 80% of base
+        assert_eq!(table.goods[0].name, "Common Manufactured Goods"); // 20% of base
+        assert_eq!(table.goods[1].name, "Common Electronics"); // 50% of base
+        assert_eq!(table.goods[2].name, "Common Industrial Goods"); // 80% of base
 
         // Print the sorted table
         println!("Sorted table:\n{table}");
@@ -1074,25 +1050,14 @@ mod tests {
         let mut sale_dm = HashMap::new();
         sale_dm.insert(TradeClass::Agricultural, 3);
 
-        let entry = TradeTableEntry {
-            index: 1,
-            name: "Test Good".to_string(),
-            availability: Availability::All,
-            quantity: Quantity {
-                dice: 2,
-                multiplier: 1,
-            },
-            base_cost: 10000,
-            purchase_dm,
-            sale_dm,
-        };
+        let entry = TradeTable::global().get(11).unwrap().clone();
 
         // Create a table with a single good
         let mut table = AvailableGoodsTable::new();
         table.add_entry(entry.clone(), 5).unwrap();
 
         // Test with destination trade classes
-        let destination_trade_classes = vec![TradeClass::Rich, TradeClass::Agricultural];
+        let destination_trade_classes = vec![TradeClass::Rich, TradeClass::HighTech];
 
         // Price the goods for sale
         let mut rng = rand::rngs::StdRng::seed_from_u64(12345);

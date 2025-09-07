@@ -4,8 +4,8 @@
 //! including trade classifications, starport codes, zone classifications, and
 //! utilities for generating trade data from Universal World Profiles (UWPs).
 
+use serde::{Deserialize, Serialize};
 use std::fmt::Display;
-
 pub mod available_goods;
 pub mod available_passengers;
 pub mod ship_manifest;
@@ -16,7 +16,7 @@ pub mod table;
 /// These classifications affect trade good availability, pricing modifiers,
 /// and economic relationships between worlds. A world can have multiple
 /// trade classifications based on its physical and social characteristics.
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TradeClass {
     /// Agricultural world - produces food and organic materials
     ///
@@ -353,7 +353,7 @@ pub fn upp_to_trade_classes(upp: &[char]) -> Vec<TradeClass> {
 ///
 /// Represents the quality and capabilities of a world's starport facilities,
 /// affecting trade, refueling, maintenance, and shipyard services.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum PortCode {
     /// Excellent starport - Full shipyard, refined fuel, all services
     A,
@@ -366,6 +366,7 @@ pub enum PortCode {
     /// Frontier starport - No repairs, no fuel, landing area only
     E,
     /// No starport - No facilities, dangerous landing
+    #[default]
     X,
     /// No starport - No facilities, no landing possible
     Y,
@@ -421,8 +422,9 @@ impl std::fmt::Display for PortCode {
 ///
 /// Indicates the safety level and travel restrictions for a world,
 /// affecting passenger traffic, trade, and insurance rates.
-#[derive(Debug, Clone, PartialEq, Copy)]
+#[derive(Debug, Clone, PartialEq, Copy, Eq, Serialize, Deserialize, Default)]
 pub enum ZoneClassification {
+    #[default]
     /// Green zone - Safe for travel, no restrictions
     Green,
     /// Amber zone - Caution advised, potential dangers
@@ -437,6 +439,16 @@ impl std::fmt::Display for ZoneClassification {
             ZoneClassification::Green => write!(f, "Green"),
             ZoneClassification::Amber => write!(f, "Amber"),
             ZoneClassification::Red => write!(f, "Red"),
+        }
+    }
+}
+
+impl From<&str> for ZoneClassification {
+    fn from(s: &str) -> Self {
+        match s {
+            "Amber" => ZoneClassification::Amber,
+            "Red" => ZoneClassification::Red,
+            _ => ZoneClassification::Green,
         }
     }
 }

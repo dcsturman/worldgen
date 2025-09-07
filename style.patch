@@ -1,0 +1,16 @@
+--- a/src/components/trade_computer.rs
++++ b/src/components/trade_computer.rs
+@@
+-            <div style="display:flex; align-items:center; gap: 1rem; flex-wrap: wrap;">
+-                <h2 style="margin: 0;">
++            <div class="trade-header-row">
++                <h2 class="trade-header-title">
+@@
+-                <Show when=move || dest_world.get().is_some()>
+-                    <span style="font-weight: normal; font-size: .95rem; color: #555;">
++                <Show when=move || dest_world.get().is_some()>
++                    <span class="trade-dest-subtitle">
+@@
+-                <label style="font-weight: normal; font-size: .95rem; color:#333; display:flex; align-items:center; gap: .4rem;">
++                <label class="trade-illegal-toggle">
+

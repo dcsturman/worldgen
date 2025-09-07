@@ -29,6 +29,7 @@
 //! let astro_data = AstroData::compute(&star, &world);
 //! let description = astro_data.get_astro_description(&world);
 //! ```
+use serde::{Deserialize, Serialize};
 
 use crate::systems::system::Star;
 use crate::systems::system_tables::{
@@ -58,7 +59,7 @@ const EARTH_TEMP: f32 = 288.0;
 /// including orbital characteristics, surface conditions, and atmospheric data.
 /// This data is used for generating realistic world descriptions and determining
 /// habitability and environmental conditions.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct AstroData {
     /// Orbital period in Earth years
     orbital_period: f32,
