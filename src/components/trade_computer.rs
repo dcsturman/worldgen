@@ -40,44 +40,6 @@
 //! - Steward skill influences passenger generation and revenue
 //! - Realistic skill-based market advantages
 //!
-//! ## State Architecture
-//!
-//! The component uses Leptos reactive stores for complex state management:
-//!
-//! ### Core World Data
-//! - `Store<World>`: Origin world (always exists, starts with default)
-//! - `Store<Option<World>>`: Destination world (optional for valid operation)
-//!
-//! ### Market Data
-//! - `Store<AvailableGoodsTable>`: Current market goods with pricing
-//! - `Store<Option<AvailablePassengers>>`: Available passenger opportunities
-//!
-//! ### Ship Data
-//! - `Store<ShipManifest>`: Current cargo and passenger manifest
-//! - `Store<ShowSellPriceType>`: Toggle for showing destination sell prices
-//!
-//! ### User Input Signals
-//! - World names, UWPs, coordinates, and zone classifications
-//! - Skill levels for broker and steward abilities
-//! - Distance between worlds (manual or calculated)
-//!
-//! ## Reactive Effects System
-//!
-//! The component uses multiple reactive effects for automatic updates:
-//!
-//! ### World Management Effects
-//! 1. **Origin World Update**: Rebuilds origin world from name/UWP changes
-//! 2. **Destination World Update**: Rebuilds destination world from input
-//! 3. **Zone Reset**: Resets travel zones when world names change
-//!
-//! ### Market Effects
-//! 4. **Goods Pricing**: Updates buy/sell prices when worlds or skills change
-//! 5. **Price Display Reset**: Hides sell prices when worlds change
-//!
-//! ### Distance and Travel Effects
-//! 6. **Distance Calculation**: Auto-calculates hex distance from coordinates
-//! 7. **Passenger Generation**: Creates passenger opportunities based on worlds/distance
-//!
 //! ## Trade Calculations
 //!
 //! ### Available Goods Generation
@@ -675,14 +637,13 @@ pub fn SpecGoodRow(
 ) -> impl IntoView {
     // Closure to handle changes in the amount purchased input.
     let update_purchased = move |ev| {
-        let new_value = event_target_value(&ev).parse::<i32>().unwrap_or(0);
+        let new_value = event_target_value(&ev).parse::<i32>().unwrap_or(0).clamp(0, good.quantity);
         let mut ag = write_available_goods.write();
         let mut manifest = write_ship_manifest.write();
         let good_index = good.source_index;
         if let Some(good) = ag.goods.iter_mut().find(|g| g.source_index == good_index) {
-            let clamped_value = new_value.clamp(0, good.quantity);
-            good.purchased = clamped_value;
-            manifest.update_trade_good(good, clamped_value);
+            good.purchased = new_value;
+            manifest.update_trade_good(good, new_value);
         }
     };
 
