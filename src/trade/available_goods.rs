@@ -105,13 +105,14 @@ use crate::trade::TradeClass;
 /// access to trade DMs, availability restrictions, and other metadata needed
 /// for advanced trade calculations.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
-pub struct AvailableGood {
+pub struct Good {
     /// Name of the good
     pub name: String,
     /// Available quantity
     pub quantity: i32,
-    /// Purchased quantity
-    pub purchased: i32,
+    /// Amount purchased or sold (out of quantity), depending
+    /// on whether this is a buy or sell operation.
+    pub transacted: i32,
     /// Original base cost of the good
     pub base_cost: i32,
     /// Current cost of the good (after pricing)
@@ -126,7 +127,7 @@ pub struct AvailableGood {
     pub source_index: i16,
 }
 
-impl Display for AvailableGood {
+impl Display for Good {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         let discount_percent = (self.buy_cost as f64 / self.base_cost as f64 * 100.0).round();
         write!(
@@ -167,7 +168,7 @@ impl Display for AvailableGood {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct AvailableGoodsTable {
     /// List of available goods
-    pub goods: Vec<AvailableGood>,
+    pub goods: Vec<Good>,
 }
 
 impl Display for AvailableGoodsTable {
@@ -342,10 +343,10 @@ impl AvailableGoodsTable {
         }
 
         // Otherwise, create a new entry
-        let good = AvailableGood {
+        let good = Good {
             name: entry.name.clone(),
             quantity,
-            purchased: 0,
+            transacted: 0,
             base_cost: entry.base_cost,
             buy_cost: entry.base_cost,
             buy_cost_comment: String::default(),
@@ -369,12 +370,12 @@ impl AvailableGoodsTable {
     }
 
     /// Get a specific good by its index
-    pub fn get_by_index(&self, index: i16) -> Option<&AvailableGood> {
+    pub fn get_by_index(&self, index: i16) -> Option<&Good> {
         self.goods.iter().find(|g| g.source_index == index)
     }
 
     /// Get all available goods
-    pub fn goods(&self) -> &[AvailableGood] {
+    pub fn goods(&self) -> &[Good] {
         &self.goods
     }
 
@@ -386,6 +387,59 @@ impl AvailableGoodsTable {
     /// Check if there are no goods available
     pub fn is_empty(&self) -> bool {
         self.goods.is_empty()
+    }
+
+    /// Current total tonnage of items to be transacted
+    pub fn total_transacted_size(&self) -> i32 {
+        self.goods
+            .iter()
+            .filter_map(|g| {
+                if g.transacted > 0 {
+                    Some(g.transacted)
+                } else {
+                    None
+                }
+            })
+            .sum()
+    }
+
+    /// Current total cost of items to be bought
+    pub fn total_buy_cost(&self) -> i32 {
+        self.goods
+            .iter()
+            .filter_map(|g| {
+                if g.transacted > 0 {
+                    Some(g.transacted * g.buy_cost)
+                } else {
+                    None
+                }
+            })
+            .sum()
+    }
+
+    /// Current total value of items to be sold
+    pub fn total_sell_cost(&self) -> i32 {
+        self.goods
+            .iter()
+            .filter_map(|g| {
+                if let Some(sell_price) = g.sell_price {
+                    if g.transacted > 0 {
+                        Some(g.transacted * sell_price)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .sum()
+    }
+
+    /// Reset all transacted quantities to 0
+    pub fn zero_transacted(&mut self) {
+        for good in &mut self.goods {
+            good.transacted = 0;
+        }
     }
 
     /// Calculate purchase prices based on broker skills and trade conditions
@@ -517,15 +571,6 @@ impl AvailableGoodsTable {
                 price_multiplier
             );
 
-            /* console_log(
-                format!(
-                    "Pricing {}: Roll {roll}, Modified roll: {modified_roll}, Price multiplier: {}",
-                    good.name, price_multiplier
-                )
-                .as_str(),
-            );
-            */
-
             // Apply the multiplier to the cost
             good.buy_cost = (good.base_cost as f64 * price_multiplier).round() as i32;
         }
@@ -625,15 +670,15 @@ impl AvailableGoodsTable {
     }
 }
 
-impl AvailableGood {
+impl Good {
     /// Price this good for selling at a destination
     /// - If destination trade classes are provided, computes a sell_price and comment
     /// - If None, clears sell_price
     pub fn price_to_sell_rng(
         &mut self,
         possible_destination_trade_classes: Option<&[crate::trade::TradeClass]>,
+        seller_broker_skill: i16,
         buyer_broker_skill: i16,
-        supplier_broker_skill: i16,
         mut rng: impl rand::Rng,
     ) {
         if let Some(destination_trade_classes) = possible_destination_trade_classes {
@@ -653,9 +698,9 @@ impl AvailableGood {
             let sale_origin_dm = find_max_dm(&entry.sale_dm, destination_trade_classes);
 
             // Calculate the modified roll (mirror price_goods_to_sell)
-            let modified_roll = roll as i16 - buyer_broker_skill + supplier_broker_skill
-                - purchase_origin_dm
-                + sale_origin_dm;
+            let modified_roll =
+                roll as i16 + seller_broker_skill - buyer_broker_skill - purchase_origin_dm
+                    + sale_origin_dm;
 
             // Determine the price multiplier based on the modified roll
             let price_multiplier = match modified_roll {
@@ -693,7 +738,7 @@ impl AvailableGood {
             self.sell_price_comment = format!(
                 "(roll) {} + (broker) {} + (trade mod) {} = {} which gives a multiplier of {}",
                 roll,
-                supplier_broker_skill - buyer_broker_skill,
+                buyer_broker_skill - seller_broker_skill,
                 sale_origin_dm - purchase_origin_dm,
                 modified_roll,
                 price_multiplier
@@ -919,13 +964,13 @@ mod tests {
     #[test_log::test]
     fn test_display() {
         // Create a simple good
-        let good = AvailableGood {
+        let good = Good {
             name: "Common Electronics".to_string(),
             quantity: 10,
             base_cost: 5000,
             buy_cost: 5000,
             buy_cost_comment: String::default(),
-            purchased: 0,
+            transacted: 0,
             sell_price_comment: String::default(),
             sell_price: None,
             source_index: 11,
@@ -988,37 +1033,37 @@ mod tests {
         let mut table = AvailableGoodsTable::new();
 
         // Add goods with different discounts
-        let good1 = AvailableGood {
+        let good1 = Good {
             name: "Common Electronics".to_string(),
             quantity: 10,
             base_cost: 10000,
             buy_cost: 5000, // 50% of base
             buy_cost_comment: String::default(),
-            purchased: 0,
+            transacted: 0,
             sell_price_comment: String::default(),
             sell_price: None,
             source_index: 11,
         };
 
-        let good2 = AvailableGood {
+        let good2 = Good {
             name: "Common Industrial Goods".to_string(),
             quantity: 10,
             base_cost: 10000,
             buy_cost: 8000, // 80% of base
             buy_cost_comment: String::default(),
-            purchased: 0,
+            transacted: 0,
             sell_price_comment: String::default(),
             sell_price: None,
             source_index: 12,
         };
 
-        let good3 = AvailableGood {
+        let good3 = Good {
             name: "Common Manufactured Goods".to_string(),
             quantity: 10,
             base_cost: 10000,
             buy_cost: 2000, // 20% of base
             buy_cost_comment: String::default(),
-            purchased: 0,
+            transacted: 0,
             sell_price_comment: String::default(),
             sell_price: None,
             source_index: 13,

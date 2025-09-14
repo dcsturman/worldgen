@@ -71,34 +71,58 @@ pub fn arabic_to_roman(num: usize) -> String {
 ///
 /// Supports conversion from i64, i32, i16, and f64
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Mcr(i64);
+pub struct Credits(i64);
 
-impl Display for Mcr {
+impl Credits {
+    pub fn as_string(&self) -> String {
+        String::from(self)
+    }
+}
+impl Display for Credits {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:.2}", self.0 as f64 / 1_000_000.0)
+        write!(f, "{}", String::from(self))
     }
 }
-impl From<i64> for Mcr {
+
+impl From<&Credits> for String {
+    fn from(credits: &Credits) -> String {
+        if credits.0.abs() < 1000 {
+            format!("{} Cr", credits.0)
+        } else if credits.0.abs() < 1000000 {
+            format!("{:.2} KCr", credits.0 as f64 / 1_000.0)
+        } else {
+            format!("{:.2} MCr", credits.0 as f64 / 1_000_000.0)
+        }
+    }
+}
+
+impl From<Credits> for String {
+    fn from(credits: Credits) -> String {
+        String::from(&credits)
+    }
+}
+
+impl From<i64> for Credits {
     fn from(credits: i64) -> Self {
-        Mcr(credits)
+        Credits(credits)
     }
 }
 
-impl From<i32> for Mcr {
+impl From<i32> for Credits {
     fn from(credits: i32) -> Self {
-        Mcr(credits as i64)
+        Credits(credits as i64)
     }
 }
 
-impl From<i16> for Mcr {
+impl From<i16> for Credits {
     fn from(credits: i16) -> Self {
-        Mcr(credits as i64)
+        Credits(credits as i64)
     }
 }
 
-impl From<f64> for Mcr {
+impl From<f64> for Credits {
     fn from(credits: f64) -> Self {
-        Mcr((credits * 1_000_000.0) as i64)
+        Credits((credits * 1_000_000.0) as i64)
     }
 }
 
