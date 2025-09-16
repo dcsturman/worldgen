@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 #[allow(unused_imports)]
 use log::{debug, error};
 
-use crate::trade::available_goods::Good;
+use crate::systems::world::World;
+use crate::trade::available_goods::{AvailableGoodsTable, Good};
 use crate::trade::available_passengers::AvailablePassengers;
 
 /// Represents a ship's manifest of passengers, freight, and trade goods
@@ -31,7 +32,7 @@ pub struct ShipManifest {
     /// Indices of freight lots from available freight being carried
     pub freight_lot_indices: Vec<usize>,
     /// Trade goods purchased for speculation
-    pub trade_goods: Vec<Good>,
+    pub trade_goods: AvailableGoodsTable,
     /// Accumulated profit across processed trades (in credits)
     pub profit: i64,
 }
@@ -79,6 +80,18 @@ impl ShipManifest {
             .sum()
     }
 
+    /// Price all goods in the manifest.
+    ///
+    /// This is very similar to AvailableGoodsTable::price_goods_to_sell, but we
+    /// have individual goods vs the full table, so iterate over the goods and price
+    /// each.  We use the trade classes of the world provided.
+    pub fn price_goods(&mut self, world: &World, buyer: i16, supplier: i16) {
+        let trade_classes = world.get_trade_classes();
+        self.trade_goods
+            .price_goods_to_sell(Some(trade_classes), buyer, supplier);
+    }
+
+    ///
     /// Calculates total passenger revenue for the manifest
     ///
     /// Computes revenue based on the number of passengers in each class
@@ -186,53 +199,17 @@ impl ShipManifest {
     /// };
     ///
     /// // Add a good with quantity 5
-    /// manifest.update_trade_good(&good, 5);
+    /// let new_good = Good { quantity: 5, ..good.clone() };
+    /// manifest.update_trade_good(new_good);
     /// // Update the same good to quantity 3
-    /// manifest.update_trade_good(&good, 3);
+    /// let new_good = Good { quantity: 3, ..good.clone() }; 
+    /// manifest.update_trade_good(new_good);
     /// // Remove the good by setting quantity to 0
-    /// manifest.update_trade_good(&good, 0);
+    /// let new_good = Good { quantity: 0, ..good.clone() }; /// 
+    /// manifest.update_trade_good(new_good);
     /// ```
-    pub fn update_trade_good(&mut self, good: &Good, quantity: i32) {
-        let index = good.source_index;
-        // Find existing good by source entry index
-        if let Some(pos) = self
-            .trade_goods
-            .iter()
-            .position(|g| g.source_index == index)
-        {
-            if quantity <= 0 {
-                // Remove the good if quantity is 0 or negative
-                self.trade_goods.remove(pos);
-            } else {
-                // Update the existing good's quantity
-                let mut updated_good = good.clone();
-                updated_good.quantity = quantity;
-                self.trade_goods[pos] = updated_good;
-            }
-        } else if quantity > 0 {
-            // Add new good if it doesn't exist and quantity > 0
-            let mut new_good = good.clone();
-            new_good.quantity = quantity;
-            new_good.transacted = 0;
-            self.trade_goods.push(new_good);
-        }
-    }
-
-    /// Gets the quantity of a specific trade good in the manifest
-    ///
-    /// Returns the quantity of the specified good currently in the manifest,
-    /// or 0 if the good is not in the manifest.
-    pub fn get_trade_good_quantity(&self, good: &Good) -> i32 {
-        self.get_trade_good_quantity_by_index(good.source_index)
-    }
-
-    /// Gets the quantity of a specific trade good by its trade table index
-    pub fn get_trade_good_quantity_by_index(&self, index: i16) -> i32 {
-        self.trade_goods
-            .iter()
-            .find(|g| g.source_index == index)
-            .map(|g| g.quantity)
-            .unwrap_or(0)
+    pub fn update_trade_good(&mut self, good: Good) {
+        self.trade_goods.update_good(good);
     }
 
     /// Calculates the total tonnage of trade goods in the manifest
@@ -243,10 +220,7 @@ impl ShipManifest {
     ///
     /// Total tonnage of trade goods
     pub fn trade_goods_tonnage(&self) -> i32 {
-        self.trade_goods
-            .iter()
-            .map(|g| g.quantity - g.transacted)
-            .sum()
+        self.trade_goods.total_size() - self.trade_goods.total_transacted_size()
     }
 
     /// Calculates the total cost of trade goods in the manifest
@@ -257,17 +231,7 @@ impl ShipManifest {
     ///
     /// Total cost of trade goods in credits
     pub fn trade_goods_cost(&self) -> i64 {
-        self.trade_goods
-            .iter()
-            .map(|g| g.transacted as i64 * g.buy_cost as i64)
-            .sum()
-    }
-
-    /// Zeros out the buy costs of all trade goods in the manifest
-    pub fn zero_buy_costs(&mut self) {
-        for good in self.trade_goods.iter_mut() {
-            good.buy_cost = 0;
-        }
+        self.trade_goods.total_buy_cost() as i64
     }
 
     /// Calculates the total potential proceeds from trade goods in the manifest
@@ -279,27 +243,11 @@ impl ShipManifest {
     ///
     /// Total potential proceeds from trade goods in credits
     pub fn trade_goods_proceeds(&self) -> i64 {
-        self.trade_goods
-            .iter()
-            .map(|g| {
-                if let Some(sell_price) = g.sell_price {
-                    g.transacted as i64 * sell_price as i64
-                } else {
-                    0
-                }
-            })
-            .sum()
+        self.trade_goods.total_sell_cost() as i64
     }
 
     pub fn zero_transacted(&mut self) {
-        for good in self.trade_goods.iter_mut() {
-            good.transacted = 0;
-        }
-    }
-
-    /// Get sell amount by trade table index (defaults to 0 if unset)
-    pub fn get_sell_amount_by_index(&self, index: i16) -> i32 {
-        self.get_trade_good_quantity_by_index(index)
+        self.trade_goods.zero_transacted();
     }
 
     /// Reset passengers and freight selections, preserving trade goods and sell plans
@@ -325,19 +273,7 @@ impl ShipManifest {
                 .sum::<i64>();
 
         // Remove sold quantities from the manifest.
-        self.trade_goods.iter_mut().for_each(|g| {
-            if g.quantity < g.transacted {
-                // This should never happen. We assume the caller of this method has already
-                // checked that the sell plan is valid.
-                error!(
-                    "For good {}, quantity {} is less than transacted {}",
-                    g.name, g.quantity, g.transacted
-                );
-            }
-            g.quantity -= g.transacted;
-        });
-
-        self.trade_goods.retain(|g| g.quantity > 0);
+        self.trade_goods.process_trades();
 
         // Add any goods that were bought to the manifest.
         let new_goods = buy_goods.iter().filter_map(|g| {
@@ -351,26 +287,9 @@ impl ShipManifest {
             }
         });
 
-        let (repeat_goods, fresh_goods): (Vec<Good>, Vec<Good>) = new_goods.partition(|g| {
-            self.trade_goods
-                .iter()
-                .any(|mg| mg.source_index == g.source_index)
-        });
-
-        // When we already have the good in the manifest, rather than add a new good into the manifest, we
-        // just add to the existing quantity.
-        for good in repeat_goods {
-            if let Some(pos) = self
-                .trade_goods
-                .iter()
-                .position(|mg| mg.source_index == good.source_index)
-            {
-                self.trade_goods[pos].transacted += good.transacted;
-            }
+        for good in new_goods {
+            self.trade_goods.add_good(good);
         }
-
-        // Add any goods not previously in the manifest, to the manifest
-        self.trade_goods.extend(fresh_goods);
 
         // Clear the sell plan.
         self.zero_transacted();

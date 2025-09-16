@@ -251,7 +251,7 @@ impl AvailableGoodsTable {
             };
 
             if available {
-                table.add_entry(entry.clone(), population)?;
+                table.gen_entry(entry.clone(), population)?;
             }
         }
 
@@ -266,16 +266,16 @@ impl AvailableGoodsTable {
             let index = tens * 10 + ones;
 
             if let Some(entry) = trade_table.get(index) {
-                table.add_entry_rng(entry.clone(), &mut rng, population)?;
+                table.gen_entry_rng(entry.clone(), &mut rng, population)?;
             }
         }
 
         Ok(table)
     }
 
-    /// Add a trade table entry using provided random number generator
+    /// Generate a trade table entry using provided random number generator
     ///
-    /// Internal method for adding goods to the market with explicit RNG control.
+    /// Internal method for generating goods to the market with explicit RNG control.
     /// Handles quantity generation, population modifiers, and duplicate consolidation.
     ///
     /// ## Quantity Calculation
@@ -302,7 +302,7 @@ impl AvailableGoodsTable {
     /// ## Returns
     ///
     /// `Result<(), String>` - Success or error message
-    fn add_entry_rng(
+    fn gen_entry_rng(
         &mut self,
         entry: TradeTableEntry,
         rng: &mut impl Rng,
@@ -359,14 +359,54 @@ impl AvailableGoodsTable {
         Ok(())
     }
 
-    /// Add a trade table entry to the available goods
-    pub fn add_entry(
+    /// Generate a trade table entry to the available goods
+    pub fn gen_entry(
         &mut self,
         entry: TradeTableEntry,
         world_population: i32,
     ) -> Result<(), String> {
         let mut rng = rand::rng();
-        self.add_entry_rng(entry, &mut rng, world_population)
+        self.gen_entry_rng(entry, &mut rng, world_population)
+    }
+
+    /// Add a good to the table.  
+    ///
+    /// If the good is already in the table, add to its quantity
+    /// to the existing goods of that type.  Otherwise just
+    /// add it to the table.
+    pub fn add_good(&mut self, good: Good) {
+        // If the good is already in the table, add to its quantity
+        if let Some(existing) = self
+            .goods
+            .iter_mut()
+            .find(|g| g.source_index == good.source_index)
+        {
+            existing.quantity += good.quantity;
+        } else {
+            self.goods.push(good);
+        }
+
+        // Remove the good if the quanity is now <= 0
+        self.goods.retain(|g| g.quantity > 0);
+    }
+
+    /// Update a good in the table.  
+    ///
+    /// If the good is already in the table, replace it.  Otherwise just
+    /// add it to the table.
+    pub fn update_good(&mut self, good: Good) {
+        if let Some(existing) = self
+            .goods
+            .iter_mut()
+            .find(|g| g.source_index == good.source_index)
+        {
+            *existing = good;
+        } else {
+            self.goods.push(good.clone());
+        }
+
+        // Remove the good if the quanity is now <= 0
+        self.goods.retain(|g| g.quantity > 0);
     }
 
     /// Get a specific good by its index
@@ -401,6 +441,11 @@ impl AvailableGoodsTable {
                 }
             })
             .sum()
+    }
+
+    /// Current total tonnage of all items in the table
+    pub fn total_size(&self) -> i32 {
+        self.goods.iter().map(|g| g.quantity).sum()
     }
 
     /// Current total cost of items to be bought
@@ -440,6 +485,16 @@ impl AvailableGoodsTable {
         for good in &mut self.goods {
             good.transacted = 0;
         }
+    }
+
+    /// Process trades by removing the transacted amount from the quantity
+    /// and zeroing out the transacted amount
+    pub fn process_trades(&mut self) {
+        for good in &mut self.goods {
+            good.quantity -= good.transacted;
+            good.transacted = 0;
+        }
+        self.goods.retain(|g| g.quantity > 0);
     }
 
     /// Calculate purchase prices based on broker skills and trade conditions
@@ -498,7 +553,7 @@ impl AvailableGoodsTable {
     /// # use worldgen::trade::table::TradeTableEntry;
     /// let mut market = AvailableGoodsTable::new();
     /// // Add a good to the market for a pop 5 world
-    /// market.add_entry(TradeTable::global().get(14).unwrap().clone(), 5).unwrap();
+    /// market.gen_entry(TradeTable::global().get(14).unwrap().clone(), 5).unwrap();
     /// // Skilled buyer (3) vs average seller (1) on agricultural world
     /// market.price_goods_to_buy(&[TradeClass::Agricultural], 3, 1);
     /// // Expect better prices due to +2 skill differential and +3 Ag DM
@@ -676,12 +731,12 @@ impl Good {
     /// - If None, clears sell_price
     pub fn price_to_sell_rng(
         &mut self,
-        possible_destination_trade_classes: Option<&[crate::trade::TradeClass]>,
+        trade_classes: Option<&[crate::trade::TradeClass]>,
         seller_broker_skill: i16,
         buyer_broker_skill: i16,
         mut rng: impl rand::Rng,
     ) {
-        if let Some(destination_trade_classes) = possible_destination_trade_classes {
+        if let Some(trade_classes) = trade_classes {
             // Roll 3d6
             let roll = rng.random_range(1..=6) + rng.random_range(1..=6) + rng.random_range(1..=6);
 
@@ -694,8 +749,8 @@ impl Good {
                     )
                 });
 
-            let purchase_origin_dm = find_max_dm(&entry.purchase_dm, destination_trade_classes);
-            let sale_origin_dm = find_max_dm(&entry.sale_dm, destination_trade_classes);
+            let purchase_origin_dm = find_max_dm(&entry.purchase_dm, trade_classes);
+            let sale_origin_dm = find_max_dm(&entry.sale_dm, trade_classes);
 
             // Calculate the modified roll (mirror price_goods_to_sell)
             let modified_roll =
@@ -738,7 +793,7 @@ impl Good {
             self.sell_price_comment = format!(
                 "(roll) {} + (broker) {} + (trade mod) {} = {} which gives a multiplier of {}",
                 roll,
-                buyer_broker_skill - seller_broker_skill,
+                seller_broker_skill - buyer_broker_skill,
                 sale_origin_dm - purchase_origin_dm,
                 modified_roll,
                 price_multiplier
@@ -923,7 +978,7 @@ mod tests {
 
         // Create a table with a single good
         let mut table = AvailableGoodsTable::new();
-        table.add_entry(entry.clone(), 5).unwrap();
+        table.gen_entry(entry.clone(), 5).unwrap();
 
         // Get the original cost
         let original_cost = table.goods()[0].buy_cost;
@@ -935,11 +990,12 @@ mod tests {
 
         // The price should be different due to the DMs (purchase +2, sale -3)
         // and the random roll
+        // TODO: Flakey! 
         assert_ne!(table.goods()[0].buy_cost, original_cost);
 
         // Create another table for a more controlled test
         let mut table2 = AvailableGoodsTable::new();
-        table2.add_entry(entry.clone(), 5).unwrap();
+        table2.gen_entry(entry.clone(), 5).unwrap();
 
         // Set up a test where we know the outcome
         // If buyer has skill 3, supplier has skill 1, purchase DM is +2, sale DM is +3
@@ -1099,7 +1155,7 @@ mod tests {
 
         // Create a table with a single good
         let mut table = AvailableGoodsTable::new();
-        table.add_entry(entry.clone(), 5).unwrap();
+        table.gen_entry(entry.clone(), 5).unwrap();
 
         // Test with destination trade classes
         let destination_trade_classes = vec![TradeClass::Rich, TradeClass::HighTech];

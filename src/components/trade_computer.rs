@@ -144,6 +144,7 @@ use leptos_use::storage::{
 };
 #[allow(unused_imports)]
 use log::{debug, error};
+use rand::Rng;
 
 use crate::components::traveller_map::WorldSearch;
 use crate::systems::world::World;
@@ -223,14 +224,21 @@ pub fn Trade() -> impl IntoView {
     let (available_goods, write_available_goods, _) =
         use_session_storage::<AvailableGoodsTable, JsonSerdeCodec>("worldgen:available_goods:v1");
 
-    //let (available_goods, write_available_goods) =
-    //signal(AvailableGoodsTable::default());
     let (available_passengers, write_available_passengers, _) =
         use_session_storage::<Option<AvailablePassengers>, JsonSerdeCodec>(
             "worldgen:available_passengers:v1",
         );
     let (ship_manifest, write_ship_manifest, _) =
-        use_session_storage::<ShipManifest, JsonSerdeCodec>("worldgen:manifest:v1");
+        use_session_storage_with_options::<ShipManifest, JsonSerdeCodec>(
+            "worldgen:manifest:v1",
+            UseStorageOptions::default()
+                .initial_value(ShipManifest::default())
+                .delay_during_hydration(true),
+        );
+    //let (ship_manifest, write_ship_manifest) = signal(ShipManifest::default());
+
+    // Used solely because there's a bug in `use_session_storage` that seems to restore from storage when we don't want it to
+    let (hack_ship_recompute_manifest_price, hack_ship_recompute_manifest_price_set) = signal(0u64);
 
     // Skills involved, both player and adversary.
     let (buyer_broker_skill, write_buyer_broker_skill, _) =
@@ -242,6 +250,9 @@ pub fn Trade() -> impl IntoView {
     // Toggle for including illegal goods in market generation
     let (illegal_goods, write_illegal_goods, _) =
         use_session_storage::<bool, JsonSerdeCodec>("worldgen:illegal_goods:v1");
+
+    // Dialog state for manually adding goods to manifest
+    let show_add_manual = RwSignal::new(false);
 
     let origin_world_name = RwSignal::new(origin_world.read_untracked().name.clone());
     let origin_uwp = RwSignal::new(origin_world.read_untracked().to_uwp());
@@ -303,6 +314,19 @@ pub fn Trade() -> impl IntoView {
         }
     };
 
+    // This Effect is a complete hack/workaround to the fact that while using `use_session_storage` there's
+    // a bug not forcing repricing in some cases.
+    Effect::new(move |_| {
+        let _ = hack_ship_recompute_manifest_price.get();
+        write_ship_manifest.update(|manifest| {
+            manifest.price_goods(
+                &origin_world.get(),
+                buyer_broker_skill.get(),
+                seller_broker_skill.get(),
+            );
+        });
+    });
+
     // Keep origin world updated based on changes in name or uwp.
     // If name or uwp changes, update origin_world.
     Effect::new(move |prev: Option<(String, String)>| {
@@ -330,6 +354,7 @@ pub fn Trade() -> impl IntoView {
             world.gen_trade_classes();
             world.coordinates = origin_coords.get();
             world.travel_zone = origin_zone.get();
+            world.gen_trade_classes();
             write_origin_world.set(world);
 
             // Now update available goods only after the first (restoration) pass
@@ -400,17 +425,22 @@ pub fn Trade() -> impl IntoView {
         );
 
         // Do not wipe the manifest; keep trade goods and sell plans across recalculations
-        let mut ag = write_available_goods.write();
-        ag.price_goods_to_buy(&origin_world.get_trade_classes(), buyer, supplier);
-        ag.sort_by_discount();
+        write_available_goods.update(|ag| {
+            ag.price_goods_to_buy(&origin_world.get_trade_classes(), buyer, supplier);
+            ag.sort_by_discount();
+        });
 
-        // Price goods currently in the manifest using ORIGIN world trade classes (sell at origin)
-        let origin_classes = origin_world.get_trade_classes();
-        let mut manifest = write_ship_manifest.write();
+        // Reprice the manifest.
+        write_ship_manifest.update(|manifest| {
+            manifest.price_goods(
+                &origin_world,
+                buyer_broker_skill.get(),
+                seller_broker_skill.get(),
+            );
+        });
+
         let mut rng = rand::rng();
-        for g in &mut manifest.trade_goods {
-            g.price_to_sell_rng(Some(&origin_classes), buyer, supplier, &mut rng);
-        }
+        hack_ship_recompute_manifest_price_set.set(rng.random());
 
         // Calculate passengers.
         if let Some(world) = dest_world {
@@ -574,15 +604,24 @@ pub fn Trade() -> impl IntoView {
             </div>
             <ShipManifestView
                 origin_swap=dest_to_origin
+                origin_world=origin_world
+                buyer_broker_skill=buyer_broker_skill
+                seller_broker_skill=seller_broker_skill
                 distance=distance
                 ship_manifest=ship_manifest
                 write_ship_manifest=write_ship_manifest
                 available_goods=available_goods
                 write_available_goods=write_available_goods
                 available_passengers=available_passengers
+                show_add_manual=show_add_manual
+                hack_set=hack_ship_recompute_manifest_price_set
             />
 
-            <GoodsToSellView ship_manifest=ship_manifest write_ship_manifest=write_ship_manifest />
+            <GoodsToSellView
+                ship_manifest=ship_manifest
+                write_ship_manifest=write_ship_manifest
+                show_add_manual=show_add_manual
+            />
             <TradeView
                 origin_world=origin_world
                 dest_world=dest_world
@@ -622,10 +661,19 @@ fn print() {
 fn GoodsToSellView(
     ship_manifest: Signal<ShipManifest>,
     write_ship_manifest: WriteSignal<ShipManifest>,
+    show_add_manual: RwSignal<bool>,
 ) -> impl IntoView {
     view! {
         <div class="output-region">
-            <h2>"Goods to Sell"</h2>
+            <div class="trade-header-row">
+                <h2>"Goods to Sell"</h2>
+                <button
+                    class="manifest-button manifest-add-good-button"
+                    on:click=move |_| show_add_manual.set(true)
+                >
+                    "Manually Add Good"
+                </button>
+            </div>
             <table class="trade-table">
                 <thead>
                     <tr>
@@ -640,44 +688,44 @@ fn GoodsToSellView(
                 </thead>
                 <tbody>
                     {move || {
-                        let manifest = ship_manifest.get();
-                        if manifest.trade_goods.is_empty() {
-                            view! {
-                                <tr>
-                                    <td class="table-entry" colspan="6">
-                                        "No goods to sell"
-                                    </td>
-                                </tr>
-                            }
-                                .into_any()
-                        } else {
-                            let manifest_val = ship_manifest.get();
-                            let mut sell_goods = manifest_val.trade_goods.clone();
-                            sell_goods
-                                .sort_by(|a, b| {
-                                    let a_ratio = a.sell_price.unwrap_or(0) as f64
-                                        / a.buy_cost as f64;
-                                    let b_ratio = b.sell_price.unwrap_or(0) as f64
-                                        / b.buy_cost as f64;
-                                    b_ratio
-                                        .partial_cmp(&a_ratio)
-                                        .unwrap_or(std::cmp::Ordering::Equal)
-                                });
-                            sell_goods
-                                .into_iter()
-                                .map(|good| {
-                                    // Use manifest goods and their current sell_price as computed elsewhere
+                        ship_manifest
+                            .with(|manifest| {
+                                if manifest.trade_goods.is_empty() {
                                     view! {
-                                        <SellGoodRow
-                                            good=good.clone()
-                                            ship_manifest=ship_manifest
-                                            write_ship_manifest=write_ship_manifest
-                                        />
+                                        <tr>
+                                            <td class="table-entry" colspan="6">
+                                                "No goods to sell"
+                                            </td>
+                                        </tr>
                                     }
-                                })
-                                .collect::<Vec<_>>()
-                                .into_any()
-                        }
+                                        .into_any()
+                                } else {
+                                    let mut sell_goods = manifest.trade_goods.goods().to_vec();
+                                    sell_goods
+                                        .sort_by(|a, b| {
+                                            let a_ratio = a.sell_price.unwrap_or(0) as f64
+                                                / a.buy_cost as f64;
+                                            let b_ratio = b.sell_price.unwrap_or(0) as f64
+                                                / b.buy_cost as f64;
+                                            b_ratio
+                                                .partial_cmp(&a_ratio)
+                                                .unwrap_or(std::cmp::Ordering::Equal)
+                                        });
+                                    sell_goods
+                                        .into_iter()
+                                        .map(|good| {
+
+                                            view! {
+                                                <SellGoodRow
+                                                    good=good
+                                                    write_ship_manifest=write_ship_manifest
+                                                />
+                                            }
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .into_any()
+                                }
+                            })
                     }}
                 </tbody>
             </table>
@@ -686,33 +734,27 @@ fn GoodsToSellView(
 }
 
 #[component]
-fn SellGoodRow(
-    good: Good,
-    ship_manifest: Signal<ShipManifest>,
-    write_ship_manifest: WriteSignal<ShipManifest>,
-) -> impl IntoView {
+fn SellGoodRow(good: Good, write_ship_manifest: WriteSignal<ShipManifest>) -> impl IntoView {
+    let mut good_copy = good.clone();
     let update_sold = move |ev| {
         let new_value = event_target_value(&ev)
             .parse::<i32>()
             .unwrap_or(0)
-            .clamp(0, good.quantity);
-        let mut manifest_goods = write_ship_manifest.write();
-        let good_index = good.source_index;
-        if let Some(good) = manifest_goods
-            .trade_goods
-            .iter_mut()
-            .find(|g| g.source_index == good_index)
-        {
-            good.transacted = new_value;
-        }
+            .clamp(0, good_copy.quantity);
+        good_copy.transacted = new_value;
+        debug!("Updating sold quantity to {new_value} for {good_copy:?}");
+        write_ship_manifest.update(|manifest| {
+            manifest.trade_goods.update_good(good_copy.clone());
+        });
     };
 
+    let sell_cost_comment = move || good.sell_price_comment.clone();
     view! {
-        <tr title=good.sell_price_comment.clone()>
-            <td class="table-entry">{good.name}</td>
-            <td class="table-entry">{good.quantity}</td>
-            <td class="table-entry">{good.base_cost.to_string()}</td>
-            <td class="table-entry">{good.buy_cost.to_string()}</td>
+        <tr prop:title=sell_cost_comment>
+            <td class="table-entry">{move || good.name.clone()}</td>
+            <td class="table-entry">{move || good.quantity.to_string()}</td>
+            <td class="table-entry">{move || good.base_cost.to_string()}</td>
+            <td class="table-entry">{move || good.buy_cost.to_string()}</td>
             <td class="table-entry">
                 {move || {
                     if let Some(sp) = good.sell_price { sp.to_string() } else { "-".to_string() }
@@ -733,10 +775,8 @@ fn SellGoodRow(
                 <input
                     type="number"
                     min="0"
-                    max=move || {
-                        ship_manifest.read().get_trade_good_quantity_by_index(good.source_index)
-                    }
-                    prop:value=move || good.transacted
+                    max=good.quantity
+                    prop:value=good.transacted
                     on:input=update_sold
                     class=move || {
                         if good.transacted > 0 {
@@ -772,25 +812,27 @@ pub fn BuyGoodRow(
             .parse::<i32>()
             .unwrap_or(0)
             .clamp(0, good.quantity);
-        let mut ag = write_available_goods.write();
-        let good_index = good.source_index;
-        if let Some(good) = ag.goods.iter_mut().find(|g| g.source_index == good_index) {
-            good.transacted = new_value;
-        }
+        write_available_goods.update(|ag| {
+            if let Some(good) = ag
+                .goods
+                .iter_mut()
+                .find(|g| g.source_index == good.source_index)
+            {
+                good.transacted = new_value;
+            }
+        });
     };
 
     let discount_percent =
         (good.buy_cost as f64 / good.base_cost as f64 * 100.0 - 100.0).round() as i32;
-    let buy_cost_comment = good.buy_cost_comment.clone();
+    let buy_cost_comment = move || good.buy_cost_comment.clone();
 
     view! {
         <tr title=buy_cost_comment.clone()>
             <td class="table-entry">{good.name.clone()}</td>
             <td class="table-entry">{(good.quantity - good.transacted).to_string()}</td>
             <td class="table-entry">{good.base_cost.to_string()}</td>
-            <td class="table-entry">
-                {good.buy_cost.to_string()}
-            </td>
+            <td class="table-entry">{good.buy_cost.to_string()}</td>
             <td class="table-entry">{discount_percent.to_string()}"%"</td>
             <td class="table-entry">
                 <input
@@ -903,7 +945,6 @@ pub fn TradeView(
                     write_ship_manifest=write_ship_manifest
                 />
             </Show>
-
             <h4 class="trade-section">"Goods to Buy"</h4>
             <table class="trade-table">
                 <thead>
@@ -1029,8 +1070,9 @@ fn PassengerView(
         if let Some(passengers) = available_passengers.get() {
             let remaining = passengers.high - ship_manifest.read().high_passengers;
             if remaining > 0 {
-                let mut manifest = write_ship_manifest.write();
-                manifest.high_passengers += 1;
+                write_ship_manifest.update(|manifest| {
+                    manifest.high_passengers += 1;
+                });
             }
         }
     };
@@ -1039,8 +1081,9 @@ fn PassengerView(
         if let Some(passengers) = available_passengers.get() {
             let remaining = passengers.medium - ship_manifest.read().medium_passengers;
             if remaining > 0 {
-                let mut manifest = write_ship_manifest.write();
-                manifest.medium_passengers += 1;
+                write_ship_manifest.update(|manifest| {
+                    manifest.medium_passengers += 1;
+                });
             }
         }
     };
@@ -1049,8 +1092,9 @@ fn PassengerView(
         if let Some(passengers) = available_passengers.get() {
             let remaining = passengers.basic - ship_manifest.read().basic_passengers;
             if remaining > 0 {
-                let mut manifest = write_ship_manifest.write();
-                manifest.basic_passengers += 1;
+                write_ship_manifest.update(|manifest| {
+                    manifest.basic_passengers += 1;
+                });
             }
         }
     };
@@ -1059,8 +1103,9 @@ fn PassengerView(
         if let Some(passengers) = available_passengers.get() {
             let remaining = passengers.low - ship_manifest.read().low_passengers;
             if remaining > 0 {
-                let mut manifest = write_ship_manifest.write();
-                manifest.low_passengers += 1;
+                write_ship_manifest.update(|manifest| {
+                    manifest.low_passengers += 1;
+                });
             }
         }
     };
@@ -1145,16 +1190,18 @@ fn PassengerView(
                                 }
                                 let lot_size = lot.size;
                                 let toggle_freight = move |_| {
-                                    let mut manifest = write_ship_manifest.write();
-                                    if let Some(pos) = manifest
-                                        .freight_lot_indices
-                                        .iter()
-                                        .position(|&i| i == index)
-                                    {
-                                        manifest.freight_lot_indices.remove(pos);
-                                    } else {
-                                        manifest.freight_lot_indices.push(index);
-                                    }
+                                    write_ship_manifest
+                                        .update(|manifest| {
+                                            if let Some(pos) = manifest
+                                                .freight_lot_indices
+                                                .iter()
+                                                .position(|&i| i == index)
+                                            {
+                                                manifest.freight_lot_indices.remove(pos);
+                                            } else {
+                                                manifest.freight_lot_indices.push(index);
+                                            }
+                                        });
                                 };
                                 Some(
 
@@ -1252,44 +1299,51 @@ fn PassengerView(
 #[component]
 fn ShipManifestView(
     origin_swap: impl Fn() + Clone + 'static,
+    origin_world: Signal<World>,
+    buyer_broker_skill: Signal<i16>,
+    seller_broker_skill: Signal<i16>,
     distance: RwSignal<i32>,
     ship_manifest: Signal<ShipManifest>,
     write_ship_manifest: WriteSignal<ShipManifest>,
     available_goods: Signal<AvailableGoodsTable>,
     write_available_goods: WriteSignal<AvailableGoodsTable>,
     available_passengers: Signal<Option<AvailablePassengers>>,
+    show_add_manual: RwSignal<bool>,
+    hack_set: WriteSignal<u64>,
 ) -> impl IntoView {
-    // Dialog state for manually adding goods to manifest
-    let show_add_manual = RwSignal::new(false);
     let manual_selected_index = RwSignal::new(11i16);
     let manual_qty_input = RwSignal::new(String::new());
 
     let remove_high_passenger = move |_| {
-        let mut manifest = write_ship_manifest.write();
-        if manifest.high_passengers > 0 {
-            manifest.high_passengers -= 1;
-        }
+        write_ship_manifest.update(|manifest| {
+            if manifest.high_passengers > 0 {
+                manifest.high_passengers -= 1;
+            }
+        });
     };
 
     let remove_medium_passenger = move |_| {
-        let mut manifest = write_ship_manifest.write();
-        if manifest.medium_passengers > 0 {
-            manifest.medium_passengers -= 1;
-        }
+        write_ship_manifest.update(|manifest| {
+            if manifest.medium_passengers > 0 {
+                manifest.medium_passengers -= 1;
+            }
+        });
     };
 
     let remove_basic_passenger = move |_| {
-        let mut manifest = write_ship_manifest.write();
-        if manifest.basic_passengers > 0 {
-            manifest.basic_passengers -= 1;
-        }
+        write_ship_manifest.update(|manifest| {
+            if manifest.basic_passengers > 0 {
+                manifest.basic_passengers -= 1;
+            }
+        });
     };
 
     let remove_low_passenger = move |_| {
-        let mut manifest = write_ship_manifest.write();
-        if manifest.low_passengers > 0 {
-            manifest.low_passengers -= 1;
-        }
+        write_ship_manifest.update(|manifest| {
+            if manifest.low_passengers > 0 {
+                manifest.low_passengers -= 1;
+            }
+        });
     };
 
     let on_reset = move |_| {
@@ -1308,21 +1362,21 @@ fn ShipManifestView(
         write_ship_manifest.set(ShipManifest::default());
 
         // Zero out purchased in available goods so Buy inputs show 0
-        let mut ag = write_available_goods.write();
-        for g in ag.goods.iter_mut() {
-            g.transacted = 0;
-        }
+        write_available_goods.update(|ag| {
+            for g in ag.goods.iter_mut() {
+                g.transacted = 0;
+            }
+        });
     };
 
     view! {
         <div class="output-region">
             <div class="trade-header-row">
-            <h2>"Ship Manifest"</h2>
-            <button class="manifest-button" title="Reset" on:click=on_reset>
-                "Reset"
-            </button>
+                <h2>"Ship Manifest"</h2>
+                <button class="manifest-button" title="Reset" on:click=on_reset>
+                    "Reset"
+                </button>
             </div>
-
 
             <div class="manifest-summary">
                 {move || {
@@ -1436,14 +1490,16 @@ fn ShipManifestView(
                                             .get(index)
                                             .map(|lot| {
                                                 let remove = move |_| {
-                                                    let mut manifest = write_ship_manifest.write();
-                                                    if let Some(pos) = manifest
-                                                        .freight_lot_indices
-                                                        .iter()
-                                                        .position(|&i| i == index)
-                                                    {
-                                                        manifest.freight_lot_indices.remove(pos);
-                                                    }
+                                                    write_ship_manifest
+                                                        .update(|manifest| {
+                                                            if let Some(pos) = manifest
+                                                                .freight_lot_indices
+                                                                .iter()
+                                                                .position(|&i| i == index)
+                                                            {
+                                                                manifest.freight_lot_indices.remove(pos);
+                                                            }
+                                                        });
                                                 };
                                                 view! {
                                                     <button class="freight-lot" on:click=remove>
@@ -1518,11 +1574,24 @@ fn ShipManifestView(
                         <button
                             class="manifest-button manifest-execute-trades-button"
                             on:click=move |_| {
-                                let mut manifest = write_ship_manifest.write();
-                                manifest
-                                    .process_trades(distance.get(), &available_goods.read().goods);
-                                write_available_goods.write().zero_transacted();
-                                origin_swap();
+                                write_ship_manifest
+                                    .update(|manifest| {
+                                        manifest
+                                            .process_trades(
+                                                distance.get(),
+                                                &available_goods.read().goods,
+                                            );
+                                        manifest
+                                            .price_goods(
+                                                &origin_world.get(),
+                                                buyer_broker_skill.get(),
+                                                seller_broker_skill.get(),
+                                            );
+                                        write_available_goods.update(|ag| ag.zero_transacted());
+                                        origin_swap();
+                                    });
+                                let mut rng = rand::rng();
+                                hack_set.set(rng.random());
                             }
                         >
                             "Execute Trades"
@@ -1609,7 +1678,7 @@ fn ShipManifestView(
                                     if let Some(entry) = table.get(manual_selected_index.get()) {
                                         let good = Good {
                                             name: entry.name.clone(),
-                                            quantity: 0,
+                                            quantity: qty,
                                             transacted: 0,
                                             base_cost: entry.base_cost,
                                             buy_cost: entry.base_cost,
@@ -1618,8 +1687,12 @@ fn ShipManifestView(
                                             sell_price_comment: String::new(),
                                             source_index: entry.index,
                                         };
-                                        let mut manifest = write_ship_manifest.write();
-                                        manifest.update_trade_good(&good, qty);
+                                        write_ship_manifest
+                                            .update(|manifest| {
+                                                manifest.update_trade_good(good);
+                                            });
+                                        let mut rng = rand::rng();
+                                        hack_set.set(rng.random());
                                         manual_qty_input.set(String::new());
                                         if let Some(d) = web_sys::window()
                                             .and_then(|w| w.document())
