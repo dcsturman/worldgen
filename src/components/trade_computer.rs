@@ -1536,7 +1536,11 @@ fn ShipManifestView(
                         <span class="manifest-value">
                             {move || {
                                 let manifest = ship_manifest.get();
-                                let revenue = manifest.freight_revenue(distance.get());
+                                let revenue = if let Some(passengers) = available_passengers.get() {
+                                        manifest.freight_revenue(distance.get(), &passengers) as i64
+                                } else {
+                                    0
+                                };
                                 Credits::from(revenue).as_string()
                             }}
                         </span>
@@ -1560,8 +1564,11 @@ fn ShipManifestView(
                                 let manifest = ship_manifest.get();
                                 let passenger_revenue = manifest.passenger_revenue(distance.get())
                                     as i64;
-                                let freight_revenue = manifest.freight_revenue(distance.get())
-                                    as i64;
+                                let freight_revenue = if let Some(passengers) = available_passengers.get() {
+                                        manifest.freight_revenue(distance.get(), &passengers) as i64
+                                } else {
+                                    0
+                                };
                                 let goods_profit = manifest.trade_goods_proceeds()
                                     - available_goods.read().total_buy_cost() as i64;
                                 let total = passenger_revenue + freight_revenue + goods_profit;
@@ -1580,6 +1587,7 @@ fn ShipManifestView(
                                             .process_trades(
                                                 distance.get(),
                                                 &available_goods.read().goods,
+                                                &available_passengers.get()
                                             );
                                         manifest
                                             .price_goods(
