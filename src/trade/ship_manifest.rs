@@ -145,11 +145,14 @@ impl ShipManifest {
     ///
     /// ```
     /// use worldgen::trade::ship_manifest::ShipManifest;
+    /// use worldgen::trade::available_passengers::{AvailablePassengers, FreightLot};
     ///
     /// let mut manifest = ShipManifest::default();
+    /// let mut available_passengers = AvailablePassengers::default();
+    /// available_passengers.freight_lots = vec![FreightLot { size: 10 }, FreightLot { size: 20 }, FreightLot { size: 30 }];
     /// manifest.freight_lot_indices = vec![0, 2, 5]; // 3 freight lots
     ///
-    /// let revenue = manifest.freight_revenue(3);
+    /// let revenue = manifest.freight_revenue(3, &available_passengers);
     /// // Returns revenue for 3 freight lots at distance 3
     /// ```
     pub fn freight_revenue(&self, distance: i32, available_passengers: &AvailablePassengers) -> i32 {
