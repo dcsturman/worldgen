@@ -990,7 +990,7 @@ mod tests {
 
         // The price should be different due to the DMs (purchase +2, sale -3)
         // and the random roll
-        // TODO: Flakey! 
+        // TODO: Flakey!
         assert_ne!(table.goods()[0].buy_cost, original_cost);
 
         // Create another table for a more controlled test

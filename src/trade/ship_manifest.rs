@@ -155,7 +155,11 @@ impl ShipManifest {
     /// let revenue = manifest.freight_revenue(3, &available_passengers);
     /// // Returns revenue for 3 freight lots at distance 3
     /// ```
-    pub fn freight_revenue(&self, distance: i32, available_passengers: &AvailablePassengers) -> i32 {
+    pub fn freight_revenue(
+        &self,
+        distance: i32,
+        available_passengers: &AvailablePassengers,
+    ) -> i32 {
         let distance_index = distance.clamp(1, 6) as usize;
         FREIGHT_COST[distance_index] * self.total_freight_tons(available_passengers)
     }
@@ -205,10 +209,10 @@ impl ShipManifest {
     /// let new_good = Good { quantity: 5, ..good.clone() };
     /// manifest.update_trade_good(new_good);
     /// // Update the same good to quantity 3
-    /// let new_good = Good { quantity: 3, ..good.clone() }; 
+    /// let new_good = Good { quantity: 3, ..good.clone() };
     /// manifest.update_trade_good(new_good);
     /// // Remove the good by setting quantity to 0
-    /// let new_good = Good { quantity: 0, ..good.clone() }; /// 
+    /// let new_good = Good { quantity: 0, ..good.clone() }; ///
     /// manifest.update_trade_good(new_good);
     /// ```
     pub fn update_trade_good(&mut self, good: Good) {
@@ -265,7 +269,12 @@ impl ShipManifest {
 
     /// Process trades: add current Total to profit and clear passenger/freight counts and sell plans
     /// Does NOT clear trade_goods quantities (tons) or list; only resets sell_plan to 0 and passenger/freight
-    pub fn process_trades(&mut self, distance: i32, buy_goods: &[Good], available_passengers: &Option<AvailablePassengers>) {
+    pub fn process_trades(
+        &mut self,
+        distance: i32,
+        buy_goods: &[Good],
+        available_passengers: &Option<AvailablePassengers>,
+    ) {
         // Compute current totals
         let passenger_revenue = self.passenger_revenue(distance) as i64;
         let freight_revenue = if let Some(passengers) = available_passengers {
