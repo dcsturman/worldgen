@@ -409,30 +409,35 @@ pub fn Trade() -> impl IntoView {
         (name, uwp)
     });
 
-    // On a change to origin_world and/or dest_world updating pricing on available goods.
-    // Those updates are based on RNG so even with the same inputs, will change frequently.
+    // Recalculate prices when skills change (using saved rolls, not regenerating)
     Effect::new(move |_| {
         let buyer = buyer_broker_skill.get();
         let supplier = seller_broker_skill.get();
-        let distance = distance.get();
-        let _illegal_goods = illegal_goods.get();
         let origin_world = origin_world.get();
         let dest_world = dest_world.get();
 
         debug!(
-            "Updating goods pricing with origin world = {:?}",
-            origin_world
+            "Recalculating goods pricing with skills: buyer={}, supplier={}",
+            buyer, supplier
         );
 
-        // Do not wipe the manifest; keep trade goods and sell plans across recalculations
+        // Recalculate buy prices using saved rolls
         write_available_goods.update(|ag| {
-            ag.price_goods_to_buy(&origin_world.get_trade_classes(), buyer, supplier);
+            ag.recalc_buy_prices(&origin_world.get_trade_classes(), buyer, supplier);
+
+            // Recalculate sell prices if we have a destination
+            if let Some(ref world) = dest_world {
+                ag.recalc_sell_prices(Some(&world.get_trade_classes()), supplier, buyer);
+            } else {
+                ag.recalc_sell_prices(None, supplier, buyer);
+            }
+
             ag.sort_by_discount();
         });
 
-        // Reprice the manifest.
+        // Reprice the manifest using saved rolls
         write_ship_manifest.update(|manifest| {
-            manifest.price_goods(
+            manifest.recalc_prices(
                 &origin_world,
                 buyer_broker_skill.get(),
                 seller_broker_skill.get(),
@@ -441,29 +446,6 @@ pub fn Trade() -> impl IntoView {
 
         let mut rng = rand::rng();
         hack_ship_recompute_manifest_price_set.set(rng.random());
-
-        // Calculate passengers.
-        if let Some(world) = dest_world {
-            if distance > 0 {
-                write_available_passengers.set(Some(AvailablePassengers::generate(
-                    origin_world.get_population(),
-                    origin_world.port,
-                    origin_world.travel_zone,
-                    origin_world.tech_level,
-                    world.get_population(),
-                    world.port,
-                    world.travel_zone,
-                    world.tech_level,
-                    distance,
-                    i32::from(steward_skill.get()),
-                    i32::from(buyer_broker_skill.get()),
-                )));
-            } else {
-                write_available_passengers.set(None);
-            }
-        } else {
-            write_available_passengers.set(None);
-        }
     });
 
     view! {
@@ -487,6 +469,61 @@ pub fn Trade() -> impl IntoView {
                     coords=dest_coords
                     zone=dest_zone
                 />
+                <div style="display: flex; align-items: center; padding: 10px;">
+                    <button
+                        class="blue-button"
+                        on:click=move |_| {
+                            debug!("Generate button clicked - regenerating market");
+                            // Trigger market regeneration
+                            let origin = origin_world.get();
+                            write_available_goods.update(|ag| {
+                                ag.price_goods_to_buy(
+                                    &origin.get_trade_classes(),
+                                    buyer_broker_skill.get(),
+                                    seller_broker_skill.get(),
+                                );
+                                ag.sort_by_discount();
+                            });
+
+                            // Reprice the manifest
+                            write_ship_manifest.update(|manifest| {
+                                manifest.price_goods(
+                                    &origin,
+                                    buyer_broker_skill.get(),
+                                    seller_broker_skill.get(),
+                                );
+                            });
+
+                            let mut rng = rand::rng();
+                            hack_ship_recompute_manifest_price_set.set(rng.random());
+
+                            // Regenerate passengers
+                            if let Some(world) = dest_world.get() {
+                                if distance.get() > 0 {
+                                    write_available_passengers.set(Some(AvailablePassengers::generate(
+                                        origin.get_population(),
+                                        origin.port,
+                                        origin.travel_zone,
+                                        origin.tech_level,
+                                        world.get_population(),
+                                        world.port,
+                                        world.travel_zone,
+                                        world.tech_level,
+                                        distance.get(),
+                                        i32::from(steward_skill.get()),
+                                        i32::from(buyer_broker_skill.get()),
+                                    )));
+                                } else {
+                                    write_available_passengers.set(None);
+                                }
+                            } else {
+                                write_available_passengers.set(None);
+                            }
+                        }
+                    >
+                        "Generate"
+                    </button>
+                </div>
             </div>
             <div class:key-region>
                 <div class:skill-entry>
@@ -1694,6 +1731,9 @@ fn ShipManifestView(
                                             sell_price: None,
                                             sell_price_comment: String::new(),
                                             source_index: entry.index,
+                                            quantity_roll: qty / entry.quantity.multiplier as i32,
+                                            buy_price_roll: 10, // Default middle roll
+                                            sell_price_roll: None,
                                         };
                                         write_ship_manifest
                                             .update(|manifest| {

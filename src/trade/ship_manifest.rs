@@ -91,6 +91,15 @@ impl ShipManifest {
             .price_goods_to_sell(Some(trade_classes), buyer, supplier);
     }
 
+    /// Recalculate prices for all goods in the manifest using saved rolls.
+    ///
+    /// This allows skill changes to update prices without re-rolling.
+    pub fn recalc_prices(&mut self, world: &World, buyer: i16, supplier: i16) {
+        let trade_classes = world.get_trade_classes();
+        self.trade_goods
+            .recalc_sell_prices(Some(&trade_classes), supplier, buyer);
+    }
+
     ///
     /// Calculates total passenger revenue for the manifest
     ///
