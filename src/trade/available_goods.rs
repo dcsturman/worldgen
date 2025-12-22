@@ -104,6 +104,14 @@ use crate::trade::TradeClass;
 /// Each good maintains a reference to its source trade table entry, allowing
 /// access to trade DMs, availability restrictions, and other metadata needed
 /// for advanced trade calculations.
+///
+/// ## Saved Rolls
+///
+/// To prevent recalculation on every parameter change, the original dice rolls
+/// are saved and used to recalculate prices when skills change:
+/// - **quantity_roll**: Raw dice total before population modifier and multiplier
+/// - **buy_price_roll**: Raw 3d6 roll for buy price calculation
+/// - **sell_price_roll**: Raw 3d6 roll for sell price calculation (if applicable)
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct Good {
     /// Name of the good
@@ -125,6 +133,12 @@ pub struct Good {
     pub sell_price_comment: String,
     /// Index into the trade table for this good.
     pub source_index: i16,
+    /// Raw dice roll for quantity (before population modifier and multiplier)
+    pub quantity_roll: i32,
+    /// Raw 3d6 roll for buy price calculation.  None (for never rolled) or Some(previous roll)
+    pub buy_price_roll: Option<i32>,
+    /// Raw 3d6 roll for sell price calculation (if applicable)
+    pub sell_price_roll: Option<i32>,
 }
 
 impl Display for Good {
@@ -312,11 +326,13 @@ impl AvailableGoodsTable {
         let dice_count: i32 = entry.quantity.dice as i32;
         let multiplier: i32 = entry.quantity.multiplier as i32;
 
-        let mut total = 0i32;
+        // Save the raw dice roll before modifiers
+        let mut raw_roll = 0i32;
         for _ in 0..dice_count {
-            total += rng.random_range(1..=6);
+            raw_roll += rng.random_range(1..=6);
         }
 
+        let mut total = raw_roll;
         total += if world_population <= 3 {
             -3
         } else if world_population >= 9 {
@@ -339,6 +355,7 @@ impl AvailableGoodsTable {
             .find(|g| g.source_index == entry.index)
         {
             existing.quantity += quantity;
+            // Note: we keep the original quantity_roll from the first generation
             return Ok(());
         }
 
@@ -353,6 +370,9 @@ impl AvailableGoodsTable {
             sell_price: None,
             sell_price_comment: String::default(),
             source_index: entry.index,
+            quantity_roll: raw_roll,
+            buy_price_roll: None, // Will be set when pricing
+            sell_price_roll: None,
         };
 
         self.goods.push(good);
@@ -386,7 +406,7 @@ impl AvailableGoodsTable {
             self.goods.push(good);
         }
 
-        // Remove the good if the quanity is now <= 0
+        // Remove the good if the quantity is now <= 0
         self.goods.retain(|g| g.quantity > 0);
     }
 
@@ -405,7 +425,7 @@ impl AvailableGoodsTable {
             self.goods.push(good.clone());
         }
 
-        // Remove the good if the quanity is now <= 0
+        // Remove the good if the quantity is now <= 0
         self.goods.retain(|g| g.quantity > 0);
     }
 
@@ -566,8 +586,15 @@ impl AvailableGoodsTable {
     ) {
         let mut rng = rand::rng();
         for good in &mut self.goods {
-            // Roll 2d6
-            let roll = rng.random_range(1..=6) + rng.random_range(1..=6) + rng.random_range(1..=6);
+            // Roll 3d6 and save it
+            let roll = match good.buy_price_roll {
+                Some(roll) => roll,
+                None => {
+                    let roll = rng.random_range(1..=6) + rng.random_range(1..=6) + rng.random_range(1..=6);
+                    good.buy_price_roll = Some(roll);
+                    roll
+                }
+            };
 
             let entry = TradeTable::global()
                 .get(good.source_index)
@@ -577,6 +604,7 @@ impl AvailableGoodsTable {
                         &good.source_index
                     )
                 });
+
             let purchase_origin_dm = find_max_dm(&entry.purchase_dm, origin_trade_classes);
             let sale_origin_dm = find_max_dm(&entry.sale_dm, origin_trade_classes);
             // Calculate the modified roll
@@ -688,6 +716,14 @@ impl AvailableGoodsTable {
         );
     }
 
+    /// Reset all the stored die rolls to None so that we regenerate all values.
+    pub fn reset_die_rolls(&mut self) {
+        for good in &mut self.goods {
+            good.buy_price_roll = None;
+            good.sell_price_roll = None;
+        }
+    }
+
     /// Calculate selling prices for goods at potential destination worlds
     ///
     /// See description for `price_goods_to_sell`.  This version allows
@@ -737,9 +773,17 @@ impl Good {
         mut rng: impl rand::Rng,
     ) {
         if let Some(trade_classes) = trade_classes {
-            // Roll 3d6
-            let roll = rng.random_range(1..=6) + rng.random_range(1..=6) + rng.random_range(1..=6);
-
+            // Roll 3d6 and save it
+            debug!("(Good.price_to_sell_rng) Pricing {} with prior roll of {:?} with trade classes {trade_classes:?}", self.name, self.sell_price_roll);
+            let roll = match self.sell_price_roll {
+                Some(roll) => roll,
+                None => {
+                    let roll = rng.random_range(1..=6) + rng.random_range(1..=6) + rng.random_range(1..=6);
+                    self.sell_price_roll = Some(roll);
+                    roll
+                }
+            };
+            
             let entry = TradeTable::global()
                 .get(self.source_index)
                 .unwrap_or_else(|| {
@@ -801,8 +845,9 @@ impl Good {
 
             self.sell_price = Some((self.base_cost as f64 * price_multiplier).round() as i32);
         } else {
+            debug!("price_to_sell_rng: No trade classes provided, clearing sell price for {}", self.name);
             self.sell_price = None;
-            self.sell_price_comment.clear();
+            self.sell_price_comment = "NOTHING TO SEE HERE".to_string();
         }
     }
 }
@@ -1030,6 +1075,9 @@ mod tests {
             sell_price_comment: String::default(),
             sell_price: None,
             source_index: 11,
+            quantity_roll: 10,
+            buy_price_roll: None,
+            sell_price_roll: None,
         };
 
         // Check the display output
@@ -1099,6 +1147,9 @@ mod tests {
             sell_price_comment: String::default(),
             sell_price: None,
             source_index: 11,
+            quantity_roll: 10,
+            buy_price_roll: Some(10),
+            sell_price_roll: None,
         };
 
         let good2 = Good {
@@ -1111,6 +1162,9 @@ mod tests {
             sell_price_comment: String::default(),
             sell_price: None,
             source_index: 12,
+            quantity_roll: 10,
+            buy_price_roll: Some(10),
+            sell_price_roll: None,
         };
 
         let good3 = Good {
@@ -1123,6 +1177,9 @@ mod tests {
             sell_price_comment: String::default(),
             sell_price: None,
             source_index: 13,
+            quantity_roll: 10,
+            buy_price_roll: Some(10),
+            sell_price_roll: None,
         };
 
         // Add goods in random order

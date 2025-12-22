@@ -85,10 +85,15 @@ impl ShipManifest {
     /// This is very similar to AvailableGoodsTable::price_goods_to_sell, but we
     /// have individual goods vs the full table, so iterate over the goods and price
     /// each.  We use the trade classes of the world provided.
-    pub fn price_goods(&mut self, world: &World, buyer: i16, supplier: i16) {
-        let trade_classes = world.get_trade_classes();
+    pub fn price_goods(&mut self, world: &Option<World>, buyer: i16, supplier: i16) {
+        let trade_classes = world.as_ref().map(|w| w.get_trade_classes());
         self.trade_goods
-            .price_goods_to_sell(Some(trade_classes), buyer, supplier);
+            .price_goods_to_sell(trade_classes, buyer, supplier);
+    }
+
+    // Reset all the stored die rolls to None so that we regenerate all values.
+    pub fn reset_die_rolls(&mut self) {
+        self.trade_goods.reset_die_rolls();
     }
 
     ///
@@ -149,7 +154,7 @@ impl ShipManifest {
     ///
     /// let mut manifest = ShipManifest::default();
     /// let mut available_passengers = AvailablePassengers::default();
-    /// available_passengers.freight_lots = vec![FreightLot { size: 10 }, FreightLot { size: 20 }, FreightLot { size: 30 }];
+    /// available_passengers.freight_lots = vec![FreightLot { size: 10, size_roll: 1}, FreightLot { size: 20, size_roll: 2 }, FreightLot { size: 30, size_roll: 3 }];
     /// manifest.freight_lot_indices = vec![0, 2, 5]; // 3 freight lots
     ///
     /// let revenue = manifest.freight_revenue(3, &available_passengers);
@@ -203,6 +208,9 @@ impl ShipManifest {
     ///     sell_price: None,
     ///     sell_price_comment: String::new(),
     ///     source_index: entry.index,
+    ///     quantity_roll: 10,
+    ///     buy_price_roll: None,
+    ///     sell_price_roll: None,
     /// };
     ///
     /// // Add a good with quantity 5
@@ -313,7 +321,6 @@ impl ShipManifest {
         // Compute total revenue
         let total = passenger_revenue + freight_revenue + goods_profit;
 
-        debug!("Processing trades: passenger_revenue={passenger_revenue}, freight_revenue={freight_revenue}, goods_profit={goods_profit}, total={total}");
         // Add to accumulated profit
         self.profit += total;
 

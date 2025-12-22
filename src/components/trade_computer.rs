@@ -140,7 +140,7 @@
 use codee::string::JsonSerdeCodec;
 use leptos::prelude::*;
 use leptos_use::storage::{
-    use_session_storage, use_session_storage_with_options, UseStorageOptions,
+    use_local_storage, use_local_storage_with_options, UseStorageOptions,
 };
 #[allow(unused_imports)]
 use log::{debug, error};
@@ -209,7 +209,7 @@ use crate::INITIAL_UPP;
 pub fn Trade() -> impl IntoView {
     // The main world always exists (starts with a default value) and we use that type in the context.
     let (origin_world, write_origin_world, _) =
-        use_session_storage_with_options::<World, JsonSerdeCodec>(
+        use_local_storage_with_options::<World, JsonSerdeCodec>(
             "worldgen:origin_world:v1",
             UseStorageOptions::default()
                 .initial_value(World::from_upp(INITIAL_NAME, INITIAL_UPP, false, true).unwrap()),
@@ -220,16 +220,16 @@ pub fn Trade() -> impl IntoView {
     // and the destination world in the state.
 
     let (dest_world, write_dest_world, _) =
-        use_session_storage::<Option<World>, JsonSerdeCodec>("worldgen:dest_world:v1");
+        use_local_storage::<Option<World>, JsonSerdeCodec>("worldgen:dest_world:v1");
     let (available_goods, write_available_goods, _) =
-        use_session_storage::<AvailableGoodsTable, JsonSerdeCodec>("worldgen:available_goods:v1");
+        use_local_storage::<AvailableGoodsTable, JsonSerdeCodec>("worldgen:available_goods:v1");
 
     let (available_passengers, write_available_passengers, _) =
-        use_session_storage::<Option<AvailablePassengers>, JsonSerdeCodec>(
+        use_local_storage::<Option<AvailablePassengers>, JsonSerdeCodec>(
             "worldgen:available_passengers:v1",
         );
     let (ship_manifest, write_ship_manifest, _) =
-        use_session_storage_with_options::<ShipManifest, JsonSerdeCodec>(
+        use_local_storage_with_options::<ShipManifest, JsonSerdeCodec>(
             "worldgen:manifest:v1",
             UseStorageOptions::default()
                 .initial_value(ShipManifest::default())
@@ -237,19 +237,19 @@ pub fn Trade() -> impl IntoView {
         );
     //let (ship_manifest, write_ship_manifest) = signal(ShipManifest::default());
 
-    // Used solely because there's a bug in `use_session_storage` that seems to restore from storage when we don't want it to
+    // Used solely because there's a bug in `use_local_storage` that seems to restore from storage when we don't want it to
     let (hack_ship_recompute_manifest_price, hack_ship_recompute_manifest_price_set) = signal(0u64);
 
     // Skills involved, both player and adversary.
     let (buyer_broker_skill, write_buyer_broker_skill, _) =
-        use_session_storage::<i16, JsonSerdeCodec>("worldgen:buyer_broker_skill:v1");
+        use_local_storage::<i16, JsonSerdeCodec>("worldgen:buyer_broker_skill:v1");
     let (seller_broker_skill, write_seller_broker_skill, _) =
-        use_session_storage::<i16, JsonSerdeCodec>("worldgen:seller_broker_skill:v1");
+        use_local_storage::<i16, JsonSerdeCodec>("worldgen:seller_broker_skill:v1");
     let (steward_skill, write_steward_skill, _) =
-        use_session_storage::<i16, JsonSerdeCodec>("worldgen:steward_skill:v1");
+        use_local_storage::<i16, JsonSerdeCodec>("worldgen:steward_skill:v1");
     // Toggle for including illegal goods in market generation
     let (illegal_goods, write_illegal_goods, _) =
-        use_session_storage::<bool, JsonSerdeCodec>("worldgen:illegal_goods:v1");
+        use_local_storage::<bool, JsonSerdeCodec>("worldgen:illegal_goods:v1");
 
     // Dialog state for manually adding goods to manifest
     let show_add_manual = RwSignal::new(false);
@@ -309,7 +309,6 @@ pub fn Trade() -> impl IntoView {
             let calculated_distance = crate::components::traveller_map::calculate_hex_distance(
                 origin.0, origin.1, dest.0, dest.1,
             );
-            debug!("Calculated distance = {calculated_distance}");
             distance.set(calculated_distance);
         }
     };
@@ -319,8 +318,11 @@ pub fn Trade() -> impl IntoView {
     Effect::new(move |_| {
         let _ = hack_ship_recompute_manifest_price.get();
         write_ship_manifest.update(|manifest| {
+            debug!("PRICE GOODS WITH ORIGIN A");
+            // Set world_to_use to be the dest_world if it exists otherwise use the origin_world.
+            let world_to_use = dest_world.get().unwrap_or_else(|| origin_world.get());
             manifest.price_goods(
-                &origin_world.get(),
+                &Some(world_to_use),
                 buyer_broker_skill.get(),
                 seller_broker_skill.get(),
             );
@@ -332,20 +334,12 @@ pub fn Trade() -> impl IntoView {
     Effect::new(move |prev: Option<(String, String)>| {
         if let Some((prev_name, prev_uwp)) = &prev {
             if *prev_name == origin_world_name.get() && *prev_uwp == origin_uwp.get() {
-                debug!("Origin world name and uwp haven't changed; skipping rebuild: {prev_name}, {prev_uwp}");
                 return (prev_name.to_string(), prev_uwp.to_string());
             }
         }
-        debug!(
-            "Rebuilding origin world as name or uwp changed. Was {:?}; Now name = {}, uwp = {} ",
-            &prev,
-            origin_world_name.get(),
-            origin_uwp.get()
-        );
 
         let name = origin_world_name.get();
         let uwp = origin_uwp.get();
-        debug!("In first Effect: name = {name}, uwp = {uwp}");
         if !name.is_empty() && uwp.len() == 9 {
             let Ok(mut world) = World::from_upp(&name, &uwp, false, false) else {
                 log::error!("Failed to parse UPP in hook to build origin world: {uwp}");
@@ -380,7 +374,6 @@ pub fn Trade() -> impl IntoView {
     Effect::new(move |prev: Option<(String, String)>| {
         if let Some((prev_name, prev_uwp)) = &prev {
             if *prev_name == dest_world_name.get() && *prev_uwp == dest_uwp.get() {
-                debug!("Destination world name and uwp haven't changed; skipping rebuild: {prev_name}, {prev_uwp}");
                 return (prev_name.to_string(), prev_uwp.to_string());
             }
         }
@@ -388,7 +381,6 @@ pub fn Trade() -> impl IntoView {
         let name = dest_world_name.get();
         let uwp = dest_uwp.get();
 
-        debug!("Rebuilding destination world as name or uwp changed.");
         if !name.is_empty() && uwp.len() == 9 {
             let Ok(mut world) = World::from_upp(&name, &uwp, false, false) else {
                 log::error!("Failed to parse UPP in hook to build destination world: {uwp}");
@@ -398,8 +390,28 @@ pub fn Trade() -> impl IntoView {
             world.gen_trade_classes();
             world.coordinates = dest_coords.get();
             world.travel_zone = dest_zone.get();
-            write_dest_world.set(Some(world));
+
+            let was_none = dest_world.get().is_none();
+            write_dest_world.set(Some(world.clone()));
             calc_distance_closure();
+
+            // Generate passengers and freight when destination is added for the first time
+            if was_none && distance.get() > 0 {
+                let origin = origin_world.get();
+                write_available_passengers.set(Some(AvailablePassengers::generate(
+                    origin.get_population(),
+                    origin.port,
+                    origin.travel_zone,
+                    origin.tech_level,
+                    world.get_population(),
+                    world.port,
+                    world.travel_zone,
+                    world.tech_level,
+                    distance.get(),
+                    i32::from(steward_skill.get()),
+                    i32::from(buyer_broker_skill.get()),
+                )));
+            }
         } else {
             // If we don't have a valid name, reset other UI elements to reasonable defaults.
             write_dest_world.set(None);
@@ -409,61 +421,77 @@ pub fn Trade() -> impl IntoView {
         (name, uwp)
     });
 
-    // On a change to origin_world and/or dest_world updating pricing on available goods.
-    // Those updates are based on RNG so even with the same inputs, will change frequently.
+    // Recalculate prices and passengers when skills or world parameters change (using saved rolls, not regenerating)
     Effect::new(move |_| {
         let buyer = buyer_broker_skill.get();
         let supplier = seller_broker_skill.get();
-        let distance = distance.get();
-        let _illegal_goods = illegal_goods.get();
+        let steward = steward_skill.get();
         let origin_world = origin_world.get();
         let dest_world = dest_world.get();
+        let dist = distance.get();
 
-        debug!(
-            "Updating goods pricing with origin world = {:?}",
-            origin_world
-        );
+        // Check if destination world changed (not just skills)
+        let current_dest_name = dest_world.as_ref().map(|w| w.name.clone());
 
-        // Do not wipe the manifest; keep trade goods and sell plans across recalculations
+        // Recalculate buy prices using saved rolls
         write_available_goods.update(|ag| {
             ag.price_goods_to_buy(&origin_world.get_trade_classes(), buyer, supplier);
+
+            // Recalculate sell prices if we have a destination
+            if let Some(ref world) = dest_world {
+                ag.price_goods_to_sell(Some(world.get_trade_classes()), supplier, buyer);
+            } else {
+                ag.price_goods_to_sell(None, supplier, buyer);
+            }
+
             ag.sort_by_discount();
         });
 
-        // Reprice the manifest.
+        // Reprice the manifest
+        // Manifest goods are sold at the destination, so use dest_world for pricing
         write_ship_manifest.update(|manifest| {
+            // Destination changed - generate new sell price rolls
+            debug!(
+                "EFFECT A: Destination changed, generating new prices for manifest on world {}.",
+                dest_world
+                    .as_ref()
+                    .map(|w| w.name.clone())
+                    .unwrap_or_else(|| "None".to_string())
+            );
             manifest.price_goods(
-                &origin_world,
+                &dest_world,
                 buyer_broker_skill.get(),
                 seller_broker_skill.get(),
             );
         });
 
+        // Recalculate passengers and freight using saved rolls
+        if let Some(ref world) = dest_world {
+            if dist > 0 {
+                write_available_passengers.update(|passengers_opt| {
+                    if let Some(passengers) = passengers_opt {
+                        passengers.recalculate(
+                            origin_world.get_population(),
+                            origin_world.port,
+                            origin_world.travel_zone,
+                            origin_world.tech_level,
+                            world.get_population(),
+                            world.port,
+                            world.travel_zone,
+                            world.tech_level,
+                            dist,
+                            i32::from(steward),
+                            i32::from(buyer),
+                        );
+                    }
+                });
+            }
+        }
+
         let mut rng = rand::rng();
         hack_ship_recompute_manifest_price_set.set(rng.random());
 
-        // Calculate passengers.
-        if let Some(world) = dest_world {
-            if distance > 0 {
-                write_available_passengers.set(Some(AvailablePassengers::generate(
-                    origin_world.get_population(),
-                    origin_world.port,
-                    origin_world.travel_zone,
-                    origin_world.tech_level,
-                    world.get_population(),
-                    world.port,
-                    world.travel_zone,
-                    world.tech_level,
-                    distance,
-                    i32::from(steward_skill.get()),
-                    i32::from(buyer_broker_skill.get()),
-                )));
-            } else {
-                write_available_passengers.set(None);
-            }
-        } else {
-            write_available_passengers.set(None);
-        }
+        current_dest_name
     });
 
     view! {
@@ -487,6 +515,65 @@ pub fn Trade() -> impl IntoView {
                     coords=dest_coords
                     zone=dest_zone
                 />
+                <div style="display: flex; align-items: center; padding: 10px;">
+                    <button
+                        class="blue-button"
+                        on:click=move |_| {
+                            debug!("GENERATE BUTTON clicked - regenerating market");
+                            let origin = origin_world.get();
+                            write_available_goods
+                                .update(|ag| {
+                                    ag.reset_die_rolls();
+                                    ag.price_goods_to_buy(
+                                        &origin.get_trade_classes(),
+                                        buyer_broker_skill.get(),
+                                        seller_broker_skill.get(),
+                                    );
+                                    ag.sort_by_discount();
+                                });
+                            write_ship_manifest
+                                .update(|manifest| {
+                                    manifest.reset_die_rolls();
+                                    manifest
+                                        .price_goods(
+                                            &Some(origin.clone()),
+                                            buyer_broker_skill.get(),
+                                            seller_broker_skill.get(),
+                                        );
+                                });
+                            let mut rng = rand::rng();
+                            hack_ship_recompute_manifest_price_set.set(rng.random());
+                            if let Some(world) = dest_world.get() {
+                                if distance.get() > 0 {
+                                    write_available_passengers
+                                        .set(
+                                            Some(
+                                                AvailablePassengers::generate(
+                                                    origin.get_population(),
+                                                    origin.port,
+                                                    origin.travel_zone,
+                                                    origin.tech_level,
+                                                    world.get_population(),
+                                                    world.port,
+                                                    world.travel_zone,
+                                                    world.tech_level,
+                                                    distance.get(),
+                                                    i32::from(steward_skill.get()),
+                                                    i32::from(buyer_broker_skill.get()),
+                                                ),
+                                            ),
+                                        );
+                                } else {
+                                    write_available_passengers.set(None);
+                                }
+                            } else {
+                                write_available_passengers.set(None);
+                            }
+                        }
+                    >
+                        "Generate"
+                    </button>
+                </div>
             </div>
             <div class:key-region>
                 <div class:skill-entry>
@@ -499,7 +586,6 @@ pub fn Trade() -> impl IntoView {
                             value=move || distance.get().to_string()
                             on:input=move |ev| {
                                 if let Ok(val) = event_target_value(&ev).parse::<i32>() {
-                                    debug!("Setting distance to {val}");
                                     distance.set(val);
                                 }
                             }
@@ -543,7 +629,6 @@ pub fn Trade() -> impl IntoView {
                             max="100"
                             value=move || buyer_broker_skill.get()
                             on:change=move |ev| {
-                                debug!("Setting buyer broker skill to {}", event_target_value(&ev));
                                 write_buyer_broker_skill
                                     .set(event_target_value(&ev).parse().unwrap_or(0));
                             }
@@ -604,7 +689,8 @@ pub fn Trade() -> impl IntoView {
             </div>
             <ShipManifestView
                 origin_swap=dest_to_origin
-                origin_world=origin_world
+                _origin_world=origin_world
+                dest_world=dest_world
                 buyer_broker_skill=buyer_broker_skill
                 seller_broker_skill=seller_broker_skill
                 distance=distance
@@ -618,10 +704,13 @@ pub fn Trade() -> impl IntoView {
             />
 
             <GoodsToSellView
+                origin_world=origin_world
+                dest_world=dest_world
                 ship_manifest=ship_manifest
                 write_ship_manifest=write_ship_manifest
                 show_add_manual=show_add_manual
             />
+
             <TradeView
                 origin_world=origin_world
                 dest_world=dest_world
@@ -659,14 +748,32 @@ fn print() {
 /// Sibling section beneath the manifest.
 #[component]
 fn GoodsToSellView(
+    origin_world: Signal<World>,
+    dest_world: Signal<Option<World>>,
     ship_manifest: Signal<ShipManifest>,
     write_ship_manifest: WriteSignal<ShipManifest>,
     show_add_manual: RwSignal<bool>,
 ) -> impl IntoView {
+    let world_to_sell_on = Memo::new(move |_| {
+        let world_name_classes = dest_world
+            .get()
+            .as_ref()
+            .map(|w| (w.name.clone(), w.trade_classes_string()))
+            .unwrap_or_else(|| {
+                (
+                    origin_world.get().name.clone(),
+                    origin_world.get().trade_classes_string(),
+                )
+            });
+        format!("{} [{}]", world_name_classes.0, world_name_classes.1)
+    });
+    
     view! {
         <div class="output-region">
             <div class="trade-header-row">
-                <h2>"Goods to Sell"</h2>
+                // Add the name of either destination planet (if it exists) and its trade classes, or if
+                // it doesn't exist the origin world and its trade classes.
+                <h2>"Goods to Sell on " {move ||  world_to_sell_on.get()}</h2>
                 <button
                     class="manifest-button manifest-add-good-button"
                     on:click=move |_| show_add_manual.set(true)
@@ -717,7 +824,8 @@ fn GoodsToSellView(
 
                                             view! {
                                                 <SellGoodRow
-                                                    good=good
+                                                    good_index=good.source_index
+                                                    ship_manifest=ship_manifest
                                                     write_ship_manifest=write_ship_manifest
                                                 />
                                             }
@@ -734,37 +842,56 @@ fn GoodsToSellView(
 }
 
 #[component]
-fn SellGoodRow(good: Good, write_ship_manifest: WriteSignal<ShipManifest>) -> impl IntoView {
-    let mut good_copy = good.clone();
+fn SellGoodRow(
+    good_index: i16,
+    ship_manifest: Signal<ShipManifest>,
+    write_ship_manifest: WriteSignal<ShipManifest>,
+) -> impl IntoView {
+    let good = Memo::new(move |_| {
+        ship_manifest.with(|manifest| {
+            manifest
+                .trade_goods
+                .get_by_index(good_index)
+                .cloned()
+                .unwrap_or_default()
+        })
+    });
+
     let update_sold = move |ev| {
+        let current_good = good.get_untracked();
         let new_value = event_target_value(&ev)
             .parse::<i32>()
             .unwrap_or(0)
-            .clamp(0, good_copy.quantity);
-        good_copy.transacted = new_value;
-        debug!("Updating sold quantity to {new_value} for {good_copy:?}");
+            .clamp(0, current_good.quantity);
         write_ship_manifest.update(|manifest| {
-            manifest.trade_goods.update_good(good_copy.clone());
+            manifest.trade_goods.update_good(Good {
+                transacted: new_value,
+                ..current_good
+            });
         });
     };
 
-    let sell_cost_comment = move || good.sell_price_comment.clone();
+    let sell_cost_comment = move || good.get().sell_price_comment.clone();
     view! {
         <tr prop:title=sell_cost_comment>
-            <td class="table-entry">{move || good.name.clone()}</td>
-            <td class="table-entry">{move || good.quantity.to_string()}</td>
-            <td class="table-entry">{move || good.base_cost.to_string()}</td>
-            <td class="table-entry">{move || good.buy_cost.to_string()}</td>
+            <td class="table-entry">{move || good.get().name.clone()}</td>
+            <td class="table-entry">{move || good.get().quantity.to_string()}</td>
+            <td class="table-entry">{move || good.get().base_cost.to_string()}</td>
+            <td class="table-entry">{move || good.get().buy_cost.to_string()}</td>
             <td class="table-entry">
                 {move || {
-                    if let Some(sp) = good.sell_price { sp.to_string() } else { "-".to_string() }
+                    if let Some(sp) = good.get().sell_price {
+                        sp.to_string()
+                    } else {
+                        "-".to_string()
+                    }
                 }}
             </td>
             <td class="table-entry">
                 {move || {
-                    if let Some(sp) = good.sell_price {
-                        let pct = (((sp as f64 / good.buy_cost as f64) * 100.0) - 100.0).round()
-                            as i32;
+                    if let Some(sp) = good.get().sell_price {
+                        let pct = (((sp as f64 / good.get().buy_cost as f64) * 100.0) - 100.0)
+                            .round() as i32;
                         format!("{}%", pct)
                     } else {
                         "-".to_string()
@@ -775,11 +902,11 @@ fn SellGoodRow(good: Good, write_ship_manifest: WriteSignal<ShipManifest>) -> im
                 <input
                     type="number"
                     min="0"
-                    max=good.quantity
-                    prop:value=good.transacted
+                    max=move || good.get().quantity
+                    prop:value=move || good.get().transacted
                     on:input=update_sold
                     class=move || {
-                        if good.transacted > 0 {
+                        if good.get().transacted > 0 {
                             "purchased-input purchased-input-active"
                         } else {
                             "purchased-input"
@@ -1299,7 +1426,8 @@ fn PassengerView(
 #[component]
 fn ShipManifestView(
     origin_swap: impl Fn() + Clone + 'static,
-    origin_world: Signal<World>,
+    _origin_world: Signal<World>,
+    dest_world: Signal<Option<World>>,
     buyer_broker_skill: Signal<i16>,
     seller_broker_skill: Signal<i16>,
     distance: RwSignal<i32>,
@@ -1537,7 +1665,7 @@ fn ShipManifestView(
                             {move || {
                                 let manifest = ship_manifest.get();
                                 let revenue = if let Some(passengers) = available_passengers.get() {
-                                        manifest.freight_revenue(distance.get(), &passengers) as i64
+                                    manifest.freight_revenue(distance.get(), &passengers) as i64
                                 } else {
                                     0
                                 };
@@ -1564,8 +1692,10 @@ fn ShipManifestView(
                                 let manifest = ship_manifest.get();
                                 let passenger_revenue = manifest.passenger_revenue(distance.get())
                                     as i64;
-                                let freight_revenue = if let Some(passengers) = available_passengers.get() {
-                                        manifest.freight_revenue(distance.get(), &passengers) as i64
+                                let freight_revenue = if let Some(passengers) = available_passengers
+                                    .get()
+                                {
+                                    manifest.freight_revenue(distance.get(), &passengers) as i64
                                 } else {
                                     0
                                 };
@@ -1581,17 +1711,18 @@ fn ShipManifestView(
                         <button
                             class="manifest-button manifest-execute-trades-button"
                             on:click=move |_| {
+                                debug!("ON BUTTON: pricing goods.");
                                 write_ship_manifest
                                     .update(|manifest| {
                                         manifest
                                             .process_trades(
                                                 distance.get(),
                                                 &available_goods.read().goods,
-                                                &available_passengers.get()
+                                                &available_passengers.get(),
                                             );
                                         manifest
                                             .price_goods(
-                                                &origin_world.get(),
+                                                &dest_world.get(),
                                                 buyer_broker_skill.get(),
                                                 seller_broker_skill.get(),
                                             );
@@ -1694,6 +1825,9 @@ fn ShipManifestView(
                                             sell_price: None,
                                             sell_price_comment: String::new(),
                                             source_index: entry.index,
+                                            quantity_roll: qty / entry.quantity.multiplier as i32,
+                                            buy_price_roll: None,
+                                            sell_price_roll: None,
                                         };
                                         write_ship_manifest
                                             .update(|manifest| {
