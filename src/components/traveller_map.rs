@@ -437,13 +437,11 @@ pub async fn fetch_data_world(sector: &str, hex: &str) -> Result<WorldDataRespon
     let encoded_sector = web_sys::js_sys::encode_uri_component(sector);
     let url = format!("https://travellermap.com/data/{}/{}", encoded_sector, hex);
 
-    debug!("Fetching world data from {url}");
     let request = web_sys::Request::new_with_str(&url)?;
     let window = web_sys::window().unwrap();
     let response_value = JsFuture::from(window.fetch_with_request(&request)).await?;
     let response: web_sys::Response = response_value.dyn_into()?;
     let json = JsFuture::from(response.json()?).await?;
-    debug!("Response: {json:?}");
     let api_response: WorldDataApiResponse = serde_wasm_bindgen::from_value(json)?;
 
     // Take the first world from the array
@@ -624,7 +622,6 @@ pub fn WorldSearch(
         for (search_name, sector, world_uwp, hex_x, hex_y) in search_results.get() {
             if world_name == search_name && sector_name == sector {
                 let hex_string = format!("{:02}{:02}", hex_x, hex_y);
-                debug!("Fetching data for {world_name} from sector {sector}, hex {hex_string}");
 
                 // Set the name to just the world name
                 name.set(world_name.to_string());
@@ -632,7 +629,6 @@ pub fn WorldSearch(
                 wasm_bindgen_futures::spawn_local(async move {
                     match fetch_data_world(&sector, &hex_string).await {
                         Ok(world_data) => {
-                            debug!("Received world data: {:?}", world_data);
                             let world_zone = match world_data.zone {
                                 Some(zone) => match zone.as_str() {
                                     "A" => ZoneClassification::Amber,
@@ -641,7 +637,6 @@ pub fn WorldSearch(
                                 },
                                 None => ZoneClassification::Green,
                             };
-                            debug!("Setting zone to {:?}", world_zone);
                             zone.set(world_zone);
                             uwp.set(world_data.uwp);
                         }
@@ -687,16 +682,12 @@ pub fn WorldSearch(
                                 ));
                             }
                         }
-                        debug!(
-                            "Full search results (len = {}): {world_results:?}",
-                            world_results.len()
-                        );
                         if world_results.len() > MAX_SEARCH_RESULTS {
                             // Sort by world name length (shorter names first)
                             world_results.sort_by(|a, b| a.0.len().cmp(&b.0.len()));
                             world_results.truncate(MAX_SEARCH_RESULTS);
                         }
-                        debug!("Truncated search results: {:?}", world_results);
+
                         set_search_results.set(world_results);
                         set_is_loading.set(false);
                     }

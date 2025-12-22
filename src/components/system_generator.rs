@@ -203,7 +203,6 @@ pub fn World() -> impl IntoView {
     Effect::new(move |_| {
         let upp = upp.get();
         let name = main_world_name.get();
-        debug!("Building world {name} with UPP {upp}");
 
         // Attempt to parse the UWP string into a world object
         let Ok(mut w) = World::from_upp(&name, upp.as_str(), false, true) else {

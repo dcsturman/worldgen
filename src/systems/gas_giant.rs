@@ -215,10 +215,8 @@ impl HasSatellites for GasGiant {
         };
 
         while self.get_satellite(orbit).is_some() {
-            debug!("(GasGiant.gen_satellite_orbit) Having to bump orbit up by 1.");
             orbit += 1;
         }
-        debug!("(GasGiant.gen_satellite_orbit) Orbit is {orbit}");
         orbit
     }
 

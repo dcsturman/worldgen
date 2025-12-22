@@ -135,8 +135,8 @@ pub struct Good {
     pub source_index: i16,
     /// Raw dice roll for quantity (before population modifier and multiplier)
     pub quantity_roll: i32,
-    /// Raw 3d6 roll for buy price calculation
-    pub buy_price_roll: i32,
+    /// Raw 3d6 roll for buy price calculation.  None (for never rolled) or Some(previous roll)
+    pub buy_price_roll: Option<i32>,
     /// Raw 3d6 roll for sell price calculation (if applicable)
     pub sell_price_roll: Option<i32>,
 }
@@ -371,7 +371,7 @@ impl AvailableGoodsTable {
             sell_price_comment: String::default(),
             source_index: entry.index,
             quantity_roll: raw_roll,
-            buy_price_roll: 0, // Will be set when pricing
+            buy_price_roll: None, // Will be set when pricing
             sell_price_roll: None,
         };
 
@@ -406,7 +406,7 @@ impl AvailableGoodsTable {
             self.goods.push(good);
         }
 
-        // Remove the good if the quanity is now <= 0
+        // Remove the good if the quantity is now <= 0
         self.goods.retain(|g| g.quantity > 0);
     }
 
@@ -425,7 +425,7 @@ impl AvailableGoodsTable {
             self.goods.push(good.clone());
         }
 
-        // Remove the good if the quanity is now <= 0
+        // Remove the good if the quantity is now <= 0
         self.goods.retain(|g| g.quantity > 0);
     }
 
@@ -587,8 +587,14 @@ impl AvailableGoodsTable {
         let mut rng = rand::rng();
         for good in &mut self.goods {
             // Roll 3d6 and save it
-            let roll = rng.random_range(1..=6) + rng.random_range(1..=6) + rng.random_range(1..=6);
-            good.buy_price_roll = roll;
+            let roll = match good.buy_price_roll {
+                Some(roll) => roll,
+                None => {
+                    let roll = rng.random_range(1..=6) + rng.random_range(1..=6) + rng.random_range(1..=6);
+                    good.buy_price_roll = Some(roll);
+                    roll
+                }
+            };
 
             let entry = TradeTable::global()
                 .get(good.source_index)
@@ -598,6 +604,7 @@ impl AvailableGoodsTable {
                         &good.source_index
                     )
                 });
+
             let purchase_origin_dm = find_max_dm(&entry.purchase_dm, origin_trade_classes);
             let sale_origin_dm = find_max_dm(&entry.sale_dm, origin_trade_classes);
             // Calculate the modified roll
@@ -709,6 +716,14 @@ impl AvailableGoodsTable {
         );
     }
 
+    /// Reset all the stored die rolls to None so that we regenerate all values.
+    pub fn reset_die_rolls(&mut self) {
+        for good in &mut self.goods {
+            good.buy_price_roll = None;
+            good.sell_price_roll = None;
+        }
+    }
+
     /// Calculate selling prices for goods at potential destination worlds
     ///
     /// See description for `price_goods_to_sell`.  This version allows
@@ -728,32 +743,6 @@ impl AvailableGoodsTable {
                 supplier_broker_skill,
                 &mut rng,
             );
-        }
-    }
-
-    /// Recalculate buy prices using saved rolls
-    /// This allows skill changes to update prices without re-rolling
-    pub fn recalc_buy_prices(
-        &mut self,
-        origin_trade_classes: &[TradeClass],
-        buyer_broker_skill: i16,
-        supplier_broker_skill: i16,
-    ) {
-        for good in &mut self.goods {
-            good.recalc_buy_price(origin_trade_classes, buyer_broker_skill, supplier_broker_skill);
-        }
-    }
-
-    /// Recalculate sell prices using saved rolls
-    /// This allows skill changes to update prices without re-rolling
-    pub fn recalc_sell_prices(
-        &mut self,
-        dest_trade_classes: Option<&[TradeClass]>,
-        seller_broker_skill: i16,
-        buyer_broker_skill: i16,
-    ) {
-        for good in &mut self.goods {
-            good.recalc_sell_price(dest_trade_classes, seller_broker_skill, buyer_broker_skill);
         }
     }
 
@@ -785,9 +774,16 @@ impl Good {
     ) {
         if let Some(trade_classes) = trade_classes {
             // Roll 3d6 and save it
-            let roll = rng.random_range(1..=6) + rng.random_range(1..=6) + rng.random_range(1..=6);
-            self.sell_price_roll = Some(roll);
-
+            debug!("(Good.price_to_sell_rng) Pricing {} with prior roll of {:?} with trade classes {trade_classes:?}", self.name, self.sell_price_roll);
+            let roll = match self.sell_price_roll {
+                Some(roll) => roll,
+                None => {
+                    let roll = rng.random_range(1..=6) + rng.random_range(1..=6) + rng.random_range(1..=6);
+                    self.sell_price_roll = Some(roll);
+                    roll
+                }
+            };
+            
             let entry = TradeTable::global()
                 .get(self.source_index)
                 .unwrap_or_else(|| {
@@ -849,158 +845,9 @@ impl Good {
 
             self.sell_price = Some((self.base_cost as f64 * price_multiplier).round() as i32);
         } else {
+            debug!("price_to_sell_rng: No trade classes provided, clearing sell price for {}", self.name);
             self.sell_price = None;
-            self.sell_price_roll = None;
-            self.sell_price_comment.clear();
-        }
-    }
-
-    /// Recalculate buy price using saved roll
-    /// This allows skill changes to update prices without re-rolling
-    pub fn recalc_buy_price(
-        &mut self,
-        origin_trade_classes: &[TradeClass],
-        buyer_broker_skill: i16,
-        supplier_broker_skill: i16,
-    ) {
-        let roll = self.buy_price_roll;
-
-        let entry = TradeTable::global()
-            .get(self.source_index)
-            .unwrap_or_else(|| {
-                panic!(
-                    "Failed to get trade table entry for index {}",
-                    &self.source_index
-                )
-            });
-        let purchase_origin_dm = find_max_dm(&entry.purchase_dm, origin_trade_classes);
-        let sale_origin_dm = find_max_dm(&entry.sale_dm, origin_trade_classes);
-
-        // Calculate the modified roll
-        let modified_roll = roll as i16 + buyer_broker_skill - supplier_broker_skill
-            + purchase_origin_dm
-            - sale_origin_dm;
-
-        // Determine the price multiplier based on the modified roll
-        let price_multiplier = match modified_roll {
-            i16::MIN..=-3 => 3.0, // 300%
-            -2 => 2.5,            // 250%
-            -1 => 2.0,            // 200%
-            0 => 1.75,            // 175%
-            1 => 1.5,             // 150%
-            2 => 1.35,            // 135%
-            3 => 1.25,            // 125%
-            4 => 1.2,             // 120%
-            5 => 1.15,            // 115%
-            6 => 1.1,             // 110%
-            7 => 1.05,            // 105%
-            8 => 1.0,             // 100%
-            9 => 0.95,            // 95%
-            10 => 0.9,            // 90%
-            11 => 0.85,           // 85%
-            12 => 0.8,            // 80%
-            13 => 0.75,           // 75%
-            14 => 0.7,            // 70%
-            15 => 0.65,           // 65%
-            16 => 0.6,            // 60%
-            17 => 0.55,           // 55%
-            18 => 0.5,            // 50%
-            19 => 0.45,           // 45%
-            20 => 0.4,            // 40%
-            21 => 0.35,           // 35%
-            22 => 0.3,            // 30%
-            23 => 0.25,           // 25%
-            24 => 0.2,            // 20%
-            25.. => 0.15,         // 15%
-        };
-
-        self.buy_cost_comment = format!(
-            "(roll) {} + (broker) {} + (trade mod) {} = {} which gives a multiplier of {}",
-            roll,
-            buyer_broker_skill - supplier_broker_skill,
-            purchase_origin_dm - sale_origin_dm,
-            modified_roll,
-            price_multiplier
-        );
-
-        // Apply the multiplier to the cost
-        self.buy_cost = (self.base_cost as f64 * price_multiplier).round() as i32;
-    }
-
-    /// Recalculate sell price using saved roll
-    /// This allows skill changes to update prices without re-rolling
-    pub fn recalc_sell_price(
-        &mut self,
-        trade_classes: Option<&[TradeClass]>,
-        seller_broker_skill: i16,
-        buyer_broker_skill: i16,
-    ) {
-        if let Some(trade_classes) = trade_classes {
-            if let Some(roll) = self.sell_price_roll {
-                let entry = TradeTable::global()
-                    .get(self.source_index)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "Failed to get trade table entry for index {}",
-                            &self.source_index
-                        )
-                    });
-
-                let purchase_origin_dm = find_max_dm(&entry.purchase_dm, trade_classes);
-                let sale_origin_dm = find_max_dm(&entry.sale_dm, trade_classes);
-
-                // Calculate the modified roll
-                let modified_roll =
-                    roll as i16 + seller_broker_skill - buyer_broker_skill - purchase_origin_dm
-                        + sale_origin_dm;
-
-                // Determine the price multiplier based on the modified roll
-                let price_multiplier = match modified_roll {
-                    i16::MIN..=-3 => 0.1,
-                    -2 => 0.2,
-                    -1 => 0.3,
-                    0 => 0.4,
-                    1 => 0.45,
-                    2 => 0.5,
-                    3 => 0.55,
-                    4 => 0.60,
-                    5 => 0.65,
-                    6 => 0.70,
-                    7 => 0.75,
-                    8 => 0.80,
-                    9 => 0.85,
-                    10 => 0.9,
-                    11 => 1.0,
-                    12 => 1.05,
-                    13 => 1.10,
-                    14 => 1.15,
-                    15 => 1.20,
-                    16 => 1.25,
-                    17 => 1.30,
-                    18 => 1.40,
-                    19 => 1.50,
-                    20 => 1.60,
-                    21 => 1.75,
-                    22 => 2.0,
-                    23 => 2.5,
-                    24 => 3.0,
-                    25.. => 4.0,
-                };
-
-                self.sell_price_comment = format!(
-                    "(roll) {} + (broker) {} + (trade mod) {} = {} which gives a multiplier of {}",
-                    roll,
-                    seller_broker_skill - buyer_broker_skill,
-                    sale_origin_dm - purchase_origin_dm,
-                    modified_roll,
-                    price_multiplier
-                );
-
-                self.sell_price = Some((self.base_cost as f64 * price_multiplier).round() as i32);
-            }
-        } else {
-            self.sell_price = None;
-            self.sell_price_comment.clear();
+            self.sell_price_comment = "NOTHING TO SEE HERE".to_string();
         }
     }
 }
@@ -1229,7 +1076,7 @@ mod tests {
             sell_price: None,
             source_index: 11,
             quantity_roll: 10,
-            buy_price_roll: 10,
+            buy_price_roll: None,
             sell_price_roll: None,
         };
 
@@ -1301,7 +1148,7 @@ mod tests {
             sell_price: None,
             source_index: 11,
             quantity_roll: 10,
-            buy_price_roll: 10,
+            buy_price_roll: Some(10),
             sell_price_roll: None,
         };
 
@@ -1316,7 +1163,7 @@ mod tests {
             sell_price: None,
             source_index: 12,
             quantity_roll: 10,
-            buy_price_roll: 10,
+            buy_price_roll: Some(10),
             sell_price_roll: None,
         };
 
@@ -1331,7 +1178,7 @@ mod tests {
             sell_price: None,
             source_index: 13,
             quantity_roll: 10,
-            buy_price_roll: 10,
+            buy_price_roll: Some(10),
             sell_price_roll: None,
         };
 

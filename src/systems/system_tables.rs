@@ -1731,7 +1731,6 @@ mod tests {
         };
 
         let zone1 = get_zone(&system1.star);
-        debug!("zone1: {:?} for star {:?}", zone1, system1.star);
         assert_eq!(zone1.inside, 0);
         assert_eq!(zone1.hot, 7);
         assert_eq!(zone1.inner, 12);
@@ -1749,7 +1748,6 @@ mod tests {
         };
 
         let zone2 = get_zone(&system2.star);
-        debug!("zone2: {:?} for star {:?}", zone2, system2.star);
         assert_eq!(zone2.inside, 0);
         assert_eq!(zone2.hot, 1);
         assert_eq!(zone2.inner, 7);
