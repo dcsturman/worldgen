@@ -140,7 +140,7 @@
 use codee::string::JsonSerdeCodec;
 use leptos::prelude::*;
 use leptos_use::storage::{
-    use_session_storage, use_session_storage_with_options, UseStorageOptions,
+    use_local_storage, use_local_storage_with_options, UseStorageOptions,
 };
 #[allow(unused_imports)]
 use log::{debug, error};
@@ -209,7 +209,7 @@ use crate::INITIAL_UPP;
 pub fn Trade() -> impl IntoView {
     // The main world always exists (starts with a default value) and we use that type in the context.
     let (origin_world, write_origin_world, _) =
-        use_session_storage_with_options::<World, JsonSerdeCodec>(
+        use_local_storage_with_options::<World, JsonSerdeCodec>(
             "worldgen:origin_world:v1",
             UseStorageOptions::default()
                 .initial_value(World::from_upp(INITIAL_NAME, INITIAL_UPP, false, true).unwrap()),
@@ -220,16 +220,16 @@ pub fn Trade() -> impl IntoView {
     // and the destination world in the state.
 
     let (dest_world, write_dest_world, _) =
-        use_session_storage::<Option<World>, JsonSerdeCodec>("worldgen:dest_world:v1");
+        use_local_storage::<Option<World>, JsonSerdeCodec>("worldgen:dest_world:v1");
     let (available_goods, write_available_goods, _) =
-        use_session_storage::<AvailableGoodsTable, JsonSerdeCodec>("worldgen:available_goods:v1");
+        use_local_storage::<AvailableGoodsTable, JsonSerdeCodec>("worldgen:available_goods:v1");
 
     let (available_passengers, write_available_passengers, _) =
-        use_session_storage::<Option<AvailablePassengers>, JsonSerdeCodec>(
+        use_local_storage::<Option<AvailablePassengers>, JsonSerdeCodec>(
             "worldgen:available_passengers:v1",
         );
     let (ship_manifest, write_ship_manifest, _) =
-        use_session_storage_with_options::<ShipManifest, JsonSerdeCodec>(
+        use_local_storage_with_options::<ShipManifest, JsonSerdeCodec>(
             "worldgen:manifest:v1",
             UseStorageOptions::default()
                 .initial_value(ShipManifest::default())
@@ -237,19 +237,19 @@ pub fn Trade() -> impl IntoView {
         );
     //let (ship_manifest, write_ship_manifest) = signal(ShipManifest::default());
 
-    // Used solely because there's a bug in `use_session_storage` that seems to restore from storage when we don't want it to
+    // Used solely because there's a bug in `use_local_storage` that seems to restore from storage when we don't want it to
     let (hack_ship_recompute_manifest_price, hack_ship_recompute_manifest_price_set) = signal(0u64);
 
     // Skills involved, both player and adversary.
     let (buyer_broker_skill, write_buyer_broker_skill, _) =
-        use_session_storage::<i16, JsonSerdeCodec>("worldgen:buyer_broker_skill:v1");
+        use_local_storage::<i16, JsonSerdeCodec>("worldgen:buyer_broker_skill:v1");
     let (seller_broker_skill, write_seller_broker_skill, _) =
-        use_session_storage::<i16, JsonSerdeCodec>("worldgen:seller_broker_skill:v1");
+        use_local_storage::<i16, JsonSerdeCodec>("worldgen:seller_broker_skill:v1");
     let (steward_skill, write_steward_skill, _) =
-        use_session_storage::<i16, JsonSerdeCodec>("worldgen:steward_skill:v1");
+        use_local_storage::<i16, JsonSerdeCodec>("worldgen:steward_skill:v1");
     // Toggle for including illegal goods in market generation
     let (illegal_goods, write_illegal_goods, _) =
-        use_session_storage::<bool, JsonSerdeCodec>("worldgen:illegal_goods:v1");
+        use_local_storage::<bool, JsonSerdeCodec>("worldgen:illegal_goods:v1");
 
     // Dialog state for manually adding goods to manifest
     let show_add_manual = RwSignal::new(false);
@@ -422,7 +422,7 @@ pub fn Trade() -> impl IntoView {
     });
 
     // Recalculate prices and passengers when skills or world parameters change (using saved rolls, not regenerating)
-    Effect::new(move |prev_dest: Option<Option<String>>| {
+    Effect::new(move |_| {
         let buyer = buyer_broker_skill.get();
         let supplier = seller_broker_skill.get();
         let steward = steward_skill.get();
@@ -432,7 +432,6 @@ pub fn Trade() -> impl IntoView {
 
         // Check if destination world changed (not just skills)
         let current_dest_name = dest_world.as_ref().map(|w| w.name.clone());
-        let dest_changed = prev_dest.is_some() && prev_dest.as_ref() != Some(&current_dest_name);
 
         // Recalculate buy prices using saved rolls
         write_available_goods.update(|ag| {
