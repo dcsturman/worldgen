@@ -705,10 +705,13 @@ pub fn Trade() -> impl IntoView {
             />
 
             <GoodsToSellView
+                origin_world=origin_world
+                dest_world=dest_world
                 ship_manifest=ship_manifest
                 write_ship_manifest=write_ship_manifest
                 show_add_manual=show_add_manual
             />
+
             <TradeView
                 origin_world=origin_world
                 dest_world=dest_world
@@ -746,14 +749,32 @@ fn print() {
 /// Sibling section beneath the manifest.
 #[component]
 fn GoodsToSellView(
+    origin_world: Signal<World>,
+    dest_world: Signal<Option<World>>,
     ship_manifest: Signal<ShipManifest>,
     write_ship_manifest: WriteSignal<ShipManifest>,
     show_add_manual: RwSignal<bool>,
 ) -> impl IntoView {
+    let world_to_sell_on = Memo::new(move |_| {
+        let world_name_classes = dest_world
+            .get()
+            .as_ref()
+            .map(|w| (w.name.clone(), w.trade_classes_string()))
+            .unwrap_or_else(|| {
+                (
+                    origin_world.get().name.clone(),
+                    origin_world.get().trade_classes_string(),
+                )
+            });
+        format!("{} [{}]", world_name_classes.0, world_name_classes.1)
+    });
+    
     view! {
         <div class="output-region">
             <div class="trade-header-row">
-                <h2>"Goods to Sell"</h2>
+                // Add the name of either destination planet (if it exists) and its trade classes, or if
+                // it doesn't exist the origin world and its trade classes.
+                <h2>"Goods to Sell on " {move ||  world_to_sell_on.get()}</h2>
                 <button
                     class="manifest-button manifest-add-good-button"
                     on:click=move |_| show_add_manual.set(true)
