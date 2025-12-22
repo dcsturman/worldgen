@@ -847,7 +847,7 @@ impl Good {
         } else {
             debug!("price_to_sell_rng: No trade classes provided, clearing sell price for {}", self.name);
             self.sell_price = None;
-            self.sell_price_comment = "NOTHING TO SEE HERE".to_string();
+            self.sell_price_comment = "No current price available.".to_string();
         }
     }
 }
