@@ -590,7 +590,8 @@ impl AvailableGoodsTable {
             let roll = match good.buy_price_roll {
                 Some(roll) => roll,
                 None => {
-                    let roll = rng.random_range(1..=6) + rng.random_range(1..=6) + rng.random_range(1..=6);
+                    let roll =
+                        rng.random_range(1..=6) + rng.random_range(1..=6) + rng.random_range(1..=6);
                     good.buy_price_roll = Some(roll);
                     roll
                 }
@@ -778,12 +779,13 @@ impl Good {
             let roll = match self.sell_price_roll {
                 Some(roll) => roll,
                 None => {
-                    let roll = rng.random_range(1..=6) + rng.random_range(1..=6) + rng.random_range(1..=6);
+                    let roll =
+                        rng.random_range(1..=6) + rng.random_range(1..=6) + rng.random_range(1..=6);
                     self.sell_price_roll = Some(roll);
                     roll
                 }
             };
-            
+
             let entry = TradeTable::global()
                 .get(self.source_index)
                 .unwrap_or_else(|| {
@@ -845,7 +847,10 @@ impl Good {
 
             self.sell_price = Some((self.base_cost as f64 * price_multiplier).round() as i32);
         } else {
-            debug!("price_to_sell_rng: No trade classes provided, clearing sell price for {}", self.name);
+            debug!(
+                "price_to_sell_rng: No trade classes provided, clearing sell price for {}",
+                self.name
+            );
             self.sell_price = None;
             self.sell_price_comment = "No current price available.".to_string();
         }

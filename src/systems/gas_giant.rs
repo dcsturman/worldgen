@@ -35,7 +35,6 @@
 //! // Result: either a proper name like "Jupiter" or "Sol V"
 //! ```
 
-use log::debug;
 use reactive_stores::Store;
 
 use crate::systems::has_satellites::HasSatellites;

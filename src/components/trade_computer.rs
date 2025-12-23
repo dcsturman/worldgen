@@ -139,9 +139,7 @@
 //! though this feature is currently disabled but available for future use.
 use codee::string::JsonSerdeCodec;
 use leptos::prelude::*;
-use leptos_use::storage::{
-    use_local_storage, use_local_storage_with_options, UseStorageOptions,
-};
+use leptos_use::storage::{use_local_storage, use_local_storage_with_options, UseStorageOptions};
 #[allow(unused_imports)]
 use log::{debug, error};
 use rand::Rng;
@@ -318,7 +316,6 @@ pub fn Trade() -> impl IntoView {
     Effect::new(move |_| {
         let _ = hack_ship_recompute_manifest_price.get();
         write_ship_manifest.update(|manifest| {
-            debug!("PRICE GOODS WITH ORIGIN A");
             // Set world_to_use to be the dest_world if it exists otherwise use the origin_world.
             let world_to_use = dest_world.get().unwrap_or_else(|| origin_world.get());
             manifest.price_goods(
@@ -391,26 +388,27 @@ pub fn Trade() -> impl IntoView {
             world.coordinates = dest_coords.get();
             world.travel_zone = dest_zone.get();
 
-            let was_none = dest_world.get().is_none();
             write_dest_world.set(Some(world.clone()));
             calc_distance_closure();
 
-            // Generate passengers and freight when destination is added for the first time
-            if was_none && distance.get() > 0 {
-                let origin = origin_world.get();
-                write_available_passengers.set(Some(AvailablePassengers::generate(
-                    origin.get_population(),
-                    origin.port,
-                    origin.travel_zone,
-                    origin.tech_level,
-                    world.get_population(),
-                    world.port,
-                    world.travel_zone,
-                    world.tech_level,
-                    distance.get(),
-                    i32::from(steward_skill.get()),
-                    i32::from(buyer_broker_skill.get()),
-                )));
+            if distance.get() > 0 {
+                write_available_passengers.update(|ap| {
+                    let origin = origin_world.get();
+                    ap.get_or_insert_with(AvailablePassengers::default)
+                        .generate(
+                            origin.get_population(),
+                            origin.port,
+                            origin.travel_zone,
+                            origin.tech_level,
+                            world.get_population(),
+                            world.port,
+                            world.travel_zone,
+                            world.tech_level,
+                            distance.get(),
+                            i32::from(steward_skill.get()),
+                            i32::from(buyer_broker_skill.get()),
+                        )
+                })
             }
         } else {
             // If we don't have a valid name, reset other UI elements to reasonable defaults.
@@ -451,13 +449,6 @@ pub fn Trade() -> impl IntoView {
         // Manifest goods are sold at the destination, so use dest_world for pricing
         write_ship_manifest.update(|manifest| {
             // Destination changed - generate new sell price rolls
-            debug!(
-                "EFFECT A: Destination changed, generating new prices for manifest on world {}.",
-                dest_world
-                    .as_ref()
-                    .map(|w| w.name.clone())
-                    .unwrap_or_else(|| "None".to_string())
-            );
             manifest.price_goods(
                 &dest_world,
                 buyer_broker_skill.get(),
@@ -470,7 +461,7 @@ pub fn Trade() -> impl IntoView {
             if dist > 0 {
                 write_available_passengers.update(|passengers_opt| {
                     if let Some(passengers) = passengers_opt {
-                        passengers.recalculate(
+                        passengers.generate(
                             origin_world.get_population(),
                             origin_world.port,
                             origin_world.travel_zone,
@@ -519,7 +510,6 @@ pub fn Trade() -> impl IntoView {
                     <button
                         class="blue-button"
                         on:click=move |_| {
-                            debug!("GENERATE BUTTON clicked - regenerating market");
                             let origin = origin_world.get();
                             write_available_goods
                                 .update(|ag| {
@@ -545,24 +535,23 @@ pub fn Trade() -> impl IntoView {
                             hack_ship_recompute_manifest_price_set.set(rng.random());
                             if let Some(world) = dest_world.get() {
                                 if distance.get() > 0 {
-                                    write_available_passengers
-                                        .set(
-                                            Some(
-                                                AvailablePassengers::generate(
-                                                    origin.get_population(),
-                                                    origin.port,
-                                                    origin.travel_zone,
-                                                    origin.tech_level,
-                                                    world.get_population(),
-                                                    world.port,
-                                                    world.travel_zone,
-                                                    world.tech_level,
-                                                    distance.get(),
-                                                    i32::from(steward_skill.get()),
-                                                    i32::from(buyer_broker_skill.get()),
-                                                ),
-                                            ),
+                                    write_available_passengers.update(|passengers| {
+                                        let p = passengers.get_or_insert_with(AvailablePassengers::default);
+                                        p.reset_die_rolls();
+                                        p.generate(
+                                            origin.get_population(),
+                                            origin.port,
+                                            origin.travel_zone,
+                                            origin.tech_level,
+                                            world.get_population(),
+                                            world.port,
+                                            world.travel_zone,
+                                            world.tech_level,
+                                            distance.get(),
+                                            i32::from(steward_skill.get()),
+                                            i32::from(buyer_broker_skill.get()),
                                         );
+                                    });
                                 } else {
                                     write_available_passengers.set(None);
                                 }
@@ -767,13 +756,13 @@ fn GoodsToSellView(
             });
         format!("{} [{}]", world_name_classes.0, world_name_classes.1)
     });
-    
+
     view! {
         <div class="output-region">
             <div class="trade-header-row">
                 // Add the name of either destination planet (if it exists) and its trade classes, or if
                 // it doesn't exist the origin world and its trade classes.
-                <h2>"Goods to Sell on " {move ||  world_to_sell_on.get()}</h2>
+                <h2>"Goods to Sell on " {move || world_to_sell_on.get()}</h2>
                 <button
                     class="manifest-button manifest-add-good-button"
                     on:click=move |_| show_add_manual.set(true)

@@ -51,17 +51,25 @@ pub struct AvailablePassengers {
     pub low_dice_rolls: Vec<i32>,
 
     /// Raw 2d6 roll for major cargo (saved for recalculation)
-    pub major_cargo_roll: i32,
+    pub major_cargo_roll: Option<i32>,
     /// Broker skill check roll for major cargo (saved for recalculation)
-    pub major_cargo_check_roll: i32,
-    /// Raw 2d6 roll for minor cargo (saved for recalculation)
-    pub minor_cargo_roll: i32,
+    pub major_cargo_check_roll: Option<i32>,
+    /// Rolls for size of individual major cargo lots
+    pub major_cargo_size_rolls: Vec<i32>,
+
+    /// Rolls for size of individual minor cargo lots///
+    pub minor_cargo_roll: Option<i32>,
     /// Broker skill check roll for minor cargo (saved for recalculation)
-    pub minor_cargo_check_roll: i32,
+    pub minor_cargo_check_roll: Option<i32>,
     /// Raw 2d6 roll for incidental cargo (saved for recalculation)
-    pub incidental_cargo_roll: i32,
+    pub minor_cargo_size_rolls: Vec<i32>,
+
+    /// Raw 2d6 roll for minor cargo (saved for recalculation)
+    pub incidental_cargo_roll: Option<i32>,
     /// Broker skill check roll for incidental cargo (saved for recalculation)
-    pub incidental_cargo_check_roll: i32,
+    pub incidental_cargo_check_roll: Option<i32>,
+    /// Rolls for size of individual incidental cargo lots
+    pub incidental_cargo_size_rolls: Vec<i32>,
 }
 
 impl AvailablePassengers {
@@ -85,56 +93,6 @@ impl AvailablePassengers {
     /// A new `AvailablePassengers` instance with generated passengers and freight
     #[allow(clippy::too_many_arguments)]
     pub fn generate(
-        origin_population: i32,
-        origin_port: PortCode,
-        origin_zone: ZoneClassification,
-        origin_tech_level: i32,
-        destination_population: i32,
-        destination_port: PortCode,
-        destination_zone: ZoneClassification,
-        destination_tech_level: i32,
-        distance_parsecs: i32,
-        steward_skill: i32,
-        player_broker_skill: i32,
-    ) -> Self {
-        let mut passengers = Self::default();
-
-        // Generate passengers
-        Self::generate_passengers(
-            &mut passengers,
-            origin_population,
-            origin_port,
-            origin_zone,
-            destination_population,
-            destination_port,
-            destination_zone,
-            distance_parsecs,
-            steward_skill,
-        );
-
-        // Generate freight lots
-        Self::generate_freight(
-            &mut passengers,
-            origin_population,
-            origin_port,
-            origin_zone,
-            origin_tech_level,
-            destination_population,
-            destination_port,
-            destination_zone,
-            destination_tech_level,
-            distance_parsecs,
-            player_broker_skill,
-        );
-
-        passengers
-    }
-
-    /// Recalculates passengers and freight using saved dice rolls
-    ///
-    /// This allows skill and world parameter changes to update counts without re-rolling
-    #[allow(clippy::too_many_arguments)]
-    pub fn recalculate(
         &mut self,
         origin_population: i32,
         origin_port: PortCode,
@@ -148,9 +106,8 @@ impl AvailablePassengers {
         steward_skill: i32,
         player_broker_skill: i32,
     ) {
-        // Recalculate passengers
-        Self::recalc_passengers(
-            self,
+        // Generate passengers
+        self.generate_passengers(
             origin_population,
             origin_port,
             origin_zone,
@@ -161,9 +118,8 @@ impl AvailablePassengers {
             steward_skill,
         );
 
-        // Recalculate freight
-        Self::recalc_freight(
-            self,
+        // Generate freight lots
+        self.generate_freight(
             origin_population,
             origin_port,
             origin_zone,
@@ -175,6 +131,19 @@ impl AvailablePassengers {
             distance_parsecs,
             player_broker_skill,
         );
+    }
+
+    pub fn reset_die_rolls(&mut self) {
+        self.high_roll = 0;
+        self.medium_roll = 0;
+        self.basic_roll = 0;
+        self.low_roll = 0;
+        self.major_cargo_roll = None;
+        self.major_cargo_check_roll = None;
+        self.minor_cargo_roll = None;
+        self.minor_cargo_check_roll = None;
+        self.incidental_cargo_roll = None;
+        self.incidental_cargo_check_roll = None;
     }
 
     /// Generates passengers for all passenger classes
@@ -192,7 +161,7 @@ impl AvailablePassengers {
     /// * `steward_skill` - Steward skill level of the ship's crew
     #[allow(clippy::too_many_arguments)]
     fn generate_passengers(
-        passengers: &mut AvailablePassengers,
+        &mut self,
         origin_population: i32,
         origin_port: PortCode,
         origin_zone: ZoneClassification,
@@ -213,9 +182,9 @@ impl AvailablePassengers {
             steward_skill,
             PassengerClass::High,
         );
-        passengers.high = count;
-        passengers.high_roll = roll;
-        passengers.high_dice_rolls = dice_rolls;
+        self.high = count;
+        self.high_roll = roll;
+        self.high_dice_rolls = dice_rolls;
 
         let (count, roll, dice_rolls) = Self::generate_passenger_class(
             origin_population,
@@ -228,9 +197,9 @@ impl AvailablePassengers {
             steward_skill,
             PassengerClass::Medium,
         );
-        passengers.medium = count;
-        passengers.medium_roll = roll;
-        passengers.medium_dice_rolls = dice_rolls;
+        self.medium = count;
+        self.medium_roll = roll;
+        self.medium_dice_rolls = dice_rolls;
 
         let (count, roll, dice_rolls) = Self::generate_passenger_class(
             origin_population,
@@ -243,9 +212,9 @@ impl AvailablePassengers {
             steward_skill,
             PassengerClass::Basic,
         );
-        passengers.basic = count;
-        passengers.basic_roll = roll;
-        passengers.basic_dice_rolls = dice_rolls;
+        self.basic = count;
+        self.basic_roll = roll;
+        self.basic_dice_rolls = dice_rolls;
 
         let (count, roll, dice_rolls) = Self::generate_passenger_class(
             origin_population,
@@ -258,9 +227,9 @@ impl AvailablePassengers {
             steward_skill,
             PassengerClass::Low,
         );
-        passengers.low = count;
-        passengers.low_roll = roll;
-        passengers.low_dice_rolls = dice_rolls;
+        self.low = count;
+        self.low_roll = roll;
+        self.low_dice_rolls = dice_rolls;
     }
 
     /// Generates freight lots for all cargo classes
@@ -279,7 +248,7 @@ impl AvailablePassengers {
     /// * `distance_parsecs` - Distance between worlds in parsecs
     #[allow(clippy::too_many_arguments)]
     fn generate_freight(
-        passengers: &mut AvailablePassengers,
+        &mut self,
         origin_population: i32,
         origin_port: PortCode,
         origin_zone: ZoneClassification,
@@ -291,8 +260,11 @@ impl AvailablePassengers {
         distance_parsecs: i32,
         player_broker_skill: i32,
     ) {
+        // Clear out all existing freight lots
+        self.freight_lots.clear();
+
         // Generate major cargo
-        let (num_lots, base_roll, check_roll) = Self::generate_cargo_class(
+        let num_major_lots = Self::generate_cargo_class(
             origin_population,
             origin_port,
             origin_zone,
@@ -303,18 +275,14 @@ impl AvailablePassengers {
             destination_tech_level,
             distance_parsecs,
             player_broker_skill,
+            &mut self.major_cargo_roll,
+            &mut self.major_cargo_check_roll,
+            &mut self.major_cargo_size_rolls,
             CargoClass::Major,
         );
-        passengers.major_cargo_roll = base_roll;
-        passengers.major_cargo_check_roll = check_roll;
-        for _ in 0..num_lots {
-            let size_roll = roll_1d6();
-            let size = size_roll * 10;
-            passengers.freight_lots.push(FreightLot { size, size_roll });
-        }
 
         // Generate minor cargo
-        let (num_lots, base_roll, check_roll) = Self::generate_cargo_class(
+        let num_minor_lots = Self::generate_cargo_class(
             origin_population,
             origin_port,
             origin_zone,
@@ -325,18 +293,14 @@ impl AvailablePassengers {
             destination_tech_level,
             distance_parsecs,
             player_broker_skill,
+            &mut self.minor_cargo_roll,
+            &mut self.minor_cargo_check_roll,
+            &mut self.minor_cargo_size_rolls,
             CargoClass::Minor,
         );
-        passengers.minor_cargo_roll = base_roll;
-        passengers.minor_cargo_check_roll = check_roll;
-        for _ in 0..num_lots {
-            let size_roll = roll_1d6();
-            let size = size_roll * 5;
-            passengers.freight_lots.push(FreightLot { size, size_roll });
-        }
 
         // Generate incidental cargo
-        let (num_lots, base_roll, check_roll) = Self::generate_cargo_class(
+        let num_incidental_lots = Self::generate_cargo_class(
             origin_population,
             origin_port,
             origin_zone,
@@ -347,200 +311,33 @@ impl AvailablePassengers {
             destination_tech_level,
             distance_parsecs,
             player_broker_skill,
+            &mut self.incidental_cargo_roll,
+            &mut self.incidental_cargo_check_roll,
+            &mut self.incidental_cargo_size_rolls,
             CargoClass::Incidental,
         );
-        passengers.incidental_cargo_roll = base_roll;
-        passengers.incidental_cargo_check_roll = check_roll;
-        for _ in 0..num_lots {
-            let size_roll = roll_1d6();
-            let size = size_roll;
-            passengers.freight_lots.push(FreightLot { size, size_roll });
-        }
+
+        // Collect all freight lots using iterator chains
+        self.freight_lots.extend(
+            [
+                (&self.major_cargo_size_rolls, num_major_lots),
+                (&self.minor_cargo_size_rolls, num_minor_lots),
+                (&self.incidental_cargo_size_rolls, num_incidental_lots),
+            ]
+            .iter()
+            .flat_map(|(rolls, count)| {
+                rolls
+                    .iter()
+                    .take(*count as usize)
+                    .map(|&size_roll| FreightLot {
+                        size: size_roll * 10,
+                        size_roll,
+                    })
+            }),
+        );
 
         // Sort freight lots by size (largest first)
-        passengers.freight_lots.sort_by(|a, b| b.size.cmp(&a.size));
-    }
-
-    /// Recalculates passengers using saved dice rolls
-    #[allow(clippy::too_many_arguments)]
-    fn recalc_passengers(
-        passengers: &mut AvailablePassengers,
-        origin_population: i32,
-        origin_port: PortCode,
-        origin_zone: ZoneClassification,
-        destination_population: i32,
-        destination_port: PortCode,
-        destination_zone: ZoneClassification,
-        distance_parsecs: i32,
-        steward_skill: i32,
-    ) {
-        passengers.high = Self::recalc_passenger_class(
-            passengers.high_roll,
-            &passengers.high_dice_rolls,
-            origin_population,
-            origin_port,
-            origin_zone,
-            destination_population,
-            destination_port,
-            destination_zone,
-            distance_parsecs,
-            steward_skill,
-            PassengerClass::High,
-        );
-
-        passengers.medium = Self::recalc_passenger_class(
-            passengers.medium_roll,
-            &passengers.medium_dice_rolls,
-            origin_population,
-            origin_port,
-            origin_zone,
-            destination_population,
-            destination_port,
-            destination_zone,
-            distance_parsecs,
-            steward_skill,
-            PassengerClass::Medium,
-        );
-
-        passengers.basic = Self::recalc_passenger_class(
-            passengers.basic_roll,
-            &passengers.basic_dice_rolls,
-            origin_population,
-            origin_port,
-            origin_zone,
-            destination_population,
-            destination_port,
-            destination_zone,
-            distance_parsecs,
-            steward_skill,
-            PassengerClass::Basic,
-        );
-
-        passengers.low = Self::recalc_passenger_class(
-            passengers.low_roll,
-            &passengers.low_dice_rolls,
-            origin_population,
-            origin_port,
-            origin_zone,
-            destination_population,
-            destination_port,
-            destination_zone,
-            distance_parsecs,
-            steward_skill,
-            PassengerClass::Low,
-        );
-    }
-
-    /// Recalculates freight using saved dice rolls
-    #[allow(clippy::too_many_arguments)]
-    fn recalc_freight(
-        passengers: &mut AvailablePassengers,
-        origin_population: i32,
-        origin_port: PortCode,
-        origin_zone: ZoneClassification,
-        origin_tech_level: i32,
-        destination_population: i32,
-        destination_port: PortCode,
-        destination_zone: ZoneClassification,
-        destination_tech_level: i32,
-        distance_parsecs: i32,
-        player_broker_skill: i32,
-    ) {
-        // Save the existing freight lots with their size rolls
-        let saved_lots = passengers.freight_lots.clone();
-        passengers.freight_lots.clear();
-
-        let mut saved_index = 0;
-
-        // Recalculate major cargo
-        let num_lots = Self::recalc_cargo_class(
-            passengers.major_cargo_roll,
-            passengers.major_cargo_check_roll,
-            origin_population,
-            origin_port,
-            origin_zone,
-            origin_tech_level,
-            destination_population,
-            destination_port,
-            destination_zone,
-            destination_tech_level,
-            distance_parsecs,
-            player_broker_skill,
-            CargoClass::Major,
-        );
-        for _ in 0..num_lots {
-            // Reuse saved size roll if available, otherwise generate new one
-            let size_roll = if saved_index < saved_lots.len() {
-                let roll = saved_lots[saved_index].size_roll;
-                saved_index += 1;
-                roll
-            } else {
-                roll_1d6()
-            };
-            let size = size_roll * 10;
-            passengers.freight_lots.push(FreightLot { size, size_roll });
-        }
-
-        // Recalculate minor cargo
-        let num_lots = Self::recalc_cargo_class(
-            passengers.minor_cargo_roll,
-            passengers.minor_cargo_check_roll,
-            origin_population,
-            origin_port,
-            origin_zone,
-            origin_tech_level,
-            destination_population,
-            destination_port,
-            destination_zone,
-            destination_tech_level,
-            distance_parsecs,
-            player_broker_skill,
-            CargoClass::Minor,
-        );
-        for _ in 0..num_lots {
-            // Reuse saved size roll if available, otherwise generate new one
-            let size_roll = if saved_index < saved_lots.len() {
-                let roll = saved_lots[saved_index].size_roll;
-                saved_index += 1;
-                roll
-            } else {
-                roll_1d6()
-            };
-            let size = size_roll * 5;
-            passengers.freight_lots.push(FreightLot { size, size_roll });
-        }
-
-        // Recalculate incidental cargo
-        let num_lots = Self::recalc_cargo_class(
-            passengers.incidental_cargo_roll,
-            passengers.incidental_cargo_check_roll,
-            origin_population,
-            origin_port,
-            origin_zone,
-            origin_tech_level,
-            destination_population,
-            destination_port,
-            destination_zone,
-            destination_tech_level,
-            distance_parsecs,
-            player_broker_skill,
-            CargoClass::Incidental,
-        );
-        for _ in 0..num_lots {
-            // Reuse saved size roll if available, otherwise generate new one
-            let size_roll = if saved_index < saved_lots.len() {
-                let roll = saved_lots[saved_index].size_roll;
-                saved_index += 1;
-                roll
-            } else {
-                roll_1d6()
-            };
-            let size = size_roll;
-            passengers.freight_lots.push(FreightLot { size, size_roll });
-        }
-
-        // Sort freight lots by size (largest first)
-        passengers.freight_lots.sort_by(|a, b| b.size.cmp(&a.size));
+        self.freight_lots.sort_by(|a, b| b.size.cmp(&a.size));
     }
 
     /// Generates the number of cargo lots for a specific cargo class
@@ -573,42 +370,43 @@ impl AvailablePassengers {
         destination_tech_level: i32,
         distance_parsecs: i32,
         player_broker_skill: i32,
+        roll: &mut Option<i32>,
+        check_roll: &mut Option<i32>,
+        size_rolls: &mut Vec<i32>,
         cargo_class: CargoClass,
-    ) -> (i32, i32, i32) {
-        // Initial 2d6 roll - SAVE THIS
-        let base_roll = roll_2d6();
-        let mut roll = base_roll;
+    ) -> i32 {
+        let base_roll = roll.get_or_insert_with(roll_2d6);
 
-        // Modify by effect of player broker skill check - SAVE THIS
-        let check_roll = roll_2d6();
-        let check = player_broker_skill + check_roll - 8;
-        roll += check;
+        // Modify by effect of player broker skill check
+        let check_roll_value = *check_roll.get_or_insert_with(roll_2d6);
+        let check = player_broker_skill + check_roll_value - 8;
+        let mut num_lots = *base_roll + check;
 
         // Cargo class modifiers
         match cargo_class {
-            CargoClass::Major => roll -= 4,
-            CargoClass::Incidental => roll += 2,
+            CargoClass::Major => num_lots -= 4,
+            CargoClass::Incidental => num_lots += 2,
             _ => {}
         }
 
         // Population modifiers
         for pop in [origin_population, destination_population] {
             if pop <= 1 {
-                roll -= 4;
+                num_lots -= 4;
             } else if pop >= 8 {
-                roll += 4;
+                num_lots += 4;
             } else if pop >= 6 {
-                roll += 2;
+                num_lots += 2;
             }
         }
 
         // Starport modifiers
         for port in [origin_port, destination_port] {
             match port {
-                PortCode::A => roll += 2,
-                PortCode::B => roll += 1,
-                PortCode::E => roll -= 1,
-                PortCode::X => roll -= 3,
+                PortCode::A => num_lots += 2,
+                PortCode::B => num_lots += 1,
+                PortCode::E => num_lots -= 1,
+                PortCode::X => num_lots -= 3,
                 _ => {}
             }
         }
@@ -616,9 +414,9 @@ impl AvailablePassengers {
         // Tech level modifiers
         for tech_level in [origin_tech_level, destination_tech_level] {
             if tech_level <= 6 {
-                roll -= 1;
+                num_lots -= 1;
             } else if tech_level >= 9 {
-                roll += 2;
+                num_lots += 2;
             }
         }
 
@@ -626,17 +424,23 @@ impl AvailablePassengers {
         for zone in [origin_zone, destination_zone] {
             match zone {
                 ZoneClassification::Green => continue,
-                ZoneClassification::Amber => roll -= 2,
-                ZoneClassification::Red => roll -= 6,
+                ZoneClassification::Amber => num_lots -= 2,
+                ZoneClassification::Red => num_lots -= 6,
             }
         }
 
         // Distance modifier
         if distance_parsecs > 1 {
-            roll -= distance_parsecs - 1;
+            num_lots -= distance_parsecs - 1;
         }
 
-        (roll, base_roll, check_roll)
+        // Generate additional size rolls if needed
+        let num_new = num_lots - size_rolls.len() as i32;
+        for _ in 0..num_new {
+            size_rolls.push(roll_1d6());
+        }
+
+        num_lots
     }
 
     /// Generates the number of passengers for a specific passenger class
@@ -752,165 +556,7 @@ impl AvailablePassengers {
 
         (total, base_roll, dice_rolls)
     }
-
-    /// Recalculates passenger count using saved dice rolls
-    #[allow(clippy::too_many_arguments)]
-    fn recalc_passenger_class(
-        base_roll: i32,
-        dice_rolls: &[i32],
-        origin_population: i32,
-        origin_port: PortCode,
-        origin_zone: ZoneClassification,
-        destination_population: i32,
-        destination_port: PortCode,
-        destination_zone: ZoneClassification,
-        distance_parsecs: i32,
-        steward_skill: i32,
-        passenger_class: PassengerClass,
-    ) -> i32 {
-        // Start with saved base roll
-        let mut roll = base_roll;
-
-        // Apply modifiers (same as generate_passenger_class)
-        roll += steward_skill;
-
-        match passenger_class {
-            PassengerClass::High => roll -= 4,
-            PassengerClass::Low => roll += 1,
-            _ => {}
-        }
-
-        if origin_population <= 1 {
-            roll -= 4;
-        }
-        if destination_population <= 1 {
-            roll -= 4;
-        }
-
-        for pop in [origin_population, destination_population] {
-            if pop >= 8 {
-                roll += 3;
-            } else if pop >= 6 {
-                roll += 1;
-            }
-        }
-
-        for port in [origin_port, destination_port] {
-            match port {
-                PortCode::A => roll += 2,
-                PortCode::B => roll += 1,
-                PortCode::E => roll -= 1,
-                PortCode::X => roll -= 3,
-                _ => {}
-            }
-        }
-
-        for zone in [origin_zone, destination_zone] {
-            match zone {
-                ZoneClassification::Green => continue,
-                ZoneClassification::Amber => roll += 1,
-                ZoneClassification::Red => roll -= 4,
-            }
-        }
-
-        if distance_parsecs > 1 {
-            roll -= distance_parsecs - 1;
-        }
-
-        // Determine number of dice based on modified result
-        let dice_count = match roll {
-            i32::MIN..=1 => return 0,
-            2..=3 => 1,
-            4..=6 => 2,
-            7..=10 => 3,
-            11..=13 => 4,
-            14..=15 => 5,
-            16 => 6,
-            17 => 7,
-            18 => 8,
-            19 => 9,
-            20..=i32::MAX => 10,
-        };
-
-        // Use saved dice rolls, sum only the number we need
-        dice_rolls.iter().take(dice_count as usize).sum()
-    }
-
-    /// Recalculates cargo lot count using saved dice rolls
-    #[allow(clippy::too_many_arguments)]
-    fn recalc_cargo_class(
-        base_roll: i32,
-        check_roll: i32,
-        origin_population: i32,
-        origin_port: PortCode,
-        origin_zone: ZoneClassification,
-        origin_tech_level: i32,
-        destination_population: i32,
-        destination_port: PortCode,
-        destination_zone: ZoneClassification,
-        destination_tech_level: i32,
-        distance_parsecs: i32,
-        player_broker_skill: i32,
-        cargo_class: CargoClass,
-    ) -> i32 {
-        // Start with saved base roll
-        let mut roll = base_roll;
-
-        // Apply broker skill check using saved check roll
-        let check = player_broker_skill + check_roll - 8;
-        roll += check;
-
-        // Apply all modifiers (same as generate_cargo_class)
-        match cargo_class {
-            CargoClass::Major => roll -= 4,
-            CargoClass::Incidental => roll += 2,
-            _ => {}
-        }
-
-        for pop in [origin_population, destination_population] {
-            if pop <= 1 {
-                roll -= 4;
-            } else if pop >= 8 {
-                roll += 4;
-            } else if pop >= 6 {
-                roll += 2;
-            }
-        }
-
-        for port in [origin_port, destination_port] {
-            match port {
-                PortCode::A => roll += 2,
-                PortCode::B => roll += 1,
-                PortCode::E => roll -= 1,
-                PortCode::X => roll -= 3,
-                _ => {}
-            }
-        }
-
-        for tech_level in [origin_tech_level, destination_tech_level] {
-            if tech_level <= 6 {
-                roll -= 1;
-            } else if tech_level >= 9 {
-                roll += 2;
-            }
-        }
-
-        for zone in [origin_zone, destination_zone] {
-            match zone {
-                ZoneClassification::Green => continue,
-                ZoneClassification::Amber => roll -= 2,
-                ZoneClassification::Red => roll -= 6,
-            }
-        }
-
-        if distance_parsecs > 1 {
-            roll -= distance_parsecs - 1;
-        }
-
-        roll.max(0)
-    }
 }
-
 /// Enum representing the class of passenger
 #[derive(Debug, Clone, Copy)]
 enum PassengerClass {
