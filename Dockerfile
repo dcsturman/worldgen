@@ -22,4 +22,4 @@ FROM nginx:1.21-alpine
 
 EXPOSE 80
 COPY nginx.conf /etc/nginx/nginx.conf
-COPY --from=release /web/dist/ /usr/share/nginx/html/
+COPY --from=build /web/dist/ /usr/share/nginx/html/
