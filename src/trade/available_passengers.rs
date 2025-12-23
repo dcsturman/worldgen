@@ -34,13 +34,13 @@ pub struct AvailablePassengers {
 
     // Saved dice rolls for recalculation
     /// Raw 2d6 roll for high passage (saved for recalculation)
-    pub high_roll: i32,
+    pub high_roll: Option<i32>,
     /// Raw 2d6 roll for medium passage (saved for recalculation)
-    pub medium_roll: i32,
+    pub medium_roll: Option<i32>,
     /// Raw 2d6 roll for basic passage (saved for recalculation)
-    pub basic_roll: i32,
+    pub basic_roll: Option<i32>,
     /// Raw 2d6 roll for low passage (saved for recalculation)
-    pub low_roll: i32,
+    pub low_roll: Option<i32>,
     /// Individual 1d6 rolls for high passage count (saved for recalculation)
     pub high_dice_rolls: Vec<i32>,
     /// Individual 1d6 rolls for medium passage count (saved for recalculation)
@@ -134,10 +134,14 @@ impl AvailablePassengers {
     }
 
     pub fn reset_die_rolls(&mut self) {
-        self.high_roll = 0;
-        self.medium_roll = 0;
-        self.basic_roll = 0;
-        self.low_roll = 0;
+        self.high_roll = None;
+        self.medium_roll = None;
+        self.basic_roll = None;
+        self.low_roll = None;
+        self.high_dice_rolls.clear();
+        self.medium_dice_rolls.clear();
+        self.basic_dice_rolls.clear();
+        self.low_dice_rolls.clear();
         self.major_cargo_roll = None;
         self.major_cargo_check_roll = None;
         self.minor_cargo_roll = None;
@@ -171,7 +175,7 @@ impl AvailablePassengers {
         distance_parsecs: i32,
         steward_skill: i32,
     ) {
-        let (count, roll, dice_rolls) = Self::generate_passenger_class(
+        self.high = Self::generate_passenger_class(
             origin_population,
             origin_port,
             origin_zone,
@@ -180,13 +184,12 @@ impl AvailablePassengers {
             destination_zone,
             distance_parsecs,
             steward_skill,
+            &mut self.high_roll,
+            &mut self.high_dice_rolls,
             PassengerClass::High,
         );
-        self.high = count;
-        self.high_roll = roll;
-        self.high_dice_rolls = dice_rolls;
 
-        let (count, roll, dice_rolls) = Self::generate_passenger_class(
+        self.medium = Self::generate_passenger_class(
             origin_population,
             origin_port,
             origin_zone,
@@ -195,13 +198,12 @@ impl AvailablePassengers {
             destination_zone,
             distance_parsecs,
             steward_skill,
+            &mut self.medium_roll,
+            &mut self.medium_dice_rolls,
             PassengerClass::Medium,
         );
-        self.medium = count;
-        self.medium_roll = roll;
-        self.medium_dice_rolls = dice_rolls;
 
-        let (count, roll, dice_rolls) = Self::generate_passenger_class(
+        self.basic = Self::generate_passenger_class(
             origin_population,
             origin_port,
             origin_zone,
@@ -210,13 +212,12 @@ impl AvailablePassengers {
             destination_zone,
             distance_parsecs,
             steward_skill,
+            &mut self.basic_roll,
+            &mut self.basic_dice_rolls,
             PassengerClass::Basic,
         );
-        self.basic = count;
-        self.basic_roll = roll;
-        self.basic_dice_rolls = dice_rolls;
 
-        let (count, roll, dice_rolls) = Self::generate_passenger_class(
+        self.low = Self::generate_passenger_class(
             origin_population,
             origin_port,
             origin_zone,
@@ -225,11 +226,10 @@ impl AvailablePassengers {
             destination_zone,
             distance_parsecs,
             steward_skill,
+            &mut self.low_roll,
+            &mut self.low_dice_rolls,
             PassengerClass::Low,
         );
-        self.low = count;
-        self.low_roll = roll;
-        self.low_dice_rolls = dice_rolls;
     }
 
     /// Generates freight lots for all cargo classes
@@ -470,15 +470,17 @@ impl AvailablePassengers {
         destination_zone: ZoneClassification,
         distance_parsecs: i32,
         steward_skill: i32,
+        roll: &mut Option<i32>,
+        dice_rolls: &mut Vec<i32>,
         passenger_class: PassengerClass,
-    ) -> (i32, i32, Vec<i32>) {
-        // Initial 2d6 roll - SAVE THIS
-        let base_roll = roll_2d6();
-        let mut roll = base_roll;
+    ) -> i32 {
+        // Get prior roll or roll now if we didn't have one
+        // Note, we explicitly copy as we don't want modifications to
+        // roll to lose the base roll.
+        let mut roll = *roll.get_or_insert_with(roll_2d6);
 
         // Apply modifiers
         roll += steward_skill;
-
         // Class-specific modifiers
         match passenger_class {
             PassengerClass::High => roll -= 4,
@@ -493,7 +495,6 @@ impl AvailablePassengers {
         if destination_population <= 1 {
             roll -= 4;
         }
-
         // +1 for population 6-7, +3 for population 8+
         for pop in [origin_population, destination_population] {
             if pop >= 8 {
@@ -543,18 +544,18 @@ impl AvailablePassengers {
             20..=i32::MAX => 10,
         };
 
-        // ALWAYS roll and save 10 dice (the maximum possible)
-        // This allows us to recalculate with different skills later
-        // without losing information when skills increase
-        let mut dice_rolls = Vec::new();
-        for _ in 0..10 {
-            dice_rolls.push(roll_1d6());
+        // If we haven't rolled possible passenger counts, roll them all now.
+        // We then only use the number we need (dice_count).
+        if dice_rolls.is_empty() {
+            for _ in 0..10 {
+                dice_rolls.push(roll_1d6());
+            }
         }
 
         // Calculate the current passenger count using only the dice we need
         let total: i32 = dice_rolls.iter().take(dice_count as usize).sum();
 
-        (total, base_roll, dice_rolls)
+        total
     }
 }
 /// Enum representing the class of passenger
