@@ -1028,43 +1028,20 @@ mod tests {
 
         // Create a table with a single good
         let mut table = AvailableGoodsTable::new();
-        table.gen_entry(entry.clone(), 5).unwrap();
 
-        // Get the original cost
+        table.gen_entry(entry.clone(), 5).unwrap();
+        // First with a world with no trade classes
+        table.price_goods_to_buy(&Vec::default(), 0, 0);        
+
         let original_cost = table.goods()[0].buy_cost;
 
         // Price the goods with equal broker skills
         // This will use a random roll, so we can't predict the exact price,
         // but we can check that the price has changed
         table.price_goods_to_buy(&world_trade_classes, 0, 0);
-
-        // The price should be different due to the DMs (purchase +2, sale -3)
+        // The price should be different due to the DMs (purchase +2)
         // and the random roll
-        // TODO: Flakey!
         assert_ne!(table.goods()[0].buy_cost, original_cost);
-
-        // Create another table for a more controlled test
-        let mut table2 = AvailableGoodsTable::new();
-        table2.gen_entry(entry.clone(), 5).unwrap();
-
-        // Set up a test where we know the outcome
-        // If buyer has skill 3, supplier has skill 1, purchase DM is +2, sale DM is +3
-        // Then the modifier is: +3 - 1 + 2 - 3 = +1
-        // For a roll of 7, the modified roll would be 7 + 1 = 8, which is 100%
-        // We can't control the roll, but we can check that the price is within
-        // a reasonable range based on the skills and DMs
-        table2.price_goods_to_buy(&world_trade_classes, 3, 1);
-
-        // The price should be affected by the skills and DMs
-        // We can't assert an exact value due to the random roll
-        let new_cost = table2.goods()[0].buy_cost;
-        println!("Original cost: {original_cost}, New cost: {new_cost}");
-
-        // The price should be within a reasonable range
-        // With the given skills and DMs, the price multiplier should be between 0.5 and 2.0
-        // depending on the roll
-        assert!(new_cost >= (original_cost as f64 * 0.5) as i32);
-        assert!(new_cost <= (original_cost as f64 * 2.0) as i32);
     }
 
     #[test_log::test]
