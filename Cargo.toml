@@ -8,7 +8,7 @@ license = "MIT"
 console_error_panic_hook = "0.1.7"
 itertools = "0.14.0"
 lazy_static = "1.5.0"
-leptos = { version = "0.8.2", features = ["csr", "ssr"] }
+leptos = { version = "0.8.2", features = ["csr"] }
 leptos_meta = "0.8.2"
 log = "0.4.22"
 rand = "0.9.1"
@@ -26,6 +26,37 @@ leptos-use = { version = "0.16.2", features = ["storage"] }
 codee = "0.3.2"
 backtrace = "0.3.75"
 reactive_graph = "0.2.6"
+
+# Server-side dependencies (only compiled with ssr feature)
+axum = { version = "0.8", features = ["macros"], optional = true }
+tokio = { version = "1", features = ["full"], optional = true }
+tower = { version = "0.5", optional = true }
+tower-http = { version = "0.6", features = ["fs", "cors"], optional = true }
+leptos_axum = { version = "0.8.2", optional = true }
+firestore = { version = "0.47", optional = true }
+thiserror = { version = "2.0", optional = true }
+env_logger = { version = "0.11", optional = true }
+rustls = { version = "0.23", default-features = true, optional = true }
+leptos_ws = { version = "0.9.7", optional = true }
+
+[features]
+default = []
+ssr = [
+    "leptos/ssr",
+    "dep:axum",
+    "dep:tokio",
+    "dep:tower",
+    "dep:tower-http",
+    "dep:leptos_axum",
+    "dep:firestore",
+    "dep:thiserror",
+    "dep:env_logger",
+    "dep:rustls",
+    "dep:leptos_ws",
+    "leptos_ws/ssr",
+]
+hydrate = ["leptos/hydrate", "dep:leptos_ws", "leptos_ws/hydrate"]
+csr = ["dep:leptos_ws", "leptos_ws/csr"]
 
 [[bin]]
 name = "main"

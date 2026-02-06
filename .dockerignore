@@ -1,0 +1,51 @@
+# Git
+.git
+.gitignore
+
+# Build artifacts
+target/
+dist/
+debug/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Documentation (not needed in container)
+*.md
+!README.md
+
+# Scripts (not needed in container)
+*.sh
+!deploy.sh
+
+# Credentials (never include!)
+*.json
+!Cargo.lock
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+
+# Node modules (if any)
+node_modules/
+
+# Rust
+**/*.rs.bk
+*.pdb
+
+# Docker
+Dockerfile
+Dockerfile.*
+.dockerignore
+

@@ -1,0 +1,15 @@
+services:
+  app:
+    image: worldgen-app:latest
+    container_name: worldgen-backend
+    pull_policy: build
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json
+      - GCP_PROJECT_ID=callisto-1731280702227
+    volumes:
+      - ~/.config/gcloud:/root/.config/gcloud:ro
