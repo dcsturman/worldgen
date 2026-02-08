@@ -199,23 +199,27 @@ pub async fn get_trade_state(session_id: &str) -> Result<TradeState, FirestoreEr
 pub async fn save_trade_state(session_id: &str, state: &TradeState) -> Result<(), FirestoreError> {
     let db = get_db().await;
 
-    debug!("Saving trade state for session: {}", session_id);
+    info!("📝 Firestore: Starting save for session: {}", session_id);
 
     // Upsert the document (create or update)
-    db.fluent()
+    let result = db.fluent()
         .update()
         .in_col(COLLECTION_NAME)
         .document_id(session_id)
         .object(state)
         .execute::<()>()
-        .await
-        .map_err(|e| {
-            error!("Failed to save trade state: {}", e);
-            FirestoreError::WriteError(e.to_string())
-        })?;
+        .await;
 
-    debug!("Successfully saved trade state for session: {}", session_id);
-    Ok(())
+    match result {
+        Ok(_) => {
+            info!("✅ Firestore: Successfully saved trade state for session: {}", session_id);
+            Ok(())
+        }
+        Err(e) => {
+            error!("❌ Firestore: Failed to save trade state for session {}: {}", session_id, e);
+            Err(FirestoreError::WriteError(e.to_string()))
+        }
+    }
 }
 
 /// Deletes the trade state for a given session from Firestore

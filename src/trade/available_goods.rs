@@ -389,7 +389,7 @@ impl AvailableGoodsTable {
         self.gen_entry_rng(entry, &mut rng, world_population)
     }
 
-    /// Add a good to the table.  
+    /// Add a good to the table.
     ///
     /// If the good is already in the table, add to its quantity
     /// to the existing goods of that type.  Otherwise just
@@ -410,7 +410,7 @@ impl AvailableGoodsTable {
         self.goods.retain(|g| g.quantity > 0);
     }
 
-    /// Update a good in the table.  
+    /// Update a good in the table.
     ///
     /// If the good is already in the table, replace it.  Otherwise just
     /// add it to the table.
@@ -847,10 +847,12 @@ impl Good {
 
             self.sell_price = Some((self.base_cost as f64 * price_multiplier).round() as i32);
         } else {
+            /*  RESTORE THIS DEBUG LATER
             debug!(
                 "price_to_sell_rng: No trade classes provided, clearing sell price for {}",
                 self.name
             );
+            */
             self.sell_price = None;
             self.sell_price_comment = "No current price available.".to_string();
         }
@@ -1031,7 +1033,7 @@ mod tests {
 
         table.gen_entry(entry.clone(), 5).unwrap();
         // First with a world with no trade classes
-        table.price_goods_to_buy(&Vec::default(), 0, 0);        
+        table.price_goods_to_buy(&Vec::default(), 0, 0);
 
         let original_cost = table.goods()[0].buy_cost;
 

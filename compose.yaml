@@ -10,6 +10,12 @@ services:
       - "8080:8080"
     environment:
       - GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json
-      - GCP_PROJECT_ID=callisto-1731280702227
+      - GCP_PROJECT=callisto-1731280702227
+      - FIRESTORE_DATABASE_ID=worldgen
+      - RUST_BACKTRACE=1
+      - LEPTOS_SITE_ROOT=site
+      - LEPTOS_SITE_ADDR=0.0.0.0:8080
+      - RUST_LOG=debug
+
     volumes:
       - ~/.config/gcloud:/root/.config/gcloud:ro

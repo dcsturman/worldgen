@@ -219,6 +219,8 @@ pub fn init_from_url() {
             _ => return, // Invalid log level, don't initialize logger
         };
 
+        // temp
+        //let log_level = log::Level::Debug;
         let mut config = wasm_logger::Config::new(log_level);
 
         // Add module prefix if specified

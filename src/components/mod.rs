@@ -92,7 +92,7 @@
 //! #[component]
 //! fn App() -> impl IntoView {
 //!     let path = window().location().pathname().unwrap_or_default();
-//!     
+//!
 //!     if path.contains("world") {
 //!         view! { <World /> }
 //!     } else {
@@ -117,6 +117,7 @@
 //! - Touch-friendly interactive elements
 //! - Scalable text and spacing
 
+pub mod app;
 pub mod selector;
 pub mod system_generator;
 pub mod system_view;

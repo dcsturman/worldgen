@@ -22,8 +22,35 @@ pub mod systems;
 pub mod trade;
 pub mod util;
 
+use leptos::prelude::*;
+use log::debug;
+
 /// Default UWP (Universal World Profile) used for initial world generation
 pub const INITIAL_UPP: &str = "A788899-A";
 
 /// Default name for the initial main world
 pub const INITIAL_NAME: &str = "Main World";
+
+#[cfg(feature = "hydrate")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn hydrate() {
+    use crate::components::app::App;
+    use leptos_ws::WsSignals;
+    _ = console_log::init_with_level(log::Level::Debug);
+    console_error_panic_hook::set_once();
+
+    leptos::mount::hydrate_body(move || {
+        debug!("WASM: Starting hydration, initializing MetaContext");
+        leptos_meta::provide_meta_context();
+
+        // Initialize WsSignals for client-side WebSocket connection
+        let ws_signals = WsSignals::new();
+        provide_context(ws_signals);
+        leptos_ws::provide_websocket();
+        debug!("Leptos_ws Websocket manager initialized.");
+
+        debug!("WASM: Inside reactive scope, providing MetaContext");
+        // This is the magic line that the JS is looking for
+        view! { <App /> }
+    });
+}
