@@ -212,6 +212,28 @@ pub fn Trade() -> impl IntoView {
 
     // The main world always exists (starts with a default value) - keeping as local signal for now
     let origin_world = get_signal(session_id, signal_names::ORIGIN_WORLD, World::default());
+
+    // TEST: Monitor the origin_world signal directly for changes using an Effect
+    // This will log whenever the signal value changes
+    {
+        Effect::new(move |prev_name: Option<String>| {
+            let current_value = origin_world.get();
+            let current_name = current_value.name.clone();
+
+            if let Some(prev) = prev_name {
+                if prev != current_name {
+                    warn!("🔍 TEST WATCHER: origin_world CHANGED from '{}' to '{}'", prev, current_name);
+                } else {
+                    warn!("🔍 TEST WATCHER: origin_world re-read (no change): '{}'", current_name);
+                }
+            } else {
+                warn!("🔍 TEST WATCHER: origin_world initial value: '{}'", current_name);
+            }
+
+            current_name
+        });
+    }
+
     // Create remote signals that persist to Firestore
     let dest_world = get_signal(session_id, signal_names::DEST_WORLD, None::<World>);
 
