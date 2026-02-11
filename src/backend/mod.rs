@@ -41,12 +41,19 @@ use std::sync::{Arc, RwLock};
 use log::{debug, error, info, warn};
 
 use leptos::prelude::*;
+
+#[cfg(any(feature = "ssr", feature = "hydrate", feature = "csr"))]
+use leptos_ws::ReadOnlySignal;
+
 use state::TradeState;
 
 pub use crate::systems::world::World;
 pub use crate::trade::available_goods::AvailableGoodsTable;
 pub use crate::trade::available_passengers::AvailablePassengers;
 pub use crate::trade::ship_manifest::ShipManifest;
+
+#[cfg(any(feature = "ssr", feature = "hydrate", feature = "csr"))]
+pub use leptos_ws::ReadOnlySignal as WsReadOnlySignal;
 
 /// Default session ID used by clients until proper session management is implemented
 pub const DEFAULT_SESSION_ID: &str = "default";
@@ -181,39 +188,32 @@ pub async fn update_trade_state(
 // Helper function to create a ReadOnlySignal to update clients to changes to the trade state.
 // Its used to disseminate changes to all clients.
 
-use leptos::prelude::Signal;
-use leptos_ws::ReadOnlySignal;
 use serde::{Deserialize, Serialize};
 
-/// Creates a reactive Signal derived from a ReadOnlySignal (client-side)
+/// Creates a reactive ReadOnlySignal (client-side)
 ///
-/// Wraps a leptos_ws ReadOnlySignal in a Leptos Signal::derive, making it:
-/// - Reactive: accessing the signal tracks the underlying ReadOnlySignal
-/// - Copy: can be moved into multiple closures without cloning
-///
-/// The ReadOnlySignal is only captured in one closure (inside Signal::derive),
-/// avoiding move/borrow issues while maintaining full reactivity.
+/// Returns a leptos_ws ReadOnlySignal that is:
+/// - Reactive: calling .get() on it inside Effects/views tracks the signal
+/// - NOT Copy: must be cloned when used in multiple closures
 ///
 /// Note: The signal is read-only on the client. To update it, call a server function
 /// which will use get_server_signal() to update the value.
+#[cfg(any(feature = "ssr", feature = "hydrate", feature = "csr"))]
 pub fn get_signal<T>(
     session_id: &str,
     signal_name: &str,
     default: T,
-) -> Signal<T>
+) -> ReadOnlySignal<T>
 where
     T: Clone + Send + Sync + Serialize + for<'de> Deserialize<'de> + 'static + PartialEq,
 {
     let full_signal_name = signal_names::for_session(session_id, signal_name);
     log::debug!("📡 get_signal: Creating signal '{}'", full_signal_name);
 
-    // Create the remote signal
-    let ws_signal = ReadOnlySignal::new(&full_signal_name, default.clone()).unwrap_or_else(|e| {
+    // Create the remote signal - it's reactive when you call .get() on it
+    ReadOnlySignal::new(&full_signal_name, default).unwrap_or_else(|e| {
         panic!("Creating signal {full_signal_name} failed: {e:?}");
-    });
-
-    // Wrap it in a derived signal - now it's Copy and reactive!
-    Signal::derive(move || ws_signal.get())
+    })
 }
 
 /// Gets a ReadOnlySignal for server-side use (server-side only)

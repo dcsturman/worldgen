@@ -145,7 +145,8 @@ use log::{debug, error, info, warn};
 use crate::backend::{
     get_signal, set_available_goods, set_available_passengers, set_buyer_broker_skill,
     set_dest_world, set_illegal_goods, set_origin_world, set_seller_broker_skill,
-    set_ship_manifest, set_steward_skill, signal_names, DEFAULT_SESSION_ID,
+    set_ship_manifest, set_steward_skill, signal_names, WsReadOnlySignal as ReadOnlySignal,
+    DEFAULT_SESSION_ID,
 };
 use crate::components::traveller_map::WorldSearch;
 use crate::systems::world::World;
@@ -216,18 +217,28 @@ pub fn Trade() -> impl IntoView {
     // TEST: Monitor the origin_world signal directly for changes using an Effect
     // This will log whenever the signal value changes
     {
+        let origin_world = origin_world.clone();
         Effect::new(move |prev_name: Option<String>| {
             let current_value = origin_world.get();
             let current_name = current_value.name.clone();
 
             if let Some(prev) = prev_name {
                 if prev != current_name {
-                    warn!("🔍 TEST WATCHER: origin_world CHANGED from '{}' to '{}'", prev, current_name);
+                    warn!(
+                        "🔍 TEST WATCHER: origin_world CHANGED from '{}' to '{}'",
+                        prev, current_name
+                    );
                 } else {
-                    warn!("🔍 TEST WATCHER: origin_world re-read (no change): '{}'", current_name);
+                    warn!(
+                        "🔍 TEST WATCHER: origin_world re-read (no change): '{}'",
+                        current_name
+                    );
                 }
             } else {
-                warn!("🔍 TEST WATCHER: origin_world initial value: '{}'", current_name);
+                warn!(
+                    "🔍 TEST WATCHER: origin_world initial value: '{}'",
+                    current_name
+                );
             }
 
             current_name
@@ -263,17 +274,21 @@ pub fn Trade() -> impl IntoView {
 
     // Dialog state for manually adding goods to manifest
     let show_add_manual = RwSignal::new(false);
-    let o_world = origin_world.get();
+    let o_world = origin_world.clone().get();
     let origin_world_name = RwSignal::new(o_world.name.clone());
     let origin_uwp = RwSignal::new(o_world.to_uwp());
 
     let origin_coords = RwSignal::new(o_world.coordinates);
     let origin_zone = RwSignal::new(o_world.travel_zone);
 
-    let d_world = dest_world.get();
+    let d_world = dest_world.clone().get();
     let dest_world_name =
         RwSignal::new(d_world.clone().map(|w| w.name.clone()).unwrap_or_default());
-    let dest_uwp = RwSignal::new(d_world.clone().map_or("".to_string(), |w| w.to_uwp()));
+    let dest_uwp = RwSignal::new(
+        d_world
+            .clone()
+            .map_or("".to_string(), |w: World| w.to_uwp()),
+    );
     let dest_coords = RwSignal::new(d_world.clone().and_then(|w| w.coordinates));
     let dest_zone = RwSignal::new(
         d_world
@@ -297,234 +312,275 @@ pub fn Trade() -> impl IntoView {
 
     info!("🎯 All signals created.");
     // Effect to recalculate distance whenever origin or destination world coordinates change
-    Effect::new(move |_| {
-        info!("🔄 Effect: Recalculating distance based on world coordinate changes");
-        let origin = origin_world.get();
-        let dest = dest_world.get();
+    {
+        let origin_world = origin_world.clone();
+        let dest_world = dest_world.clone();
+        Effect::new(move |_| {
+            info!("🔄 Effect: Recalculating distance based on world coordinate changes");
+            let origin = origin_world.get();
+            let dest = dest_world.get();
 
-        distance.set(compute_distance(origin, dest));
-    });
+            distance.set(compute_distance(origin, dest));
+        });
+    }
 
     // Effect to keep origin world updated based on changes in name or uwp.
     // If name or uwp changes, update origin_world.
-    Effect::new(move |prev: Option<(String, String)>| {
-        info!("🔄 Effect: origin_world update running");
-        if let Some((prev_name, prev_uwp)) = &prev {
-            if *prev_name == origin_world_name.get() && *prev_uwp == origin_uwp.get() {
-                return (prev_name.to_string(), prev_uwp.to_string());
-            }
-        }
-
-        let name = origin_world_name.get();
-        let uwp = origin_uwp.get();
-        if !name.is_empty() && uwp.len() == 9 {
-            let Ok(mut world) = World::from_upp(&name, &uwp, false, false) else {
-                log::error!("Failed to parse UPP in hook to build origin world: {uwp}");
-                return (name, uwp);
-            };
-            world.gen_trade_classes();
-            world.coordinates = origin_coords.get();
-            world.travel_zone = origin_zone.get();
-            world.gen_trade_classes();
-
-            let world_send = world.clone();
-            spawn_local(async move {
-                if let Err(e) = set_origin_world(session_id.to_string(), world_send).await {
-                    error!("Failed to set_origin_world for session {session_id}: {e:?}");
+    {
+        let origin_world_name = origin_world_name.clone();
+        let origin_uwp = origin_uwp.clone();
+        let origin_coords = origin_coords.clone();
+        let origin_zone = origin_zone.clone();
+        let illegal_goods = illegal_goods.clone();
+        Effect::new(move |prev: Option<(String, String)>| {
+            info!("🔄 Effect: origin_world update running");
+            if let Some((prev_name, prev_uwp)) = &prev {
+                if *prev_name == origin_world_name.get() && *prev_uwp == origin_uwp.get() {
+                    return (prev_name.to_string(), prev_uwp.to_string());
                 }
-            });
+            }
 
-            // Now update available goods
-            let ag = AvailableGoodsTable::for_world(
-                TradeTable::global(),
-                &world.get_trade_classes(),
-                world.get_population(),
-                illegal_goods.get(),
-            )
-            .unwrap();
+            let name = origin_world_name.get();
+            let uwp = origin_uwp.get();
+            if !name.is_empty() && uwp.len() == 9 {
+                let Ok(mut world) = World::from_upp(&name, &uwp, false, false) else {
+                    log::error!("Failed to parse UPP in hook to build origin world: {uwp}");
+                    return (name, uwp);
+                };
+                world.gen_trade_classes();
+                world.coordinates = origin_coords.get();
+                world.travel_zone = origin_zone.get();
+                world.gen_trade_classes();
+
+                let world_send = world.clone();
+                spawn_local(async move {
+                    if let Err(e) = set_origin_world(session_id.to_string(), world_send).await {
+                        error!("Failed to set_origin_world for session {session_id}: {e:?}");
+                    }
+                });
+
+                // Now update available goods
+                let ag = AvailableGoodsTable::for_world(
+                    TradeTable::global(),
+                    &world.get_trade_classes(),
+                    world.get_population(),
+                    illegal_goods.get(),
+                )
+                .unwrap();
+
+                spawn_local(async move {
+                    debug!(
+                        "📤 CLIENT: About to call set_available_goods with {} goods",
+                        ag.goods.len()
+                    );
+                    match serde_json::to_string(&ag) {
+                        Ok(json) => debug!("📤 CLIENT: Serialized AvailableGoodsTable: {}", json),
+                        Err(e) => error!(
+                            "❌ CLIENT: Failed to serialize AvailableGoodsTable to JSON: {}",
+                            e
+                        ),
+                    }
+                    if let Err(e) = set_available_goods(session_id.to_string(), ag).await {
+                        error!(
+                            "❌ CLIENT: Failed to set_available_goods on session {session_id}: {e:?}"
+                        );
+                    }
+                });
+            } else {
+                // If we don't have a valid name, reset other UI elements to reasonable defaults.
+                origin_zone.set(ZoneClassification::Green);
+                distance.set(0);
+            }
+            (name, uwp)
+        });
+    }
+
+    // Effect to keep destination world updated based on changes in name or uwp.
+    // If name or uwp changes, update dest_world.
+    {
+        let dest_world_name = dest_world_name.clone();
+        let dest_uwp = dest_uwp.clone();
+        let dest_coords = dest_coords.clone();
+        let dest_zone = dest_zone.clone();
+        Effect::new(move |prev: Option<(String, String)>| {
+            info!("🔄 Effect: dest_world update running");
+            if let Some((prev_name, prev_uwp)) = &prev {
+                if *prev_name == dest_world_name.get() && *prev_uwp == dest_uwp.get() {
+                    return (prev_name.to_string(), prev_uwp.to_string());
+                }
+            }
+
+            let name = dest_world_name.get();
+            let uwp = dest_uwp.get();
+
+            if !name.is_empty() && uwp.len() == 9 {
+                debug!("🎯 In dest_update effect - have a valid name and uwp");
+                let Ok(mut world) = World::from_upp(&name, &uwp, false, false) else {
+                    log::error!("Failed to parse UPP in hook to build destination world: {uwp}");
+                    return (name, uwp);
+                };
+                world.gen_trade_classes();
+                world.coordinates = dest_coords.get();
+                world.travel_zone = dest_zone.get();
+
+                spawn_local(async move {
+                    if let Err(e) = set_dest_world(session_id.to_string(), Some(world)).await {
+                        log::error!(
+                            "Failed to set_dest_world to Some() value on session {session_id}: {e:?}"
+                        );
+                    }
+                });
+            } else {
+                debug!(
+                    "⏭️ Effect for dest_world: Don't yet have a valid name ({name}) or uwp ({uwp})"
+                );
+                // If we don't have a valid name, reset other UI elements to reasonable defaults.
+                spawn_local(async move {
+                    if let Err(e) = set_dest_world(session_id.to_string(), None).await {
+                        log::error!(
+                            "Failed to set_dest_world to None value on session {session_id}: {e:?}"
+                        );
+                    }
+                });
+                dest_zone.set(ZoneClassification::Green);
+                distance.set(0);
+            }
+            (name, uwp)
+        });
+    }
+
+    // Effect to regenerate passengers if origin, destination, or skills change.
+    {
+        let origin_world = origin_world.clone();
+        let dest_world = dest_world.clone();
+        let available_passengers = available_passengers.clone();
+        let steward_skill = steward_skill.clone();
+        let buyer_broker_skill = buyer_broker_skill.clone();
+        Effect::new(move |_| {
+            info!("🔄 Effect: Regenerating passengers based on world and distance changes");
+            let origin = origin_world.get();
+            let dest = dest_world.get();
+
+            if distance.get() > 0 && dest.is_some() {
+                let dest = dest.unwrap();
+                let mut ap_option = untrack(|| available_passengers.get());
+
+                let ap = ap_option.get_or_insert_with(AvailablePassengers::default);
+
+                ap.generate(
+                    origin.get_population(),
+                    origin.port,
+                    origin.travel_zone,
+                    origin.tech_level,
+                    dest.get_population(),
+                    dest.port,
+                    dest.travel_zone,
+                    dest.tech_level,
+                    distance.get(),
+                    i32::from(steward_skill.get()),
+                    i32::from(buyer_broker_skill.get()),
+                );
+
+                let ap_to_send = ap_option.clone();
+                spawn_local(async move {
+                    if let Err(e) =
+                        set_available_passengers(session_id.to_string(), ap_to_send).await
+                    {
+                        log::error!(
+                            "Failed to set_available_passengers on session {session_id}: {e:?}"
+                        );
+                    }
+                });
+            }
+        });
+    }
+
+    {
+        let dest_world = dest_world.clone();
+        Effect::new(move |_| {
+            let dest_name = dest_world
+                .get()
+                .map(|d| d.name)
+                .unwrap_or_else(|| "NO NAME".to_string());
+
+            warn!("******* DEST CHANGED WITH NAME {dest_name}");
+        });
+    }
+
+    {
+        let origin_world = origin_world.clone();
+        Effect::new(move |_| {
+            let origin_name = origin_world.get().name;
+
+            warn!("******* ORIGIN CHANGED WITH NAME {origin_name}");
+        });
+    }
+
+    // Effect to recalculate goods pricing and manifest pricing when skills or world parameters change (using saved rolls, not regenerating)
+    {
+        let buyer_broker_skill = buyer_broker_skill.clone();
+        let seller_broker_skill = seller_broker_skill.clone();
+        let dest_world = dest_world.clone();
+        let available_goods = available_goods.clone();
+        let ship_manifest = ship_manifest.clone();
+        Effect::new(move |_| {
+            info!("🔄 Effect: Regenerating goods based on world or skill changes.");
+            let buyer = buyer_broker_skill.get();
+            let supplier = seller_broker_skill.get();
+            let dest_world = dest_world.get();
+
+            // Check if destination world changed (not just skills)
+            let current_dest_name = dest_world.as_ref().map(|w| w.name.clone());
+
+            let mut current_goods = untrack(|| available_goods.get());
+            current_goods.price_goods_to_sell(
+                dest_world.as_ref().map(|w: &World| w.get_trade_classes()),
+                supplier,
+                buyer,
+            );
+            current_goods.sort_by_discount();
 
             spawn_local(async move {
                 debug!(
-                    "📤 CLIENT: About to call set_available_goods with {} goods",
-                    ag.goods.len()
+                    "📤 CLIENT: About to call set_available_goods (repricing) with {} goods",
+                    current_goods.goods.len()
                 );
-                match serde_json::to_string(&ag) {
-                    Ok(json) => debug!("📤 CLIENT: Serialized AvailableGoodsTable: {}", json),
+                match serde_json::to_string(&current_goods) {
+                    Ok(json) => debug!(
+                        "📤 CLIENT: Serialized AvailableGoodsTable (repricing): {}",
+                        json
+                    ),
                     Err(e) => error!(
-                        "❌ CLIENT: Failed to serialize AvailableGoodsTable to JSON: {}",
+                        "❌ CLIENT: Failed to serialize AvailableGoodsTable to JSON (repricing): {}",
                         e
                     ),
                 }
-                if let Err(e) = set_available_goods(session_id.to_string(), ag).await {
-                    error!(
+                if let Err(e) = set_available_goods(session_id.to_string(), current_goods).await {
+                    log::error!(
                         "❌ CLIENT: Failed to set_available_goods on session {session_id}: {e:?}"
                     );
                 }
             });
-        } else {
-            // If we don't have a valid name, reset other UI elements to reasonable defaults.
-            origin_zone.set(ZoneClassification::Green);
-            distance.set(0);
-        }
-        (name, uwp)
-    });
 
-    // Effect to keep destination world updated based on changes in name or uwp.
-    // If name or uwp changes, update dest_world.
-    Effect::new(move |prev: Option<(String, String)>| {
-        info!("🔄 Effect: dest_world update running");
-        if let Some((prev_name, prev_uwp)) = &prev {
-            if *prev_name == dest_world_name.get() && *prev_uwp == dest_uwp.get() {
-                return (prev_name.to_string(), prev_uwp.to_string());
-            }
-        }
+            // Reprice the manifest
+            // Manifest goods are sold at the destination, so use dest_world for pricing
+            let mut manifest = untrack(|| ship_manifest.get());
 
-        let name = dest_world_name.get();
-        let uwp = dest_uwp.get();
-
-        if !name.is_empty() && uwp.len() == 9 {
-            debug!("🎯 In dest_update effect - have a valid name and uwp");
-            let Ok(mut world) = World::from_upp(&name, &uwp, false, false) else {
-                log::error!("Failed to parse UPP in hook to build destination world: {uwp}");
-                return (name, uwp);
-            };
-            world.gen_trade_classes();
-            world.coordinates = dest_coords.get();
-            world.travel_zone = dest_zone.get();
-
-            spawn_local(async move {
-                if let Err(e) = set_dest_world(session_id.to_string(), Some(world)).await {
-                    log::error!(
-                        "Failed to set_dest_world to Some() value on session {session_id}: {e:?}"
-                    );
-                }
-            });
-        } else {
-            debug!("⏭️ Effect for dest_world: Don't yet have a valid name ({name}) or uwp ({uwp})");
-            // If we don't have a valid name, reset other UI elements to reasonable defaults.
-            spawn_local(async move {
-                if let Err(e) = set_dest_world(session_id.to_string(), None).await {
-                    log::error!(
-                        "Failed to set_dest_world to None value on session {session_id}: {e:?}"
-                    );
-                }
-            });
-            dest_zone.set(ZoneClassification::Green);
-            distance.set(0);
-        }
-        (name, uwp)
-    });
-
-    // Effect to regenerate passengers if origin, destination, or skills change.
-    Effect::new(move |_| {
-        info!("🔄 Effect: Regenerating passengers based on world and distance changes");
-        let origin = origin_world.get();
-        let dest = dest_world.get();
-
-        if distance.get() > 0 && dest.is_some() {
-            let dest = dest.unwrap();
-            let mut ap_option = untrack(|| available_passengers.get());
-
-            let ap = ap_option.get_or_insert_with(AvailablePassengers::default);
-
-            ap.generate(
-                origin.get_population(),
-                origin.port,
-                origin.travel_zone,
-                origin.tech_level,
-                dest.get_population(),
-                dest.port,
-                dest.travel_zone,
-                dest.tech_level,
-                distance.get(),
-                i32::from(steward_skill.get()),
-                i32::from(buyer_broker_skill.get()),
+            manifest.price_goods(
+                &dest_world,
+                buyer_broker_skill.get(),
+                seller_broker_skill.get(),
             );
 
-            let ap_to_send = ap_option.clone();
             spawn_local(async move {
-                if let Err(e) = set_available_passengers(session_id.to_string(), ap_to_send).await {
-                    log::error!(
-                        "Failed to set_available_passengers on session {session_id}: {e:?}"
-                    );
+                if let Err(e) = set_ship_manifest(session_id.to_string(), manifest).await {
+                    error!("Failed to set_ship_manifest for session {session_id}: {e:?}");
                 }
             });
-        }
-    });
 
-    Effect::new(move |_| {
-        let dest_name = dest_world
-            .get()
-            .map(|d| d.name)
-            .unwrap_or_else(|| "NO NAME".to_string());
-
-        warn!("******* DEST CHANGED WITH NAME {dest_name}");
-    });
-
-    Effect::new(move |_| {
-        let origin_name = origin_world.get().name;
-
-        warn!("******* ORIGIN CHANGED WITH NAME {origin_name}");
-    });
-
-    // Effect to recalculate goods pricing and manifest pricing when skills or world parameters change (using saved rolls, not regenerating)
-    Effect::new(move |_| {
-        info!("🔄 Effect: Regenerating goods based on world or skill changes.");
-        let buyer = buyer_broker_skill.get();
-        let supplier = seller_broker_skill.get();
-        let dest_world = dest_world.get();
-
-        // Check if destination world changed (not just skills)
-        let current_dest_name = dest_world.as_ref().map(|w| w.name.clone());
-
-        let mut current_goods = untrack(|| available_goods.get());
-        current_goods.price_goods_to_sell(
-            dest_world.as_ref().map(|w| w.get_trade_classes()),
-            supplier,
-            buyer,
-        );
-        current_goods.sort_by_discount();
-
-        spawn_local(async move {
-            debug!(
-                "📤 CLIENT: About to call set_available_goods (repricing) with {} goods",
-                current_goods.goods.len()
-            );
-            match serde_json::to_string(&current_goods) {
-                Ok(json) => debug!(
-                    "📤 CLIENT: Serialized AvailableGoodsTable (repricing): {}",
-                    json
-                ),
-                Err(e) => error!(
-                    "❌ CLIENT: Failed to serialize AvailableGoodsTable to JSON (repricing): {}",
-                    e
-                ),
-            }
-            if let Err(e) = set_available_goods(session_id.to_string(), current_goods).await {
-                log::error!(
-                    "❌ CLIENT: Failed to set_available_goods on session {session_id}: {e:?}"
-                );
-            }
+            current_dest_name
         });
-
-        // Reprice the manifest
-        // Manifest goods are sold at the destination, so use dest_world for pricing
-        let mut manifest = untrack(|| ship_manifest.get());
-
-        manifest.price_goods(
-            &dest_world,
-            buyer_broker_skill.get(),
-            seller_broker_skill.get(),
-        );
-
-        spawn_local(async move {
-            if let Err(e) = set_ship_manifest(session_id.to_string(), manifest).await {
-                error!("Failed to set_ship_manifest for session {session_id}: {e:?}");
-            }
-        });
-
-        current_dest_name
-    });
+    }
 
     view! {
         <div class:App>
@@ -549,71 +605,82 @@ pub fn Trade() -> impl IntoView {
                 <div style="display: flex; align-items: center; padding: 10px;">
                     <button
                         class="blue-button"
-                        on:click=move |_| {
-                            let origin = origin_world.get();
-                            let session_id = DEFAULT_SESSION_ID.to_string();
-                            let session_id2 = session_id.clone();
-                            let session_id3 = session_id.clone();
+                        on:click={
+                            let origin_world = origin_world.clone();
+                            let available_goods = available_goods.clone();
+                            let buyer_broker_skill = buyer_broker_skill.clone();
+                            let seller_broker_skill = seller_broker_skill.clone();
+                            let ship_manifest = ship_manifest.clone();
+                            let dest_world = dest_world.clone();
+                            let available_passengers = available_passengers.clone();
+                            let steward_skill = steward_skill.clone();
+                            move |_| {
+                                let origin = origin_world.get();
+                                let session_id = DEFAULT_SESSION_ID.to_string();
+                                let session_id2 = session_id.clone();
+                                let session_id3 = session_id.clone();
 
-                            // Update available_goods
-                            let mut ag = available_goods.get();
-                            ag.reset_die_rolls();
-                            ag.price_goods_to_buy(
-                                &origin.get_trade_classes(),
-                                buyer_broker_skill.get(),
-                                seller_broker_skill.get(),
-                            );
-                            ag.sort_by_discount();
-                            let ag_clone = ag.clone();
-                            spawn_local(async move {
-                                let _ = set_available_goods(session_id, ag_clone).await;
-                            });
+                                // Update available_goods
+                                let mut ag = available_goods.get();
+                                ag.reset_die_rolls();
+                                ag.price_goods_to_buy(
+                                    &origin.get_trade_classes(),
+                                    buyer_broker_skill.get(),
+                                    seller_broker_skill.get(),
+                                );
+                                ag.sort_by_discount();
+                                let ag_clone = ag.clone();
+                                spawn_local(async move {
+                                    let _ = set_available_goods(session_id, ag_clone).await;
+                                });
 
-                            // Update ship_manifest
-                            let mut manifest = ship_manifest.get();
-                            manifest.reset_die_rolls();
-                            manifest.price_goods(
-                                &Some(origin.clone()),
-                                buyer_broker_skill.get(),
-                                seller_broker_skill.get(),
-                            );
-                            let manifest_clone = manifest.clone();
-                            spawn_local(async move {
-                                let _ = set_ship_manifest(session_id2, manifest_clone).await;
-                            });
+                                // Update ship_manifest
+                                let mut manifest = ship_manifest.get();
+                                manifest.reset_die_rolls();
+                                manifest.price_goods(
+                                    &Some(origin.clone()),
+                                    buyer_broker_skill.get(),
+                                    seller_broker_skill.get(),
+                                );
+                                let manifest_clone = manifest.clone();
+                                spawn_local(async move {
+                                    let _ = set_ship_manifest(session_id2, manifest_clone).await;
+                                });
 
-                            // Update available_passengers
-                            if let Some(world) = dest_world.get() {
-                                if distance.get() > 0 {
-                                    let mut passengers = available_passengers.get().unwrap_or_default();
-                                    passengers.reset_die_rolls();
-                                    passengers.generate(
-                                        origin.get_population(),
-                                        origin.port,
-                                        origin.travel_zone,
-                                        origin.tech_level,
-                                        world.get_population(),
-                                        world.port,
-                                        world.travel_zone,
-                                        world.tech_level,
-                                        distance.get(),
-                                        i32::from(steward_skill.get()),
-                                        i32::from(buyer_broker_skill.get()),
-                                    );
-                                    let session_id3_clone = session_id3.clone();
-                                    spawn_local(async move {
-                                        let _ = set_available_passengers(session_id3_clone, Some(passengers)).await;
-                                    });
+                                // Update available_passengers
+                                if let Some(world) = dest_world.get() {
+                                    if distance.get() > 0 {
+                                        let mut passengers = available_passengers.get().unwrap_or_default();
+                                        passengers.reset_die_rolls();
+                                        let world: World = world;
+                                        passengers.generate(
+                                            origin.get_population(),
+                                            origin.port,
+                                            origin.travel_zone,
+                                            origin.tech_level,
+                                            world.get_population(),
+                                            world.port,
+                                            world.travel_zone,
+                                            world.tech_level,
+                                            distance.get(),
+                                            i32::from(steward_skill.get()),
+                                            i32::from(buyer_broker_skill.get()),
+                                        );
+                                        let session_id3_clone = session_id3.clone();
+                                        spawn_local(async move {
+                                            let _ = set_available_passengers(session_id3_clone, Some(passengers)).await;
+                                        });
+                                    } else {
+                                        let session_id3_clone = session_id3.clone();
+                                        spawn_local(async move {
+                                            let _ = set_available_passengers(session_id3_clone, None).await;
+                                        });
+                                    }
                                 } else {
-                                    let session_id3_clone = session_id3.clone();
                                     spawn_local(async move {
-                                        let _ = set_available_passengers(session_id3_clone, None).await;
+                                        let _ = set_available_passengers(session_id3, None).await;
                                     });
                                 }
-                            } else {
-                                spawn_local(async move {
-                                    let _ = set_available_passengers(session_id3, None).await;
-                                });
                             }
                         }
                     >
@@ -640,28 +707,35 @@ pub fn Trade() -> impl IntoView {
                     <div>
                         <span>
                             "Origin Classes: "
-                            {move || {
-                                format!(
-                                    "[{}] {}",
-                                    origin_world.get().trade_classes_string(),
-                                    origin_world.get().travel_zone,
-                                )
-                            }}
+                            {
+                                let origin_world = origin_world.clone();
+                                move || {
+                                    format!(
+                                        "[{}] {}",
+                                        origin_world.get().trade_classes_string(),
+                                        origin_world.get().travel_zone,
+                                    )
+                                }
+                            }
                         </span>
                     </div>
                     <div>
                         <span>
-                            {move || {
-                                if let Some(world) = dest_world.get() {
-                                    format!(
-                                        "Destination Trade Classes: [{}] {}",
-                                        world.trade_classes_string(),
-                                        world.travel_zone,
-                                    )
-                                } else {
-                                    "".to_string()
+                            {
+                                let dest_world = dest_world.clone();
+                                move || {
+                                    if let Some(world) = dest_world.get() {
+                                        let world: World = world;
+                                        format!(
+                                            "Destination Trade Classes: [{}] {}",
+                                            world.trade_classes_string(),
+                                            world.travel_zone,
+                                        )
+                                    } else {
+                                        "".to_string()
+                                    }
                                 }
-                            }}
+                            }
                         </span>
                     </div>
                 </div>
@@ -673,17 +747,23 @@ pub fn Trade() -> impl IntoView {
                             id="player-broker-skill"
                             min="0"
                             max="100"
-                            value=move || buyer_broker_skill.get()
-                            on:change=move |ev| {
-                                let value: i16 = event_target_value(&ev).parse().unwrap_or(0);
-                                log::trace!("📝 buyer_broker_skill: user input({})", value);
-                                let session = session_id.to_string();
-                                spawn_local(async move {
-                                    log::trace!("📤 buyer_broker_skill: calling server function({})", value);
-                                    if let Err(e) = set_buyer_broker_skill(session, value).await {
-                                        log::error!("❌ buyer_broker_skill: server function failed: {:?}", e);
-                                    }
-                                });
+                            value={
+                                let buyer_broker_skill = buyer_broker_skill.clone();
+                                move || buyer_broker_skill.get()
+                            }
+                            on:change={
+                                let buyer_broker_skill = buyer_broker_skill.clone();
+                                move |ev| {
+                                    let value: i16 = event_target_value(&ev).parse().unwrap_or(0);
+                                    log::trace!("📝 buyer_broker_skill: user input({})", value);
+                                    let session = session_id.to_string();
+                                    spawn_local(async move {
+                                        log::trace!("📤 buyer_broker_skill: calling server function({})", value);
+                                        if let Err(e) = set_buyer_broker_skill(session, value).await {
+                                            log::error!("❌ buyer_broker_skill: server function failed: {:?}", e);
+                                        }
+                                    });
+                                }
                             }
                         />
                     </div>
@@ -694,13 +774,19 @@ pub fn Trade() -> impl IntoView {
                             id="system-broker-skill"
                             min="0"
                             max="100"
-                            value=move || seller_broker_skill.get()
-                            on:change=move |ev| {
-                                let value: i16 = event_target_value(&ev).parse().unwrap_or(0);
-                                let session = session_id.to_string();
-                                spawn_local(async move {
-                                    let _ = set_seller_broker_skill(session, value).await;
-                                });
+                            value={
+                                let seller_broker_skill = seller_broker_skill.clone();
+                                move || seller_broker_skill.get()
+                            }
+                            on:change={
+                                let seller_broker_skill = seller_broker_skill.clone();
+                                move |ev| {
+                                    let value: i16 = event_target_value(&ev).parse().unwrap_or(0);
+                                    let session = session_id.to_string();
+                                    spawn_local(async move {
+                                        let _ = set_seller_broker_skill(session, value).await;
+                                    });
+                                }
                             }
                         />
                     </div>
@@ -711,13 +797,18 @@ pub fn Trade() -> impl IntoView {
                             id="steward-skill"
                             min="0"
                             max="100"
-                            value=move || steward_skill.get()
-                            on:change=move |ev| {
-                                let value: i16 = event_target_value(&ev).parse().unwrap_or(0);
-                                let session = session_id.to_string();
-                                spawn_local(async move {
-                                    let _ = set_steward_skill(session, value).await;
-                                });
+                            value={
+                                let steward_skill = steward_skill.clone();
+                                move || steward_skill.get()
+                            }
+                            on:change={
+                                move |ev| {
+                                    let value: i16 = event_target_value(&ev).parse().unwrap_or(0);
+                                    let session = session_id.to_string();
+                                    spawn_local(async move {
+                                        let _ = set_steward_skill(session, value).await;
+                                    });
+                                }
                             }
                         />
                     </div>
@@ -728,24 +819,30 @@ pub fn Trade() -> impl IntoView {
                         <input
                             id="include-illegal"
                             type="checkbox"
-                            prop:checked=move || illegal_goods.get()
-                            on:change=move |ev| {
-                                let checked = event_target_checked(&ev);
-                                let session = session_id.to_string();
-                                let session2 = session.clone();
-                                spawn_local(async move {
-                                    let _ = set_illegal_goods(session, checked).await;
-                                });
-                                let ag = AvailableGoodsTable::for_world(
-                                        TradeTable::global(),
-                                        &origin_world.get().get_trade_classes(),
-                                        origin_world.get().get_population(),
-                                        checked,
-                                    )
-                                    .unwrap();
-                                spawn_local(async move {
-                                    let _ = set_available_goods(session2, ag).await;
-                                });
+                            prop:checked={
+                                let illegal_goods = illegal_goods.clone();
+                                move || illegal_goods.get()
+                            }
+                            on:change={
+                                let origin_world = origin_world.clone();
+                                move |ev| {
+                                    let checked = event_target_checked(&ev);
+                                    let session = session_id.to_string();
+                                    let session2 = session.clone();
+                                    spawn_local(async move {
+                                        let _ = set_illegal_goods(session, checked).await;
+                                    });
+                                    let ag = AvailableGoodsTable::for_world(
+                                            TradeTable::global(),
+                                            &origin_world.get().get_trade_classes(),
+                                            origin_world.get().get_population(),
+                                            checked,
+                                        )
+                                        .unwrap();
+                                    spawn_local(async move {
+                                        let _ = set_available_goods(session2, ag).await;
+                                    });
+                                }
                             }
                         />
                     </div>
@@ -754,30 +851,30 @@ pub fn Trade() -> impl IntoView {
             </div>
             <ShipManifestView
                 origin_swap=dest_to_origin
-                _origin_world=origin_world
-                dest_world=dest_world
-                buyer_broker_skill=buyer_broker_skill
-                seller_broker_skill=seller_broker_skill
+                _origin_world=origin_world.clone()
+                dest_world=dest_world.clone()
+                buyer_broker_skill=buyer_broker_skill.clone()
+                seller_broker_skill=seller_broker_skill.clone()
                 distance=distance
-                ship_manifest=ship_manifest
-                available_goods=available_goods
-                available_passengers=available_passengers
+                ship_manifest=ship_manifest.clone()
+                available_goods=available_goods.clone()
+                available_passengers=available_passengers.clone()
                 show_add_manual=show_add_manual
             />
 
             <GoodsToSellView
-                origin_world=origin_world
-                dest_world=dest_world
-                ship_manifest=ship_manifest
+                origin_world=origin_world.clone()
+                dest_world=dest_world.clone()
+                ship_manifest=ship_manifest.clone()
                 show_add_manual=show_add_manual
             />
 
             <TradeView
-                origin_world=origin_world
-                dest_world=dest_world
-                available_goods=available_goods
-                available_passengers=available_passengers
-                ship_manifest=ship_manifest
+                origin_world=origin_world.clone()
+                dest_world=dest_world.clone()
+                available_goods=available_goods.clone()
+                available_passengers=available_passengers.clone()
+                ship_manifest=ship_manifest.clone()
             />
 
         </div>
@@ -817,24 +914,28 @@ fn print() {
 /// Sibling section beneath the manifest.
 #[component]
 fn GoodsToSellView(
-    origin_world: Signal<World>,
-    dest_world: Signal<Option<World>>,
-    ship_manifest: Signal<ShipManifest>,
+    origin_world: ReadOnlySignal<World>,
+    dest_world: ReadOnlySignal<Option<World>>,
+    ship_manifest: ReadOnlySignal<ShipManifest>,
     show_add_manual: RwSignal<bool>,
 ) -> impl IntoView {
-    let world_to_sell_on = Memo::new(move |_| {
-        let world_name_classes = dest_world
-            .get()
-            .as_ref()
-            .map(|w| (w.name.clone(), w.trade_classes_string()))
-            .unwrap_or_else(|| {
-                (
-                    origin_world.get().name.clone(),
-                    origin_world.get().trade_classes_string(),
-                )
-            });
-        format!("{} [{}]", world_name_classes.0, world_name_classes.1)
-    });
+    let world_to_sell_on = {
+        let origin_world = origin_world.clone();
+        let dest_world = dest_world.clone();
+        Memo::new(move |_| {
+            let world_name_classes = dest_world
+                .get()
+                .as_ref()
+                .map(|w| (w.name.clone(), w.trade_classes_string()))
+                .unwrap_or_else(|| {
+                    (
+                        origin_world.get().name.clone(),
+                        origin_world.get().trade_classes_string(),
+                    )
+                });
+            format!("{} [{}]", world_name_classes.0, world_name_classes.1)
+        })
+    };
 
     view! {
         <div class="output-region">
@@ -863,6 +964,7 @@ fn GoodsToSellView(
                 </thead>
                 <tbody>
                     {move || {
+                        let ship_manifest_clone = ship_manifest.clone();
                         ship_manifest
                             .with(|manifest| {
                                 if manifest.trade_goods.is_empty() {
@@ -893,7 +995,7 @@ fn GoodsToSellView(
                                             view! {
                                                 <SellGoodRow
                                                     good_index=good.source_index
-                                                    ship_manifest=ship_manifest
+                                                    ship_manifest=ship_manifest_clone.clone()
                                                 />
                                             }
                                         })
@@ -909,35 +1011,38 @@ fn GoodsToSellView(
 }
 
 #[component]
-fn SellGoodRow(
-    good_index: i16,
-    ship_manifest: Signal<ShipManifest>,
-) -> impl IntoView {
-    let good = Memo::new(move |_| {
-        ship_manifest.with(|manifest| {
-            manifest
-                .trade_goods
-                .get_by_index(good_index)
-                .cloned()
-                .unwrap_or_default()
+fn SellGoodRow(good_index: i16, ship_manifest: ReadOnlySignal<ShipManifest>) -> impl IntoView {
+    let good = {
+        let ship_manifest = ship_manifest.clone();
+        Memo::new(move |_| {
+            ship_manifest.with(|manifest| {
+                manifest
+                    .trade_goods
+                    .get_by_index(good_index)
+                    .cloned()
+                    .unwrap_or_default()
+            })
         })
-    });
+    };
 
-    let update_sold = move |ev| {
-        let current_good = good.get_untracked();
-        let new_value = event_target_value(&ev)
-            .parse::<i32>()
-            .unwrap_or(0)
-            .clamp(0, current_good.quantity);
-        let mut manifest = ship_manifest.get();
-        manifest.trade_goods.update_good(Good {
-            transacted: new_value,
-            ..current_good
-        });
-        let session_id = DEFAULT_SESSION_ID.to_string();
-        spawn_local(async move {
-            let _ = set_ship_manifest(session_id, manifest).await;
-        });
+    let update_sold = {
+        let ship_manifest = ship_manifest.clone();
+        move |ev| {
+            let current_good = good.get_untracked();
+            let new_value = event_target_value(&ev)
+                .parse::<i32>()
+                .unwrap_or(0)
+                .clamp(0, current_good.quantity);
+            let mut manifest = ship_manifest.get();
+            manifest.trade_goods.update_good(Good {
+                transacted: new_value,
+                ..current_good
+            });
+            let session_id = DEFAULT_SESSION_ID.to_string();
+            spawn_local(async move {
+                let _ = set_ship_manifest(session_id, manifest).await;
+            });
+        }
     };
 
     let sell_cost_comment = move || good.get().sell_price_comment.clone();
@@ -950,6 +1055,7 @@ fn SellGoodRow(
             <td class="table-entry">
                 {move || {
                     if let Some(sp) = good.get().sell_price {
+                        let sp: i32 = sp;
                         sp.to_string()
                     } else {
                         "-".to_string()
@@ -959,6 +1065,7 @@ fn SellGoodRow(
             <td class="table-entry">
                 {move || {
                     if let Some(sp) = good.get().sell_price {
+                        let sp: i32 = sp;
                         let pct = (((sp as f64 / good.get().buy_cost as f64) * 100.0) - 100.0)
                             .round() as i32;
                         format!("{}%", pct)
@@ -1000,7 +1107,7 @@ fn SellGoodRow(
 #[component]
 pub fn BuyGoodRow(
     good: Good,
-    available_goods: Signal<AvailableGoodsTable>,
+    available_goods: ReadOnlySignal<AvailableGoodsTable>,
 ) -> impl IntoView {
     // Closure to handle changes in the amount purchased input (does NOT update manifest until Process Trades)
     let update_purchased = move |ev| {
@@ -1100,45 +1207,58 @@ pub fn BuyGoodRow(
 /// destination world availability and current market conditions.
 #[component]
 pub fn TradeView(
-    origin_world: Signal<World>,
-    dest_world: Signal<Option<World>>,
-    available_goods: Signal<AvailableGoodsTable>,
-    available_passengers: Signal<Option<AvailablePassengers>>,
-    ship_manifest: Signal<ShipManifest>,
+    origin_world: ReadOnlySignal<World>,
+    dest_world: ReadOnlySignal<Option<World>>,
+    available_goods: ReadOnlySignal<AvailableGoodsTable>,
+    available_passengers: ReadOnlySignal<Option<AvailablePassengers>>,
+    ship_manifest: ReadOnlySignal<ShipManifest>,
 ) -> impl IntoView {
     view! {
         <div class="output-region">
             <h2 class="trade-header-title">
-                "Trade Goods for " {move || origin_world.get().name.clone()}
+                "Trade Goods for " {
+                    let origin_world = origin_world.clone();
+                    move || origin_world.get().name.clone()
+                }
                 <span class="trade-header-classifications">
-                    " [" {move || origin_world.get().trade_classes_string()} "]"
+                    " [" {
+                        let origin_world = origin_world.clone();
+                        move || origin_world.get().trade_classes_string()
+                    } "]"
                 </span>
-                <Show when=move || {
-                    dest_world.get().is_some()
+                <Show when={
+                    let dest_world = dest_world.clone();
+                    move || dest_world.get().is_some()
                 }>
-                    {move || {
-                        if let Some(dw) = dest_world.get() {
-                            view! {
-                                <span>
-                                    " -> " {dw.name.clone()}
-                                    <span class="trade-header-classifications">
-                                        " ["{dw.trade_classes_string()}"]"
-                                    </span>
+                    {
+                        let dest_world = dest_world.clone();
+                        move || {
+                            if let Some(dw) = dest_world.get() {
+                                view! {
+                                    <span>
+                                        " -> " {dw.name.clone()}
+                                        <span class="trade-header-classifications">
+                                            " ["{dw.trade_classes_string()}"]"
+                                        </span>
 
-                                </span>
+                                    </span>
+                                }
+                                    .into_any()
+                            } else {
+                                ().into_any()
                             }
-                                .into_any()
-                        } else {
-                            ().into_any()
                         }
-                    }}
+                    }
                 </Show>
             </h2>
 
-            <Show when=move || available_passengers.get().is_some()>
+            <Show when={
+                let available_passengers = available_passengers.clone();
+                move || available_passengers.get().is_some()
+            }>
                 <PassengerView
-                    available_passengers=available_passengers
-                    ship_manifest=ship_manifest
+                    available_passengers=available_passengers.clone()
+                    ship_manifest=ship_manifest.clone()
                 />
             </Show>
             <h4 class="trade-section">"Goods to Buy"</h4>
@@ -1159,34 +1279,36 @@ pub fn TradeView(
                     }}
                 </thead>
                 <tbody>
-                    {move || {
-                        if available_goods.read().is_empty() {
-                            view! {
-                                <tr>
-                                    <td colspan="6">"No goods available"</td>
-                                </tr>
-                            }
-                                .into_any()
-                        } else {
-                            let mut goods_vec = available_goods.read().goods().to_vec();
-                            goods_vec
-                                .sort_by(|a, b| {
-                                    let a_ratio = a.buy_cost as f64 / a.base_cost as f64;
-                                    let b_ratio = b.buy_cost as f64 / b.base_cost as f64;
-                                    a_ratio
-                                        .partial_cmp(&b_ratio)
-                                        .unwrap_or(std::cmp::Ordering::Equal)
-                                });
-                            goods_vec
-                                .into_iter()
-                                .map(|good| {
-                                    // For each good, show the row displaying it.
-                                    view! {
-                                        <BuyGoodRow
-                                            good=good
-                                            available_goods=available_goods
-                                        />
-                                    }
+                    {
+                        let available_goods = available_goods.clone();
+                        move || {
+                            if available_goods.read().is_empty() {
+                                view! {
+                                    <tr>
+                                        <td colspan="6">"No goods available"</td>
+                                    </tr>
+                                }
+                                    .into_any()
+                            } else {
+                                let mut goods_vec = available_goods.read().goods().to_vec();
+                                goods_vec
+                                    .sort_by(|a, b| {
+                                        let a_ratio = a.buy_cost as f64 / a.base_cost as f64;
+                                        let b_ratio = b.buy_cost as f64 / b.base_cost as f64;
+                                        a_ratio
+                                            .partial_cmp(&b_ratio)
+                                            .unwrap_or(std::cmp::Ordering::Equal)
+                                    });
+                                goods_vec
+                                    .into_iter()
+                                    .map(|good| {
+                                        // For each good, show the row displaying it.
+                                        view! {
+                                            <BuyGoodRow
+                                                good=good
+                                                available_goods=available_goods.clone()
+                                            />
+                                        }
                                 })
                                 .collect::<Vec<_>>()
                                 .into_any()
@@ -1258,65 +1380,77 @@ pub fn TradeView(
 /// availability updates and manifest integration.
 #[component]
 fn PassengerView(
-    available_passengers: Signal<Option<AvailablePassengers>>,
-    ship_manifest: Signal<ShipManifest>,
+    available_passengers: ReadOnlySignal<Option<AvailablePassengers>>,
+    ship_manifest: ReadOnlySignal<ShipManifest>,
 ) -> impl IntoView {
-    let add_high_passenger = move |_| {
-        if let Some(passengers) = available_passengers.get() {
-            let remaining =
-                passengers.high - ship_manifest.read().high_passengers;
-            if remaining > 0 {
-                let mut manifest = ship_manifest.get();
-                manifest.high_passengers += 1;
-                let session_id = DEFAULT_SESSION_ID.to_string();
-                spawn_local(async move {
-                    let _ = set_ship_manifest(session_id, manifest).await;
-                });
+    let add_high_passenger = {
+        let available_passengers = available_passengers.clone();
+        let ship_manifest = ship_manifest.clone();
+        move |_| {
+            if let Some(passengers) = available_passengers.get() {
+                let remaining = passengers.high - ship_manifest.read().high_passengers;
+                if remaining > 0 {
+                    let mut manifest = ship_manifest.get();
+                    manifest.high_passengers += 1;
+                    let session_id = DEFAULT_SESSION_ID.to_string();
+                    spawn_local(async move {
+                        let _ = set_ship_manifest(session_id, manifest).await;
+                    });
+                }
             }
         }
     };
 
-    let add_medium_passenger = move |_| {
-        if let Some(passengers) = available_passengers.get() {
-            let remaining =
-                passengers.medium - ship_manifest.read().medium_passengers;
-            if remaining > 0 {
-                let mut manifest = ship_manifest.get();
-                manifest.medium_passengers += 1;
-                let session_id = DEFAULT_SESSION_ID.to_string();
-                spawn_local(async move {
-                    let _ = set_ship_manifest(session_id, manifest).await;
-                });
+    let add_medium_passenger = {
+        let available_passengers = available_passengers.clone();
+        let ship_manifest = ship_manifest.clone();
+        move |_| {
+            if let Some(passengers) = available_passengers.get() {
+                let remaining = passengers.medium - ship_manifest.read().medium_passengers;
+                if remaining > 0 {
+                    let mut manifest = ship_manifest.get();
+                    manifest.medium_passengers += 1;
+                    let session_id = DEFAULT_SESSION_ID.to_string();
+                    spawn_local(async move {
+                        let _ = set_ship_manifest(session_id, manifest).await;
+                    });
+                }
             }
         }
     };
 
-    let add_basic_passenger = move |_| {
-        if let Some(passengers) = available_passengers.get() {
-            let remaining =
-                passengers.basic - ship_manifest.read().basic_passengers;
-            if remaining > 0 {
-                let mut manifest = ship_manifest.get();
-                manifest.basic_passengers += 1;
-                let session_id = DEFAULT_SESSION_ID.to_string();
-                spawn_local(async move {
-                    let _ = set_ship_manifest(session_id, manifest).await;
-                });
+    let add_basic_passenger = {
+        let available_passengers = available_passengers.clone();
+        let ship_manifest = ship_manifest.clone();
+        move |_| {
+            if let Some(passengers) = available_passengers.get() {
+                let remaining = passengers.basic - ship_manifest.read().basic_passengers;
+                if remaining > 0 {
+                    let mut manifest = ship_manifest.get();
+                    manifest.basic_passengers += 1;
+                    let session_id = DEFAULT_SESSION_ID.to_string();
+                    spawn_local(async move {
+                        let _ = set_ship_manifest(session_id, manifest).await;
+                    });
+                }
             }
         }
     };
 
-    let add_low_passenger = move |_| {
-        if let Some(passengers) = available_passengers.get() {
-            let remaining =
-                passengers.low - ship_manifest.read().low_passengers;
-            if remaining > 0 {
-                let mut manifest = ship_manifest.get();
-                manifest.low_passengers += 1;
-                let session_id = DEFAULT_SESSION_ID.to_string();
-                spawn_local(async move {
-                    let _ = set_ship_manifest(session_id, manifest).await;
-                });
+    let add_low_passenger = {
+        let available_passengers = available_passengers.clone();
+        let ship_manifest = ship_manifest.clone();
+        move |_| {
+            if let Some(passengers) = available_passengers.get() {
+                let remaining = passengers.low - ship_manifest.read().low_passengers;
+                if remaining > 0 {
+                    let mut manifest = ship_manifest.get();
+                    manifest.low_passengers += 1;
+                    let session_id = DEFAULT_SESSION_ID.to_string();
+                    spawn_local(async move {
+                        let _ = set_ship_manifest(session_id, manifest).await;
+                    });
+                }
             }
         }
     };
@@ -1327,55 +1461,71 @@ fn PassengerView(
             <button class="passenger-type passenger-button" on:click=add_high_passenger>
                 <h4>"High"</h4>
                 <div class="passenger-count">
-                    {move || {
-                        if let Some(passengers) = available_passengers.get() {
-                            let remaining = passengers.high - ship_manifest.read().high_passengers;
-                            remaining.max(0).to_string()
-                        } else {
-                            "0".to_string()
+                    {
+                        let available_passengers = available_passengers.clone();
+                        let ship_manifest = ship_manifest.clone();
+                        move || {
+                            if let Some(passengers) = available_passengers.get() {
+                                let remaining = passengers.high - ship_manifest.read().high_passengers;
+                                remaining.max(0).to_string()
+                            } else {
+                                "0".to_string()
+                            }
                         }
-                    }}
+                    }
                 </div>
             </button>
             <button class="passenger-type passenger-button" on:click=add_medium_passenger>
                 <h4>"Medium"</h4>
                 <div class="passenger-count">
-                    {move || {
-                        if let Some(passengers) = available_passengers.get() {
-                            let remaining = passengers.medium
-                                - ship_manifest.read().medium_passengers;
-                            remaining.max(0).to_string()
-                        } else {
-                            "0".to_string()
+                    {
+                        let available_passengers = available_passengers.clone();
+                        let ship_manifest = ship_manifest.clone();
+                        move || {
+                            if let Some(passengers) = available_passengers.get() {
+                                let remaining = passengers.medium
+                                    - ship_manifest.read().medium_passengers;
+                                remaining.max(0).to_string()
+                            } else {
+                                "0".to_string()
+                            }
                         }
-                    }}
+                    }
                 </div>
             </button>
             <button class="passenger-type passenger-button" on:click=add_basic_passenger>
                 <h4>"Basic"</h4>
                 <div class="passenger-count">
-                    {move || {
-                        if let Some(passengers) = available_passengers.get() {
-                            let remaining = passengers.basic
-                                - ship_manifest.read().basic_passengers;
-                            remaining.max(0).to_string()
-                        } else {
-                            "0".to_string()
+                    {
+                        let available_passengers = available_passengers.clone();
+                        let ship_manifest = ship_manifest.clone();
+                        move || {
+                            if let Some(passengers) = available_passengers.get() {
+                                let remaining = passengers.basic
+                                    - ship_manifest.read().basic_passengers;
+                                remaining.max(0).to_string()
+                            } else {
+                                "0".to_string()
+                            }
                         }
-                    }}
+                    }
                 </div>
             </button>
             <button class="passenger-type passenger-button" on:click=add_low_passenger>
                 <h4>"Low"</h4>
                 <div class="passenger-count">
-                    {move || {
-                        if let Some(passengers) = available_passengers.get() {
-                            let remaining = passengers.low - ship_manifest.read().low_passengers;
-                            remaining.max(0).to_string()
-                        } else {
-                            "0".to_string()
+                    {
+                        let available_passengers = available_passengers.clone();
+                        let ship_manifest = ship_manifest.clone();
+                        move || {
+                            if let Some(passengers) = available_passengers.get() {
+                                let remaining = passengers.low - ship_manifest.read().low_passengers;
+                                remaining.max(0).to_string()
+                            } else {
+                                "0".to_string()
+                            }
                         }
-                    }}
+                    }
                 </div>
             </button>
         </div>
@@ -1383,6 +1533,7 @@ fn PassengerView(
         <h4 class="trade-section">"Available Freight (tons)"</h4>
         <div class="freight-grid">
             {move || {
+                let ship_manifest_clone = ship_manifest.clone();
                 if let Some(passengers) = available_passengers.get() {
                     if passengers.freight_lots.is_empty() {
                         view! { <div>"No freight available"</div> }.into_any()
@@ -1400,8 +1551,9 @@ fn PassengerView(
                                     return None;
                                 }
                                 let lot_size = lot.size;
+                                let ship_manifest_clone2 = ship_manifest_clone.clone();
                                 let toggle_freight = move |_| {
-                                    let mut manifest = ship_manifest.get();
+                                    let mut manifest = ship_manifest_clone2.get();
                                     if let Some(pos) = manifest
                                         .freight_lot_indices
                                         .iter()
@@ -1512,92 +1664,121 @@ fn PassengerView(
 #[component]
 fn ShipManifestView(
     origin_swap: impl Fn() + Clone + 'static,
-    _origin_world: Signal<World>,
-    dest_world: Signal<Option<World>>,
-    buyer_broker_skill: Signal<i16>,
-    seller_broker_skill: Signal<i16>,
+    _origin_world: ReadOnlySignal<World>,
+    dest_world: ReadOnlySignal<Option<World>>,
+    buyer_broker_skill: ReadOnlySignal<i16>,
+    seller_broker_skill: ReadOnlySignal<i16>,
     distance: RwSignal<i32>,
-    ship_manifest: Signal<ShipManifest>,
-    available_goods: Signal<AvailableGoodsTable>,
-    available_passengers: Signal<Option<AvailablePassengers>>,
+    ship_manifest: ReadOnlySignal<ShipManifest>,
+    available_goods: ReadOnlySignal<AvailableGoodsTable>,
+    available_passengers: ReadOnlySignal<Option<AvailablePassengers>>,
     show_add_manual: RwSignal<bool>,
 ) -> impl IntoView {
     let manual_selected_index = RwSignal::new(11i16);
     let manual_qty_input = RwSignal::new(String::new());
 
-    let remove_high_passenger = move |_| {
-        let mut manifest = ship_manifest.get();
-        if manifest.high_passengers > 0 {
-            manifest.high_passengers -= 1;
+    let remove_high_passenger = {
+        let ship_manifest = ship_manifest.clone();
+        move |_| {
+            let mut manifest = ship_manifest.get();
+            if manifest.high_passengers > 0 {
+                manifest.high_passengers -= 1;
+            }
+            let session_id = DEFAULT_SESSION_ID.to_string();
+            spawn_local(async move {
+                let _ = set_ship_manifest(session_id, manifest).await;
+            });
         }
-        let session_id = DEFAULT_SESSION_ID.to_string();
-        spawn_local(async move {
-            let _ = set_ship_manifest(session_id, manifest).await;
-        });
     };
 
-    let remove_medium_passenger = move |_| {
-        let mut manifest = ship_manifest.get();
-        if manifest.medium_passengers > 0 {
-            manifest.medium_passengers -= 1;
+    let remove_medium_passenger = {
+        let ship_manifest = ship_manifest.clone();
+        move |_| {
+            let mut manifest = ship_manifest.get();
+            if manifest.medium_passengers > 0 {
+                manifest.medium_passengers -= 1;
+            }
+            let session_id = DEFAULT_SESSION_ID.to_string();
+            spawn_local(async move {
+                let _ = set_ship_manifest(session_id, manifest).await;
+            });
         }
-        let session_id = DEFAULT_SESSION_ID.to_string();
-        spawn_local(async move {
-            let _ = set_ship_manifest(session_id, manifest).await;
-        });
     };
 
-    let remove_basic_passenger = move |_| {
-        let mut manifest = ship_manifest.get();
-        if manifest.basic_passengers > 0 {
-            manifest.basic_passengers -= 1;
+    let remove_basic_passenger = {
+        let ship_manifest = ship_manifest.clone();
+        move |_| {
+            let mut manifest = ship_manifest.get();
+            if manifest.basic_passengers > 0 {
+                manifest.basic_passengers -= 1;
+            }
+            let session_id = DEFAULT_SESSION_ID.to_string();
+            spawn_local(async move {
+                let _ = set_ship_manifest(session_id, manifest).await;
+            });
         }
-        let session_id = DEFAULT_SESSION_ID.to_string();
-        spawn_local(async move {
-            let _ = set_ship_manifest(session_id, manifest).await;
-        });
     };
 
-    let remove_low_passenger = move |_| {
-        let mut manifest = ship_manifest.get();
-        if manifest.low_passengers > 0 {
-            manifest.low_passengers -= 1;
+    let remove_low_passenger = {
+        let ship_manifest = ship_manifest.clone();
+        move |_| {
+            let mut manifest = ship_manifest.get();
+            if manifest.low_passengers > 0 {
+                manifest.low_passengers -= 1;
+            }
+            let session_id = DEFAULT_SESSION_ID.to_string();
+            spawn_local(async move {
+                let _ = set_ship_manifest(session_id, manifest).await;
+            });
         }
-        let session_id = DEFAULT_SESSION_ID.to_string();
-        spawn_local(async move {
-            let _ = set_ship_manifest(session_id, manifest).await;
-        });
     };
 
-    let on_reset = move |_| {
-        // Confirm reset
-        let win = leptos::leptos_dom::helpers::window();
-        let proceed = win
-            .confirm_with_message(
-                "Reset manifest? This will clear passengers, freight, trade goods, and sell plans.",
-            )
-            .unwrap_or(false);
-        if !proceed {
-            return;
-        }
+    let on_reset = {
+        let available_goods = available_goods.clone();
+        move |_| {
+            // Confirm reset
+            let win = leptos::leptos_dom::helpers::window();
+            let proceed = win
+                .confirm_with_message(
+                    "Reset manifest? This will clear passengers, freight, trade goods, and sell plans.",
+                )
+                .unwrap_or(false);
+            if !proceed {
+                return;
+            }
 
-        // Clear manifest and persisted storage, and clear purchased amounts in available goods
-        let manifest = ShipManifest::default();
-        let session_id = DEFAULT_SESSION_ID.to_string();
-        let session_id2 = session_id.clone();
-        spawn_local(async move {
-            let _ = set_ship_manifest(session_id, manifest).await;
-        });
+            // Clear manifest and persisted storage, and clear purchased amounts in available goods
+            let manifest = ShipManifest::default();
+            let session_id = DEFAULT_SESSION_ID.to_string();
+            let session_id2 = session_id.clone();
+            spawn_local(async move {
+                let _ = set_ship_manifest(session_id, manifest).await;
+            });
 
-        // Zero out purchased in available goods so Buy inputs show 0
-        let mut ag = available_goods.get();
-        for g in ag.goods.iter_mut() {
-            g.transacted = 0;
+            // Zero out purchased in available goods so Buy inputs show 0
+            let mut ag = available_goods.get();
+            for g in ag.goods.iter_mut() {
+                g.transacted = 0;
+            }
+            spawn_local(async move {
+                let _ = set_available_goods(session_id2, ag).await;
+            });
         }
-        spawn_local(async move {
-            let _ = set_available_goods(session_id2, ag).await;
-        });
     };
+
+    // Clone signals for use in multiple view closures
+    let ship_manifest_freight = ship_manifest.clone();
+    let available_passengers_freight = available_passengers.clone();
+    let ship_manifest_1 = ship_manifest.clone();
+    let ship_manifest_2 = ship_manifest.clone();
+    let ship_manifest_3 = ship_manifest.clone();
+    let ship_manifest_4 = ship_manifest.clone();
+    let ship_manifest_5 = ship_manifest.clone();
+    let ship_manifest_6 = ship_manifest.clone();
+    let available_passengers_1 = available_passengers.clone();
+    let available_passengers_2 = available_passengers.clone();
+    let available_goods_1 = available_goods.clone();
+    let available_goods_2 = available_goods.clone();
 
     view! {
         <div class="output-region">
@@ -1609,27 +1790,32 @@ fn ShipManifestView(
             </div>
 
             <div class="manifest-summary">
-                {move || {
-                    let manifest = ship_manifest.get();
-                    let cargo_tons = available_passengers
-                        .read()
-                        .as_ref()
-                        .map(|p| manifest.total_freight_tons(p))
-                        .unwrap_or(0);
-                    let goods_tons: i32 = manifest.trade_goods_tonnage()
-                        + available_goods.read().total_transacted_size();
-                    let total_cargo = cargo_tons + goods_tons;
-                    let total_passengers = manifest.total_passengers_not_low();
-                    let total_low = manifest.low_passengers;
+                {
+                    let ship_manifest = ship_manifest.clone();
+                    let available_passengers = available_passengers.clone();
+                    let available_goods = available_goods.clone();
+                    move || {
+                        let manifest = ship_manifest.get();
+                        let cargo_tons = available_passengers
+                            .read()
+                            .as_ref()
+                            .map(|p| manifest.total_freight_tons(p))
+                            .unwrap_or(0);
+                        let goods_tons: i32 = manifest.trade_goods_tonnage()
+                            + available_goods.read().total_transacted_size();
+                        let total_cargo = cargo_tons + goods_tons;
+                        let total_passengers = manifest.total_passengers_not_low();
+                        let total_low = manifest.low_passengers;
 
-                    view! {
-                        <div class="summary-line">
-                            "Total Cargo Used: " <strong>{total_cargo.to_string()}" tons"</strong>
-                            " | Total Passengers: " <strong>{total_passengers.to_string()}</strong>
-                            " | Total Low: " <strong>{total_low.to_string()}</strong>
-                        </div>
+                        view! {
+                            <div class="summary-line">
+                                "Total Cargo Used: " <strong>{total_cargo.to_string()}" tons"</strong>
+                                " | Total Passengers: " <strong>{total_passengers.to_string()}</strong>
+                                " | Total Low: " <strong>{total_low.to_string()}</strong>
+                            </div>
+                        }
                     }
-                }}
+                }
             </div>
 
             <div class="manifest-section">
@@ -1638,25 +1824,37 @@ fn ShipManifestView(
                     <button class="manifest-item passenger-button" on:click=remove_high_passenger>
                         <span class="manifest-label">"High:"</span>
                         <span class="manifest-value">
-                            {move || ship_manifest.read().high_passengers}
+                            {
+                                let ship_manifest = ship_manifest.clone();
+                                move || ship_manifest.read().high_passengers
+                            }
                         </span>
                     </button>
                     <button class="manifest-item passenger-button" on:click=remove_medium_passenger>
                         <span class="manifest-label">"Medium:"</span>
                         <span class="manifest-value">
-                            {move || ship_manifest.read().medium_passengers}
+                            {
+                                let ship_manifest = ship_manifest.clone();
+                                move || ship_manifest.read().medium_passengers
+                            }
                         </span>
                     </button>
                     <button class="manifest-item passenger-button" on:click=remove_basic_passenger>
                         <span class="manifest-label">"Basic:"</span>
                         <span class="manifest-value">
-                            {move || ship_manifest.read().basic_passengers}
+                            {
+                                let ship_manifest = ship_manifest.clone();
+                                move || ship_manifest.read().basic_passengers
+                            }
                         </span>
                     </button>
                     <button class="manifest-item passenger-button" on:click=remove_low_passenger>
                         <span class="manifest-label">"Low:"</span>
                         <span class="manifest-value">
-                            {move || ship_manifest.read().low_passengers}
+                            {
+                                let ship_manifest = ship_manifest.clone();
+                                move || ship_manifest.read().low_passengers
+                            }
                         </span>
                     </button>
                 </div>
@@ -1665,18 +1863,22 @@ fn ShipManifestView(
             <div class="manifest-section">
                 <h5>"Freight"</h5>
                 <div class="manifest-grid">
-                    {move || {
-                        let manifest = ship_manifest.get();
-                        let buy_goods = available_goods.read();
-                        let cargo_tons = available_passengers
-                            .read()
-                            .as_ref()
-                            .map(|p| manifest.total_freight_tons(p))
-                            .unwrap_or(0);
-                        let goods_tons = manifest.trade_goods_tonnage()
-                            + buy_goods.total_transacted_size();
-                        let goods_cost = buy_goods.total_buy_cost();
-                        let goods_proceeds = manifest.trade_goods_proceeds();
+                    {
+                        let ship_manifest = ship_manifest.clone();
+                        let available_goods = available_goods.clone();
+                        let available_passengers = available_passengers.clone();
+                        move || {
+                            let manifest = ship_manifest.get();
+                            let buy_goods = available_goods.read();
+                            let cargo_tons = available_passengers
+                                .read()
+                                .as_ref()
+                                .map(|p| manifest.total_freight_tons(p))
+                                .unwrap_or(0);
+                            let goods_tons = manifest.trade_goods_tonnage()
+                                + buy_goods.total_transacted_size();
+                            let goods_cost = buy_goods.total_buy_cost();
+                            let goods_proceeds = manifest.trade_goods_proceeds();
                         view! {
                             <div class="manifest-item">
                                 <span class="manifest-label">"Cargo:"</span>
@@ -1707,8 +1909,9 @@ fn ShipManifestView(
                 <h5>"Freight Lots"</h5>
                 <div class="freight-grid">
                     {move || {
-                        if let Some(passengers) = available_passengers.get() {
-                            let indices = ship_manifest.read().freight_lot_indices.clone();
+                        let ship_manifest_clone = ship_manifest_freight.clone();
+                        if let Some(passengers) = available_passengers_freight.get() {
+                            let indices = ship_manifest_freight.read().freight_lot_indices.clone();
                             if indices.is_empty() {
                                 view! { <div>"No freight selected"</div> }.into_any()
                             } else {
@@ -1719,8 +1922,9 @@ fn ShipManifestView(
                                             .freight_lots
                                             .get(index)
                                             .map(|lot| {
+                                                let ship_manifest_clone2 = ship_manifest_clone.clone();
                                                 let remove = move |_| {
-                                                    let mut manifest = ship_manifest.get();
+                                                    let mut manifest = ship_manifest_clone2.get();
                                                     if let Some(pos) = manifest
                                                         .freight_lot_indices
                                                         .iter()
@@ -1757,7 +1961,7 @@ fn ShipManifestView(
                         <span class="manifest-label">"Passenger Revenue:"</span>
                         <span class="manifest-value">
                             {move || {
-                                let manifest = ship_manifest.get();
+                                let manifest = ship_manifest_1.get();
                                 let revenue = manifest.passenger_revenue(distance.get());
                                 Credits::from(revenue).as_string()
                             }}
@@ -1767,8 +1971,8 @@ fn ShipManifestView(
                         <span class="manifest-label">"Freight Revenue:"</span>
                         <span class="manifest-value">
                             {move || {
-                                let manifest = ship_manifest.get();
-                                let revenue = if let Some(passengers) = available_passengers.get() {
+                                let manifest = ship_manifest_2.get();
+                                let revenue = if let Some(passengers) = available_passengers_1.get() {
                                     manifest.freight_revenue(distance.get(), &passengers) as i64
                                 } else {
                                     0
@@ -1781,8 +1985,8 @@ fn ShipManifestView(
                         <span class="manifest-label">"Goods Profit:"</span>
                         <span class="manifest-value">
                             {move || {
-                                let manifest = ship_manifest.get();
-                                let cost = available_goods.read().total_buy_cost() as i64;
+                                let manifest = ship_manifest_3.get();
+                                let cost = available_goods_1.read().total_buy_cost() as i64;
                                 let proceeds = manifest.trade_goods_proceeds();
                                 let profit = proceeds - cost;
                                 Credits::from(profit).as_string()
@@ -1793,10 +1997,10 @@ fn ShipManifestView(
                         <span class="manifest-label">"Total:"</span>
                         <span class="manifest-value">
                             {move || {
-                                let manifest = ship_manifest.get();
+                                let manifest = ship_manifest_4.get();
                                 let passenger_revenue = manifest.passenger_revenue(distance.get())
                                     as i64;
-                                let freight_revenue = if let Some(passengers) = available_passengers
+                                let freight_revenue = if let Some(passengers) = available_passengers_2
                                     .get()
                                 {
                                     manifest.freight_revenue(distance.get(), &passengers) as i64
@@ -1804,7 +2008,7 @@ fn ShipManifestView(
                                     0
                                 };
                                 let goods_profit = manifest.trade_goods_proceeds()
-                                    - available_goods.read().total_buy_cost() as i64;
+                                    - available_goods_2.read().total_buy_cost() as i64;
                                 let total = passenger_revenue + freight_revenue + goods_profit;
                                 Credits::from(total).as_string()
                             }}
@@ -1814,34 +2018,42 @@ fn ShipManifestView(
                     <div class="manifest-unboxed-item">
                         <button
                             class="manifest-button manifest-execute-trades-button"
-                            on:click=move |_| {
-                                debug!("ON BUTTON: pricing goods.");
-                                let mut manifest = ship_manifest.get();
-                                manifest
-                                    .process_trades(
-                                        distance.get(),
-                                        &available_goods.read().goods,
-                                        &available_passengers.get(),
-                                    );
-                                manifest
-                                    .price_goods(
-                                        &dest_world.get(),
-                                        buyer_broker_skill.get(),
-                                        seller_broker_skill.get(),
-                                    );
-                                let session_id = DEFAULT_SESSION_ID.to_string();
-                                let session_id2 = session_id.clone();
-                                spawn_local(async move {
-                                    let _ = set_ship_manifest(session_id, manifest).await;
-                                });
+                            on:click={
+                                let ship_manifest = ship_manifest.clone();
+                                let available_goods = available_goods.clone();
+                                let available_passengers = available_passengers.clone();
+                                let dest_world = dest_world.clone();
+                                let buyer_broker_skill = buyer_broker_skill.clone();
+                                let seller_broker_skill = seller_broker_skill.clone();
+                                move |_| {
+                                    debug!("ON BUTTON: pricing goods.");
+                                    let mut manifest = ship_manifest.get();
+                                    manifest
+                                        .process_trades(
+                                            distance.get(),
+                                            &available_goods.read().goods,
+                                            &available_passengers.get(),
+                                        );
+                                    manifest
+                                        .price_goods(
+                                            &dest_world.get(),
+                                            buyer_broker_skill.get(),
+                                            seller_broker_skill.get(),
+                                        );
+                                    let session_id = DEFAULT_SESSION_ID.to_string();
+                                    let session_id2 = session_id.clone();
+                                    spawn_local(async move {
+                                        let _ = set_ship_manifest(session_id, manifest).await;
+                                    });
 
-                                let mut ag = available_goods.get();
-                                ag.zero_transacted();
-                                spawn_local(async move {
-                                    let _ = set_available_goods(session_id2, ag).await;
-                                });
+                                    let mut ag = available_goods.get();
+                                    ag.zero_transacted();
+                                    spawn_local(async move {
+                                        let _ = set_available_goods(session_id2, ag).await;
+                                    });
 
-                                origin_swap();
+                                    origin_swap();
+                                }
                             }
                         >
                             "Execute Trades"
@@ -1850,12 +2062,12 @@ fn ShipManifestView(
                     <div class="manifest-item">
                         <span class="manifest-label">"Profit:"</span>
                         <span class=move || {
-                            if ship_manifest.read().profit < 0 {
+                            if ship_manifest_5.read().profit < 0 {
                                 "manifest-value manifest-negative"
                             } else {
                                 "manifest-value"
                             }
-                        }>{move || Credits::from(ship_manifest.read().profit).as_string()}</span>
+                        }>{move || Credits::from(ship_manifest_6.read().profit).as_string()}</span>
                     </div>
 
                 </div>
@@ -1910,51 +2122,54 @@ fn ShipManifestView(
                             </button>
                             <button
                                 class="tg-btn tg-btn-done"
-                                on:click=move |_| {
-                                    let qty_txt = manual_qty_input.get();
-                                    let qty = qty_txt.parse::<i32>().unwrap_or(0);
-                                    if qty <= 0 {
-                                        if let Some(d) = web_sys::window()
-                                            .and_then(|w| w.document())
-                                        {
-                                            if let Some(err) = d.get_element_by_id("tg-modal-error") {
-                                                err.set_text_content(
-                                                    Some("Please enter a quantity greater than zero."),
-                                                );
+                                on:click={
+                                    let ship_manifest = ship_manifest.clone();
+                                    move |_| {
+                                        let qty_txt = manual_qty_input.get();
+                                        let qty = qty_txt.parse::<i32>().unwrap_or(0);
+                                        if qty <= 0 {
+                                            if let Some(d) = web_sys::window()
+                                                .and_then(|w| w.document())
+                                            {
+                                                if let Some(err) = d.get_element_by_id("tg-modal-error") {
+                                                    err.set_text_content(
+                                                        Some("Please enter a quantity greater than zero."),
+                                                    );
+                                                }
                                             }
                                         }
-                                    }
-                                    let table = TradeTable::default();
-                                    if let Some(entry) = table.get(manual_selected_index.get()) {
-                                        let good = Good {
-                                            name: entry.name.clone(),
-                                            quantity: qty,
-                                            transacted: 0,
-                                            base_cost: entry.base_cost,
-                                            buy_cost: entry.base_cost,
-                                            buy_cost_comment: String::new(),
-                                            sell_price: None,
-                                            sell_price_comment: String::new(),
-                                            source_index: entry.index,
-                                            quantity_roll: qty / entry.quantity.multiplier as i32,
-                                            buy_price_roll: None,
-                                            sell_price_roll: None,
-                                        };
-                                        let mut manifest = ship_manifest.get();
-                                        manifest.update_trade_good(good);
-                                        let session_id = DEFAULT_SESSION_ID.to_string();
-                                        spawn_local(async move {
-                                            let _ = set_ship_manifest(session_id, manifest).await;
-                                        });
-                                        manual_qty_input.set(String::new());
-                                        if let Some(d) = web_sys::window()
-                                            .and_then(|w| w.document())
-                                        {
-                                            if let Some(err) = d.get_element_by_id("tg-modal-error") {
-                                                err.set_text_content(None);
+                                        let table = TradeTable::default();
+                                        if let Some(entry) = table.get(manual_selected_index.get()) {
+                                            let good = Good {
+                                                name: entry.name.clone(),
+                                                quantity: qty,
+                                                transacted: 0,
+                                                base_cost: entry.base_cost,
+                                                buy_cost: entry.base_cost,
+                                                buy_cost_comment: String::new(),
+                                                sell_price: None,
+                                                sell_price_comment: String::new(),
+                                                source_index: entry.index,
+                                                quantity_roll: qty / entry.quantity.multiplier as i32,
+                                                buy_price_roll: None,
+                                                sell_price_roll: None,
+                                            };
+                                            let mut manifest = ship_manifest.get();
+                                            manifest.update_trade_good(good);
+                                            let session_id = DEFAULT_SESSION_ID.to_string();
+                                            spawn_local(async move {
+                                                let _ = set_ship_manifest(session_id, manifest).await;
+                                            });
+                                            manual_qty_input.set(String::new());
+                                            if let Some(d) = web_sys::window()
+                                                .and_then(|w| w.document())
+                                            {
+                                                if let Some(err) = d.get_element_by_id("tg-modal-error") {
+                                                    err.set_text_content(None);
+                                                }
                                             }
+                                            show_add_manual.set(false);
                                         }
-                                        show_add_manual.set(false);
                                     }
                                 }
                             >
