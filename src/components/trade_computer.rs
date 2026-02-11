@@ -139,11 +139,14 @@
 //! though this feature is currently disabled but available for future use.
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use leptos_ws::ReadOnlySignal;
 #[allow(unused_imports)]
 use log::{debug, error, info, warn};
 
-use crate::backend::{get_signal, set_buyer_broker_skill, signal_names, DEFAULT_SESSION_ID};
+use crate::backend::{
+    get_signal, set_available_goods, set_available_passengers, set_buyer_broker_skill,
+    set_dest_world, set_illegal_goods, set_origin_world, set_seller_broker_skill,
+    set_ship_manifest, set_steward_skill, signal_names, DEFAULT_SESSION_ID,
+};
 use crate::components::traveller_map::WorldSearch;
 use crate::systems::world::World;
 
@@ -155,11 +158,6 @@ use crate::trade::table::TradeTable;
 use crate::trade::ZoneClassification;
 
 use crate::util::Credits;
-
-use crate::backend::{
-    set_available_goods, set_available_passengers, set_dest_world, set_origin_world,
-    set_ship_manifest,
-};
 
 /// Main trade computer component providing comprehensive trading interface
 ///
@@ -243,14 +241,14 @@ pub fn Trade() -> impl IntoView {
 
     // Dialog state for manually adding goods to manifest
     let show_add_manual = RwSignal::new(false);
-    let o_world = origin_world.with_value(|w| w.get());
+    let o_world = origin_world.get();
     let origin_world_name = RwSignal::new(o_world.name.clone());
     let origin_uwp = RwSignal::new(o_world.to_uwp());
 
     let origin_coords = RwSignal::new(o_world.coordinates);
     let origin_zone = RwSignal::new(o_world.travel_zone);
 
-    let d_world = dest_world.with_value(|w| w.get());
+    let d_world = dest_world.get();
     let dest_world_name =
         RwSignal::new(d_world.clone().map(|w| w.name.clone()).unwrap_or_default());
     let dest_uwp = RwSignal::new(d_world.clone().map_or("".to_string(), |w| w.to_uwp()));
@@ -279,8 +277,8 @@ pub fn Trade() -> impl IntoView {
     // Effect to recalculate distance whenever origin or destination world coordinates change
     Effect::new(move |_| {
         info!("🔄 Effect: Recalculating distance based on world coordinate changes");
-        let origin = origin_world.with_value(|w| w.get());
-        let dest = dest_world.with_value(|w| w.get());
+        let origin = origin_world.get();
+        let dest = dest_world.get();
 
         distance.set(compute_distance(origin, dest));
     });
@@ -319,7 +317,7 @@ pub fn Trade() -> impl IntoView {
                 TradeTable::global(),
                 &world.get_trade_classes(),
                 world.get_population(),
-                illegal_goods.with_value(|ig| ig.get()),
+                illegal_goods.get(),
             )
             .unwrap();
 
@@ -398,12 +396,12 @@ pub fn Trade() -> impl IntoView {
     // Effect to regenerate passengers if origin, destination, or skills change.
     Effect::new(move |_| {
         info!("🔄 Effect: Regenerating passengers based on world and distance changes");
-        let origin = origin_world.with_value(|w| w.get());
-        let dest = dest_world.with_value(|w| w.get());
+        let origin = origin_world.get();
+        let dest = dest_world.get();
 
         if distance.get() > 0 && dest.is_some() {
             let dest = dest.unwrap();
-            let mut ap_option = untrack(|| available_passengers.with_value(|ap_sig| ap_sig.get()));
+            let mut ap_option = untrack(|| available_passengers.get());
 
             let ap = ap_option.get_or_insert_with(AvailablePassengers::default);
 
@@ -417,8 +415,8 @@ pub fn Trade() -> impl IntoView {
                 dest.travel_zone,
                 dest.tech_level,
                 distance.get(),
-                i32::from(steward_skill.with_value(|s| s.get())),
-                i32::from(buyer_broker_skill.with_value(|b| b.get())),
+                i32::from(steward_skill.get()),
+                i32::from(buyer_broker_skill.get()),
             );
 
             let ap_to_send = ap_option.clone();
@@ -434,7 +432,7 @@ pub fn Trade() -> impl IntoView {
 
     Effect::new(move |_| {
         let dest_name = dest_world
-            .with_value(|d| d.get())
+            .get()
             .map(|d| d.name)
             .unwrap_or_else(|| "NO NAME".to_string());
 
@@ -442,7 +440,7 @@ pub fn Trade() -> impl IntoView {
     });
 
     Effect::new(move |_| {
-        let origin_name = origin_world.with_value(|o| o.get()).name;
+        let origin_name = origin_world.get().name;
 
         warn!("******* ORIGIN CHANGED WITH NAME {origin_name}");
     });
@@ -450,14 +448,14 @@ pub fn Trade() -> impl IntoView {
     // Effect to recalculate goods pricing and manifest pricing when skills or world parameters change (using saved rolls, not regenerating)
     Effect::new(move |_| {
         info!("🔄 Effect: Regenerating goods based on world or skill changes.");
-        let buyer = buyer_broker_skill.with_value(|b| b.get());
-        let supplier = seller_broker_skill.with_value(|s| s.get());
-        let dest_world = dest_world.with_value(|d| d.get());
+        let buyer = buyer_broker_skill.get();
+        let supplier = seller_broker_skill.get();
+        let dest_world = dest_world.get();
 
         // Check if destination world changed (not just skills)
         let current_dest_name = dest_world.as_ref().map(|w| w.name.clone());
 
-        let mut current_goods = untrack(|| available_goods.with_value(|goods| goods.get()));
+        let mut current_goods = untrack(|| available_goods.get());
         current_goods.price_goods_to_sell(
             dest_world.as_ref().map(|w| w.get_trade_classes()),
             supplier,
@@ -489,12 +487,12 @@ pub fn Trade() -> impl IntoView {
 
         // Reprice the manifest
         // Manifest goods are sold at the destination, so use dest_world for pricing
-        let mut manifest = untrack(|| ship_manifest.with_value(|sm| sm.get()));
+        let mut manifest = untrack(|| ship_manifest.get());
 
         manifest.price_goods(
             &dest_world,
-            buyer_broker_skill.with_value(|b| b.get()),
-            seller_broker_skill.with_value(|s| s.get()),
+            buyer_broker_skill.get(),
+            seller_broker_skill.get(),
         );
 
         spawn_local(async move {
@@ -530,51 +528,70 @@ pub fn Trade() -> impl IntoView {
                     <button
                         class="blue-button"
                         on:click=move |_| {
-                            let origin = origin_world.with_value(|o| o.get());
-                            available_goods
-                                .with_value(|ag_sig| ag_sig.update(|ag| {
-                                    ag.reset_die_rolls();
-                                    ag.price_goods_to_buy(
-                                        &origin.get_trade_classes(),
-                                        buyer_broker_skill.with_value(|b| b.get()),
-                                        seller_broker_skill.with_value(|s| s.get()),
-                                    );
-                                    ag.sort_by_discount();
-                                }));
-                            ship_manifest
-                                .with_value(|sm| sm.update(|manifest| {
-                                    manifest.reset_die_rolls();
-                                    manifest
-                                        .price_goods(
-                                            &Some(origin.clone()),
-                                            buyer_broker_skill.with_value(|b| b.get()),
-                                            seller_broker_skill.with_value(|s| s.get()),
-                                        );
-                                }));
-                            if let Some(world) = dest_world.with_value(|d| d.get()) {
+                            let origin = origin_world.get();
+                            let session_id = DEFAULT_SESSION_ID.to_string();
+                            let session_id2 = session_id.clone();
+                            let session_id3 = session_id.clone();
+
+                            // Update available_goods
+                            let mut ag = available_goods.get();
+                            ag.reset_die_rolls();
+                            ag.price_goods_to_buy(
+                                &origin.get_trade_classes(),
+                                buyer_broker_skill.get(),
+                                seller_broker_skill.get(),
+                            );
+                            ag.sort_by_discount();
+                            let ag_clone = ag.clone();
+                            spawn_local(async move {
+                                let _ = set_available_goods(session_id, ag_clone).await;
+                            });
+
+                            // Update ship_manifest
+                            let mut manifest = ship_manifest.get();
+                            manifest.reset_die_rolls();
+                            manifest.price_goods(
+                                &Some(origin.clone()),
+                                buyer_broker_skill.get(),
+                                seller_broker_skill.get(),
+                            );
+                            let manifest_clone = manifest.clone();
+                            spawn_local(async move {
+                                let _ = set_ship_manifest(session_id2, manifest_clone).await;
+                            });
+
+                            // Update available_passengers
+                            if let Some(world) = dest_world.get() {
                                 if distance.get() > 0 {
-                                    available_passengers.with_value(|ap_sig| ap_sig.update(|passengers| {
-                                        let p = passengers.get_or_insert_with(AvailablePassengers::default);
-                                        p.reset_die_rolls();
-                                        p.generate(
-                                            origin.get_population(),
-                                            origin.port,
-                                            origin.travel_zone,
-                                            origin.tech_level,
-                                            world.get_population(),
-                                            world.port,
-                                            world.travel_zone,
-                                            world.tech_level,
-                                            distance.get(),
-                                            i32::from(steward_skill.with_value(|s| s.get())),
-                                            i32::from(buyer_broker_skill.with_value(|b| b.get())),
-                                        );
-                                    }));
+                                    let mut passengers = available_passengers.get().unwrap_or_default();
+                                    passengers.reset_die_rolls();
+                                    passengers.generate(
+                                        origin.get_population(),
+                                        origin.port,
+                                        origin.travel_zone,
+                                        origin.tech_level,
+                                        world.get_population(),
+                                        world.port,
+                                        world.travel_zone,
+                                        world.tech_level,
+                                        distance.get(),
+                                        i32::from(steward_skill.get()),
+                                        i32::from(buyer_broker_skill.get()),
+                                    );
+                                    let session_id3_clone = session_id3.clone();
+                                    spawn_local(async move {
+                                        let _ = set_available_passengers(session_id3_clone, Some(passengers)).await;
+                                    });
                                 } else {
-                                    available_passengers.with_value(|ap_sig| ap_sig.set(None));
+                                    let session_id3_clone = session_id3.clone();
+                                    spawn_local(async move {
+                                        let _ = set_available_passengers(session_id3_clone, None).await;
+                                    });
                                 }
                             } else {
-                                available_passengers.with_value(|ap_sig| ap_sig.set(None));
+                                spawn_local(async move {
+                                    let _ = set_available_passengers(session_id3, None).await;
+                                });
                             }
                         }
                     >
@@ -604,8 +621,8 @@ pub fn Trade() -> impl IntoView {
                             {move || {
                                 format!(
                                     "[{}] {}",
-                                    origin_world.with_value(|o| o.get()).trade_classes_string(),
-                                    origin_world.with_value(|o| o.get()).travel_zone,
+                                    origin_world.get().trade_classes_string(),
+                                    origin_world.get().travel_zone,
                                 )
                             }}
                         </span>
@@ -613,7 +630,7 @@ pub fn Trade() -> impl IntoView {
                     <div>
                         <span>
                             {move || {
-                                if let Some(world) = dest_world.with_value(|d| d.get()) {
+                                if let Some(world) = dest_world.get() {
                                     format!(
                                         "Destination Trade Classes: [{}] {}",
                                         world.trade_classes_string(),
@@ -634,11 +651,10 @@ pub fn Trade() -> impl IntoView {
                             id="player-broker-skill"
                             min="0"
                             max="100"
-                            value=move || buyer_broker_skill.with_value(|b| b.get())
+                            value=move || buyer_broker_skill.get()
                             on:change=move |ev| {
                                 let value: i16 = event_target_value(&ev).parse().unwrap_or(0);
                                 log::trace!("📝 buyer_broker_skill: user input({})", value);
-                                buyer_broker_skill.with_value(|b| b.set(value)); // Update local immediately for responsiveness
                                 let session = session_id.to_string();
                                 spawn_local(async move {
                                     log::trace!("📤 buyer_broker_skill: calling server function({})", value);
@@ -656,10 +672,13 @@ pub fn Trade() -> impl IntoView {
                             id="system-broker-skill"
                             min="0"
                             max="100"
-                            value=move || seller_broker_skill.with_value(|s| s.get())
+                            value=move || seller_broker_skill.get()
                             on:change=move |ev| {
-                                seller_broker_skill
-                                    .with_value(|s| s.set(event_target_value(&ev).parse().unwrap_or(0)));
+                                let value: i16 = event_target_value(&ev).parse().unwrap_or(0);
+                                let session = session_id.to_string();
+                                spawn_local(async move {
+                                    let _ = set_seller_broker_skill(session, value).await;
+                                });
                             }
                         />
                     </div>
@@ -670,10 +689,13 @@ pub fn Trade() -> impl IntoView {
                             id="steward-skill"
                             min="0"
                             max="100"
-                            value=move || steward_skill.with_value(|s| s.get())
+                            value=move || steward_skill.get()
                             on:change=move |ev| {
-                                steward_skill
-                                    .with_value(|s| s.set(event_target_value(&ev).parse().unwrap_or(0)));
+                                let value: i16 = event_target_value(&ev).parse().unwrap_or(0);
+                                let session = session_id.to_string();
+                                spawn_local(async move {
+                                    let _ = set_steward_skill(session, value).await;
+                                });
                             }
                         />
                     </div>
@@ -684,18 +706,24 @@ pub fn Trade() -> impl IntoView {
                         <input
                             id="include-illegal"
                             type="checkbox"
-                            prop:checked=move || illegal_goods.with_value(|ig| ig.get())
+                            prop:checked=move || illegal_goods.get()
                             on:change=move |ev| {
                                 let checked = event_target_checked(&ev);
-                                illegal_goods.with_value(|ig| ig.set(checked));
+                                let session = session_id.to_string();
+                                let session2 = session.clone();
+                                spawn_local(async move {
+                                    let _ = set_illegal_goods(session, checked).await;
+                                });
                                 let ag = AvailableGoodsTable::for_world(
                                         TradeTable::global(),
-                                        &origin_world.with_value(|o| o.get()).get_trade_classes(),
-                                        origin_world.with_value(|o| o.get()).get_population(),
+                                        &origin_world.get().get_trade_classes(),
+                                        origin_world.get().get_population(),
                                         checked,
                                     )
                                     .unwrap();
-                                available_goods.with_value(|ag_sig| ag_sig.set(ag));
+                                spawn_local(async move {
+                                    let _ = set_available_goods(session2, ag).await;
+                                });
                             }
                         />
                     </div>
@@ -767,20 +795,20 @@ fn print() {
 /// Sibling section beneath the manifest.
 #[component]
 fn GoodsToSellView(
-    origin_world: StoredValue<ReadOnlySignal<World>>,
-    dest_world: StoredValue<ReadOnlySignal<Option<World>>>,
-    ship_manifest: StoredValue<ReadOnlySignal<ShipManifest>>,
+    origin_world: Signal<World>,
+    dest_world: Signal<Option<World>>,
+    ship_manifest: Signal<ShipManifest>,
     show_add_manual: RwSignal<bool>,
 ) -> impl IntoView {
     let world_to_sell_on = Memo::new(move |_| {
         let world_name_classes = dest_world
-            .with_value(|d| d.get())
+            .get()
             .as_ref()
             .map(|w| (w.name.clone(), w.trade_classes_string()))
             .unwrap_or_else(|| {
                 (
-                    origin_world.with_value(|o| o.get()).name.clone(),
-                    origin_world.with_value(|o| o.get()).trade_classes_string(),
+                    origin_world.get().name.clone(),
+                    origin_world.get().trade_classes_string(),
                 )
             });
         format!("{} [{}]", world_name_classes.0, world_name_classes.1)
@@ -814,7 +842,7 @@ fn GoodsToSellView(
                 <tbody>
                     {move || {
                         ship_manifest
-                            .with_value(|sm| sm.with(|manifest| {
+                            .with(|manifest| {
                                 if manifest.trade_goods.is_empty() {
                                     view! {
                                         <tr>
@@ -850,7 +878,7 @@ fn GoodsToSellView(
                                         .collect::<Vec<_>>()
                                         .into_any()
                                 }
-                            }))
+                            })
                     }}
                 </tbody>
             </table>
@@ -861,17 +889,15 @@ fn GoodsToSellView(
 #[component]
 fn SellGoodRow(
     good_index: i16,
-    ship_manifest: StoredValue<ReadOnlySignal<ShipManifest>>,
+    ship_manifest: Signal<ShipManifest>,
 ) -> impl IntoView {
     let good = Memo::new(move |_| {
-        ship_manifest.with_value(|sm| {
-            sm.with(|manifest| {
-                manifest
-                    .trade_goods
-                    .get_by_index(good_index)
-                    .cloned()
-                    .unwrap_or_default()
-            })
+        ship_manifest.with(|manifest| {
+            manifest
+                .trade_goods
+                .get_by_index(good_index)
+                .cloned()
+                .unwrap_or_default()
         })
     });
 
@@ -881,13 +907,14 @@ fn SellGoodRow(
             .parse::<i32>()
             .unwrap_or(0)
             .clamp(0, current_good.quantity);
-        ship_manifest.with_value(|sm| {
-            sm.update(|manifest| {
-                manifest.trade_goods.update_good(Good {
-                    transacted: new_value,
-                    ..current_good
-                });
-            })
+        let mut manifest = ship_manifest.get();
+        manifest.trade_goods.update_good(Good {
+            transacted: new_value,
+            ..current_good
+        });
+        let session_id = DEFAULT_SESSION_ID.to_string();
+        spawn_local(async move {
+            let _ = set_ship_manifest(session_id, manifest).await;
         });
     };
 
@@ -951,7 +978,7 @@ fn SellGoodRow(
 #[component]
 pub fn BuyGoodRow(
     good: Good,
-    available_goods: StoredValue<ReadOnlySignal<AvailableGoodsTable>>,
+    available_goods: Signal<AvailableGoodsTable>,
 ) -> impl IntoView {
     // Closure to handle changes in the amount purchased input (does NOT update manifest until Process Trades)
     let update_purchased = move |ev| {
@@ -959,16 +986,17 @@ pub fn BuyGoodRow(
             .parse::<i32>()
             .unwrap_or(0)
             .clamp(0, good.quantity);
-        available_goods.with_value(|ag| {
-            ag.update(|ag| {
-                if let Some(good) = ag
-                    .goods
-                    .iter_mut()
-                    .find(|g| g.source_index == good.source_index)
-                {
-                    good.transacted = new_value;
-                }
-            })
+        let mut ag = available_goods.get();
+        if let Some(good) = ag
+            .goods
+            .iter_mut()
+            .find(|g| g.source_index == good.source_index)
+        {
+            good.transacted = new_value;
+        }
+        let session_id = DEFAULT_SESSION_ID.to_string();
+        spawn_local(async move {
+            let _ = set_available_goods(session_id, ag).await;
         });
     };
 
@@ -1050,24 +1078,24 @@ pub fn BuyGoodRow(
 /// destination world availability and current market conditions.
 #[component]
 pub fn TradeView(
-    origin_world: StoredValue<ReadOnlySignal<World>>,
-    dest_world: StoredValue<ReadOnlySignal<Option<World>>>,
-    available_goods: StoredValue<ReadOnlySignal<AvailableGoodsTable>>,
-    available_passengers: StoredValue<ReadOnlySignal<Option<AvailablePassengers>>>,
-    ship_manifest: StoredValue<ReadOnlySignal<ShipManifest>>,
+    origin_world: Signal<World>,
+    dest_world: Signal<Option<World>>,
+    available_goods: Signal<AvailableGoodsTable>,
+    available_passengers: Signal<Option<AvailablePassengers>>,
+    ship_manifest: Signal<ShipManifest>,
 ) -> impl IntoView {
     view! {
         <div class="output-region">
             <h2 class="trade-header-title">
-                "Trade Goods for " {move || origin_world.with_value(|o| o.get()).name.clone()}
+                "Trade Goods for " {move || origin_world.get().name.clone()}
                 <span class="trade-header-classifications">
-                    " [" {move || origin_world.with_value(|o| o.get()).trade_classes_string()} "]"
+                    " [" {move || origin_world.get().trade_classes_string()} "]"
                 </span>
                 <Show when=move || {
-                    dest_world.with_value(|d| d.get()).is_some()
+                    dest_world.get().is_some()
                 }>
                     {move || {
-                        if let Some(dw) = dest_world.with_value(|d| d.get()) {
+                        if let Some(dw) = dest_world.get() {
                             view! {
                                 <span>
                                     " -> " {dw.name.clone()}
@@ -1085,7 +1113,7 @@ pub fn TradeView(
                 </Show>
             </h2>
 
-            <Show when=move || available_passengers.with_value(|ap| ap.get()).is_some()>
+            <Show when=move || available_passengers.get().is_some()>
                 <PassengerView
                     available_passengers=available_passengers
                     ship_manifest=ship_manifest
@@ -1110,7 +1138,7 @@ pub fn TradeView(
                 </thead>
                 <tbody>
                     {move || {
-                        if available_goods.with_value(|ag| ag.read()).is_empty() {
+                        if available_goods.read().is_empty() {
                             view! {
                                 <tr>
                                     <td colspan="6">"No goods available"</td>
@@ -1118,7 +1146,7 @@ pub fn TradeView(
                             }
                                 .into_any()
                         } else {
-                            let mut goods_vec = available_goods.with_value(|ag| ag.read()).goods().to_vec();
+                            let mut goods_vec = available_goods.read().goods().to_vec();
                             goods_vec
                                 .sort_by(|a, b| {
                                     let a_ratio = a.buy_cost as f64 / a.base_cost as f64;
@@ -1208,60 +1236,64 @@ pub fn TradeView(
 /// availability updates and manifest integration.
 #[component]
 fn PassengerView(
-    available_passengers: StoredValue<ReadOnlySignal<Option<AvailablePassengers>>>,
-    ship_manifest: StoredValue<ReadOnlySignal<ShipManifest>>,
+    available_passengers: Signal<Option<AvailablePassengers>>,
+    ship_manifest: Signal<ShipManifest>,
 ) -> impl IntoView {
     let add_high_passenger = move |_| {
-        if let Some(passengers) = available_passengers.with_value(|ap| ap.get()) {
+        if let Some(passengers) = available_passengers.get() {
             let remaining =
-                passengers.high - ship_manifest.with_value(|sm| sm.read()).high_passengers;
+                passengers.high - ship_manifest.read().high_passengers;
             if remaining > 0 {
-                ship_manifest.with_value(|sm| {
-                    sm.update(|manifest| {
-                        manifest.high_passengers += 1;
-                    })
+                let mut manifest = ship_manifest.get();
+                manifest.high_passengers += 1;
+                let session_id = DEFAULT_SESSION_ID.to_string();
+                spawn_local(async move {
+                    let _ = set_ship_manifest(session_id, manifest).await;
                 });
             }
         }
     };
 
     let add_medium_passenger = move |_| {
-        if let Some(passengers) = available_passengers.with_value(|ap| ap.get()) {
+        if let Some(passengers) = available_passengers.get() {
             let remaining =
-                passengers.medium - ship_manifest.with_value(|sm| sm.read()).medium_passengers;
+                passengers.medium - ship_manifest.read().medium_passengers;
             if remaining > 0 {
-                ship_manifest.with_value(|sm| {
-                    sm.update(|manifest| {
-                        manifest.medium_passengers += 1;
-                    })
+                let mut manifest = ship_manifest.get();
+                manifest.medium_passengers += 1;
+                let session_id = DEFAULT_SESSION_ID.to_string();
+                spawn_local(async move {
+                    let _ = set_ship_manifest(session_id, manifest).await;
                 });
             }
         }
     };
 
     let add_basic_passenger = move |_| {
-        if let Some(passengers) = available_passengers.with_value(|ap| ap.get()) {
+        if let Some(passengers) = available_passengers.get() {
             let remaining =
-                passengers.basic - ship_manifest.with_value(|sm| sm.read()).basic_passengers;
+                passengers.basic - ship_manifest.read().basic_passengers;
             if remaining > 0 {
-                ship_manifest.with_value(|sm| {
-                    sm.update(|manifest| {
-                        manifest.basic_passengers += 1;
-                    })
+                let mut manifest = ship_manifest.get();
+                manifest.basic_passengers += 1;
+                let session_id = DEFAULT_SESSION_ID.to_string();
+                spawn_local(async move {
+                    let _ = set_ship_manifest(session_id, manifest).await;
                 });
             }
         }
     };
 
     let add_low_passenger = move |_| {
-        if let Some(passengers) = available_passengers.with_value(|ap| ap.get()) {
+        if let Some(passengers) = available_passengers.get() {
             let remaining =
-                passengers.low - ship_manifest.with_value(|sm| sm.read()).low_passengers;
+                passengers.low - ship_manifest.read().low_passengers;
             if remaining > 0 {
-                ship_manifest.with_value(|sm| {
-                    sm.update(|manifest| {
-                        manifest.low_passengers += 1;
-                    })
+                let mut manifest = ship_manifest.get();
+                manifest.low_passengers += 1;
+                let session_id = DEFAULT_SESSION_ID.to_string();
+                spawn_local(async move {
+                    let _ = set_ship_manifest(session_id, manifest).await;
                 });
             }
         }
@@ -1274,8 +1306,8 @@ fn PassengerView(
                 <h4>"High"</h4>
                 <div class="passenger-count">
                     {move || {
-                        if let Some(passengers) = available_passengers.with_value(|ap| ap.get()) {
-                            let remaining = passengers.high - ship_manifest.with_value(|sm| sm.read()).high_passengers;
+                        if let Some(passengers) = available_passengers.get() {
+                            let remaining = passengers.high - ship_manifest.read().high_passengers;
                             remaining.max(0).to_string()
                         } else {
                             "0".to_string()
@@ -1287,9 +1319,9 @@ fn PassengerView(
                 <h4>"Medium"</h4>
                 <div class="passenger-count">
                     {move || {
-                        if let Some(passengers) = available_passengers.with_value(|ap| ap.get()) {
+                        if let Some(passengers) = available_passengers.get() {
                             let remaining = passengers.medium
-                                - ship_manifest.with_value(|sm| sm.read()).medium_passengers;
+                                - ship_manifest.read().medium_passengers;
                             remaining.max(0).to_string()
                         } else {
                             "0".to_string()
@@ -1301,9 +1333,9 @@ fn PassengerView(
                 <h4>"Basic"</h4>
                 <div class="passenger-count">
                     {move || {
-                        if let Some(passengers) = available_passengers.with_value(|ap| ap.get()) {
+                        if let Some(passengers) = available_passengers.get() {
                             let remaining = passengers.basic
-                                - ship_manifest.with_value(|sm| sm.read()).basic_passengers;
+                                - ship_manifest.read().basic_passengers;
                             remaining.max(0).to_string()
                         } else {
                             "0".to_string()
@@ -1315,8 +1347,8 @@ fn PassengerView(
                 <h4>"Low"</h4>
                 <div class="passenger-count">
                     {move || {
-                        if let Some(passengers) = available_passengers.with_value(|ap| ap.get()) {
-                            let remaining = passengers.low - ship_manifest.with_value(|sm| sm.read()).low_passengers;
+                        if let Some(passengers) = available_passengers.get() {
+                            let remaining = passengers.low - ship_manifest.read().low_passengers;
                             remaining.max(0).to_string()
                         } else {
                             "0".to_string()
@@ -1329,7 +1361,7 @@ fn PassengerView(
         <h4 class="trade-section">"Available Freight (tons)"</h4>
         <div class="freight-grid">
             {move || {
-                if let Some(passengers) = available_passengers.with_value(|ap| ap.get()) {
+                if let Some(passengers) = available_passengers.get() {
                     if passengers.freight_lots.is_empty() {
                         view! { <div>"No freight available"</div> }.into_any()
                     } else {
@@ -1339,7 +1371,7 @@ fn PassengerView(
                             .enumerate()
                             .filter_map(|(index, lot)| {
                                 let is_selected = ship_manifest
-                                    .with_value(|sm| sm.read())
+                                    .read()
                                     .freight_lot_indices
                                     .contains(&index);
                                 if is_selected {
@@ -1347,18 +1379,20 @@ fn PassengerView(
                                 }
                                 let lot_size = lot.size;
                                 let toggle_freight = move |_| {
-                                    ship_manifest
-                                        .with_value(|sm| sm.update(|manifest| {
-                                            if let Some(pos) = manifest
-                                                .freight_lot_indices
-                                                .iter()
-                                                .position(|&i| i == index)
-                                            {
-                                                manifest.freight_lot_indices.remove(pos);
-                                            } else {
-                                                manifest.freight_lot_indices.push(index);
-                                            }
-                                        }));
+                                    let mut manifest = ship_manifest.get();
+                                    if let Some(pos) = manifest
+                                        .freight_lot_indices
+                                        .iter()
+                                        .position(|&i| i == index)
+                                    {
+                                        manifest.freight_lot_indices.remove(pos);
+                                    } else {
+                                        manifest.freight_lot_indices.push(index);
+                                    }
+                                    let session_id = DEFAULT_SESSION_ID.to_string();
+                                    spawn_local(async move {
+                                        let _ = set_ship_manifest(session_id, manifest).await;
+                                    });
                                 };
                                 Some(
 
@@ -1456,56 +1490,60 @@ fn PassengerView(
 #[component]
 fn ShipManifestView(
     origin_swap: impl Fn() + Clone + 'static,
-    _origin_world: StoredValue<ReadOnlySignal<World>>,
-    dest_world: StoredValue<ReadOnlySignal<Option<World>>>,
-    buyer_broker_skill: StoredValue<ReadOnlySignal<i16>>,
-    seller_broker_skill: StoredValue<ReadOnlySignal<i16>>,
+    _origin_world: Signal<World>,
+    dest_world: Signal<Option<World>>,
+    buyer_broker_skill: Signal<i16>,
+    seller_broker_skill: Signal<i16>,
     distance: RwSignal<i32>,
-    ship_manifest: StoredValue<ReadOnlySignal<ShipManifest>>,
-    available_goods: StoredValue<ReadOnlySignal<AvailableGoodsTable>>,
-    available_passengers: StoredValue<ReadOnlySignal<Option<AvailablePassengers>>>,
+    ship_manifest: Signal<ShipManifest>,
+    available_goods: Signal<AvailableGoodsTable>,
+    available_passengers: Signal<Option<AvailablePassengers>>,
     show_add_manual: RwSignal<bool>,
 ) -> impl IntoView {
     let manual_selected_index = RwSignal::new(11i16);
     let manual_qty_input = RwSignal::new(String::new());
 
     let remove_high_passenger = move |_| {
-        ship_manifest.with_value(|sm| {
-            sm.update(|manifest| {
-                if manifest.high_passengers > 0 {
-                    manifest.high_passengers -= 1;
-                }
-            })
+        let mut manifest = ship_manifest.get();
+        if manifest.high_passengers > 0 {
+            manifest.high_passengers -= 1;
+        }
+        let session_id = DEFAULT_SESSION_ID.to_string();
+        spawn_local(async move {
+            let _ = set_ship_manifest(session_id, manifest).await;
         });
     };
 
     let remove_medium_passenger = move |_| {
-        ship_manifest.with_value(|sm| {
-            sm.update(|manifest| {
-                if manifest.medium_passengers > 0 {
-                    manifest.medium_passengers -= 1;
-                }
-            })
+        let mut manifest = ship_manifest.get();
+        if manifest.medium_passengers > 0 {
+            manifest.medium_passengers -= 1;
+        }
+        let session_id = DEFAULT_SESSION_ID.to_string();
+        spawn_local(async move {
+            let _ = set_ship_manifest(session_id, manifest).await;
         });
     };
 
     let remove_basic_passenger = move |_| {
-        ship_manifest.with_value(|sm| {
-            sm.update(|manifest| {
-                if manifest.basic_passengers > 0 {
-                    manifest.basic_passengers -= 1;
-                }
-            })
+        let mut manifest = ship_manifest.get();
+        if manifest.basic_passengers > 0 {
+            manifest.basic_passengers -= 1;
+        }
+        let session_id = DEFAULT_SESSION_ID.to_string();
+        spawn_local(async move {
+            let _ = set_ship_manifest(session_id, manifest).await;
         });
     };
 
     let remove_low_passenger = move |_| {
-        ship_manifest.with_value(|sm| {
-            sm.update(|manifest| {
-                if manifest.low_passengers > 0 {
-                    manifest.low_passengers -= 1;
-                }
-            })
+        let mut manifest = ship_manifest.get();
+        if manifest.low_passengers > 0 {
+            manifest.low_passengers -= 1;
+        }
+        let session_id = DEFAULT_SESSION_ID.to_string();
+        spawn_local(async move {
+            let _ = set_ship_manifest(session_id, manifest).await;
         });
     };
 
@@ -1522,15 +1560,20 @@ fn ShipManifestView(
         }
 
         // Clear manifest and persisted storage, and clear purchased amounts in available goods
-        ship_manifest.with_value(|sm| sm.set(ShipManifest::default()));
+        let manifest = ShipManifest::default();
+        let session_id = DEFAULT_SESSION_ID.to_string();
+        let session_id2 = session_id.clone();
+        spawn_local(async move {
+            let _ = set_ship_manifest(session_id, manifest).await;
+        });
 
         // Zero out purchased in available goods so Buy inputs show 0
-        available_goods.with_value(|ag_sig| {
-            ag_sig.update(|ag| {
-                for g in ag.goods.iter_mut() {
-                    g.transacted = 0;
-                }
-            })
+        let mut ag = available_goods.get();
+        for g in ag.goods.iter_mut() {
+            g.transacted = 0;
+        }
+        spawn_local(async move {
+            let _ = set_available_goods(session_id2, ag).await;
         });
     };
 
@@ -1545,14 +1588,14 @@ fn ShipManifestView(
 
             <div class="manifest-summary">
                 {move || {
-                    let manifest = ship_manifest.with_value(|sm| sm.get());
+                    let manifest = ship_manifest.get();
                     let cargo_tons = available_passengers
-                        .with_value(|ap| ap.read())
+                        .read()
                         .as_ref()
                         .map(|p| manifest.total_freight_tons(p))
                         .unwrap_or(0);
                     let goods_tons: i32 = manifest.trade_goods_tonnage()
-                        + available_goods.with_value(|ag| ag.read()).total_transacted_size();
+                        + available_goods.read().total_transacted_size();
                     let total_cargo = cargo_tons + goods_tons;
                     let total_passengers = manifest.total_passengers_not_low();
                     let total_low = manifest.low_passengers;
@@ -1573,25 +1616,25 @@ fn ShipManifestView(
                     <button class="manifest-item passenger-button" on:click=remove_high_passenger>
                         <span class="manifest-label">"High:"</span>
                         <span class="manifest-value">
-                            {move || ship_manifest.with_value(|sm| sm.read()).high_passengers}
+                            {move || ship_manifest.read().high_passengers}
                         </span>
                     </button>
                     <button class="manifest-item passenger-button" on:click=remove_medium_passenger>
                         <span class="manifest-label">"Medium:"</span>
                         <span class="manifest-value">
-                            {move || ship_manifest.with_value(|sm| sm.read()).medium_passengers}
+                            {move || ship_manifest.read().medium_passengers}
                         </span>
                     </button>
                     <button class="manifest-item passenger-button" on:click=remove_basic_passenger>
                         <span class="manifest-label">"Basic:"</span>
                         <span class="manifest-value">
-                            {move || ship_manifest.with_value(|sm| sm.read()).basic_passengers}
+                            {move || ship_manifest.read().basic_passengers}
                         </span>
                     </button>
                     <button class="manifest-item passenger-button" on:click=remove_low_passenger>
                         <span class="manifest-label">"Low:"</span>
                         <span class="manifest-value">
-                            {move || ship_manifest.with_value(|sm| sm.read()).low_passengers}
+                            {move || ship_manifest.read().low_passengers}
                         </span>
                     </button>
                 </div>
@@ -1601,10 +1644,10 @@ fn ShipManifestView(
                 <h5>"Freight"</h5>
                 <div class="manifest-grid">
                     {move || {
-                        let manifest = ship_manifest.with_value(|sm| sm.get());
-                        let buy_goods = available_goods.with_value(|ag| ag.read());
+                        let manifest = ship_manifest.get();
+                        let buy_goods = available_goods.read();
                         let cargo_tons = available_passengers
-                            .with_value(|ap| ap.read())
+                            .read()
                             .as_ref()
                             .map(|p| manifest.total_freight_tons(p))
                             .unwrap_or(0);
@@ -1642,8 +1685,8 @@ fn ShipManifestView(
                 <h5>"Freight Lots"</h5>
                 <div class="freight-grid">
                     {move || {
-                        if let Some(passengers) = available_passengers.with_value(|ap| ap.get()) {
-                            let indices = ship_manifest.with_value(|sm| sm.read()).freight_lot_indices.clone();
+                        if let Some(passengers) = available_passengers.get() {
+                            let indices = ship_manifest.read().freight_lot_indices.clone();
                             if indices.is_empty() {
                                 view! { <div>"No freight selected"</div> }.into_any()
                             } else {
@@ -1655,16 +1698,18 @@ fn ShipManifestView(
                                             .get(index)
                                             .map(|lot| {
                                                 let remove = move |_| {
-                                                    ship_manifest
-                                                        .with_value(|sm| sm.update(|manifest| {
-                                                            if let Some(pos) = manifest
-                                                                .freight_lot_indices
-                                                                .iter()
-                                                                .position(|&i| i == index)
-                                                            {
-                                                                manifest.freight_lot_indices.remove(pos);
-                                                            }
-                                                        }));
+                                                    let mut manifest = ship_manifest.get();
+                                                    if let Some(pos) = manifest
+                                                        .freight_lot_indices
+                                                        .iter()
+                                                        .position(|&i| i == index)
+                                                    {
+                                                        manifest.freight_lot_indices.remove(pos);
+                                                    }
+                                                    let session_id = DEFAULT_SESSION_ID.to_string();
+                                                    spawn_local(async move {
+                                                        let _ = set_ship_manifest(session_id, manifest).await;
+                                                    });
                                                 };
                                                 view! {
                                                     <button class="freight-lot" on:click=remove>
@@ -1690,7 +1735,7 @@ fn ShipManifestView(
                         <span class="manifest-label">"Passenger Revenue:"</span>
                         <span class="manifest-value">
                             {move || {
-                                let manifest = ship_manifest.with_value(|sm| sm.get());
+                                let manifest = ship_manifest.get();
                                 let revenue = manifest.passenger_revenue(distance.get());
                                 Credits::from(revenue).as_string()
                             }}
@@ -1700,8 +1745,8 @@ fn ShipManifestView(
                         <span class="manifest-label">"Freight Revenue:"</span>
                         <span class="manifest-value">
                             {move || {
-                                let manifest = ship_manifest.with_value(|sm| sm.get());
-                                let revenue = if let Some(passengers) = available_passengers.with_value(|ap| ap.get()) {
+                                let manifest = ship_manifest.get();
+                                let revenue = if let Some(passengers) = available_passengers.get() {
                                     manifest.freight_revenue(distance.get(), &passengers) as i64
                                 } else {
                                     0
@@ -1714,8 +1759,8 @@ fn ShipManifestView(
                         <span class="manifest-label">"Goods Profit:"</span>
                         <span class="manifest-value">
                             {move || {
-                                let manifest = ship_manifest.with_value(|sm| sm.get());
-                                let cost = available_goods.with_value(|ag| ag.read()).total_buy_cost() as i64;
+                                let manifest = ship_manifest.get();
+                                let cost = available_goods.read().total_buy_cost() as i64;
                                 let proceeds = manifest.trade_goods_proceeds();
                                 let profit = proceeds - cost;
                                 Credits::from(profit).as_string()
@@ -1726,18 +1771,18 @@ fn ShipManifestView(
                         <span class="manifest-label">"Total:"</span>
                         <span class="manifest-value">
                             {move || {
-                                let manifest = ship_manifest.with_value(|sm| sm.get());
+                                let manifest = ship_manifest.get();
                                 let passenger_revenue = manifest.passenger_revenue(distance.get())
                                     as i64;
                                 let freight_revenue = if let Some(passengers) = available_passengers
-                                    .with_value(|ap| ap.get())
+                                    .get()
                                 {
                                     manifest.freight_revenue(distance.get(), &passengers) as i64
                                 } else {
                                     0
                                 };
                                 let goods_profit = manifest.trade_goods_proceeds()
-                                    - available_goods.with_value(|ag| ag.read()).total_buy_cost() as i64;
+                                    - available_goods.read().total_buy_cost() as i64;
                                 let total = passenger_revenue + freight_revenue + goods_profit;
                                 Credits::from(total).as_string()
                             }}
@@ -1749,23 +1794,32 @@ fn ShipManifestView(
                             class="manifest-button manifest-execute-trades-button"
                             on:click=move |_| {
                                 debug!("ON BUTTON: pricing goods.");
-                                ship_manifest
-                                    .with_value(|sm| sm.update(|manifest| {
-                                        manifest
-                                            .process_trades(
-                                                distance.get(),
-                                                &available_goods.with_value(|ag| ag.read()).goods,
-                                                &available_passengers.with_value(|ap| ap.get()),
-                                            );
-                                        manifest
-                                            .price_goods(
-                                                &dest_world.with_value(|d| d.get()),
-                                                buyer_broker_skill.with_value(|b| b.get()),
-                                                seller_broker_skill.with_value(|s| s.get()),
-                                            );
-                                        available_goods.with_value(|ag| ag.update(|ag| ag.zero_transacted()));
-                                        origin_swap();
-                                    }));
+                                let mut manifest = ship_manifest.get();
+                                manifest
+                                    .process_trades(
+                                        distance.get(),
+                                        &available_goods.read().goods,
+                                        &available_passengers.get(),
+                                    );
+                                manifest
+                                    .price_goods(
+                                        &dest_world.get(),
+                                        buyer_broker_skill.get(),
+                                        seller_broker_skill.get(),
+                                    );
+                                let session_id = DEFAULT_SESSION_ID.to_string();
+                                let session_id2 = session_id.clone();
+                                spawn_local(async move {
+                                    let _ = set_ship_manifest(session_id, manifest).await;
+                                });
+
+                                let mut ag = available_goods.get();
+                                ag.zero_transacted();
+                                spawn_local(async move {
+                                    let _ = set_available_goods(session_id2, ag).await;
+                                });
+
+                                origin_swap();
                             }
                         >
                             "Execute Trades"
@@ -1774,12 +1828,12 @@ fn ShipManifestView(
                     <div class="manifest-item">
                         <span class="manifest-label">"Profit:"</span>
                         <span class=move || {
-                            if ship_manifest.with_value(|sm| sm.read()).profit < 0 {
+                            if ship_manifest.read().profit < 0 {
                                 "manifest-value manifest-negative"
                             } else {
                                 "manifest-value"
                             }
-                        }>{move || Credits::from(ship_manifest.with_value(|sm| sm.read()).profit).as_string()}</span>
+                        }>{move || Credits::from(ship_manifest.read().profit).as_string()}</span>
                     </div>
 
                 </div>
@@ -1864,10 +1918,12 @@ fn ShipManifestView(
                                             buy_price_roll: None,
                                             sell_price_roll: None,
                                         };
-                                        ship_manifest.with_value(|m|
-                                            m.update(|manifest| {
-                                                manifest.update_trade_good(good);
-                                            }));
+                                        let mut manifest = ship_manifest.get();
+                                        manifest.update_trade_good(good);
+                                        let session_id = DEFAULT_SESSION_ID.to_string();
+                                        spawn_local(async move {
+                                            let _ = set_ship_manifest(session_id, manifest).await;
+                                        });
                                         manual_qty_input.set(String::new());
                                         if let Some(d) = web_sys::window()
                                             .and_then(|w| w.document())

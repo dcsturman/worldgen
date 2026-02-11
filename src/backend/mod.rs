@@ -181,16 +181,26 @@ pub async fn update_trade_state(
 // Helper function to create a ReadOnlySignal to update clients to changes to the trade state.
 // Its used to disseminate changes to all clients.
 
+use leptos::prelude::Signal;
 use leptos_ws::ReadOnlySignal;
 use serde::{Deserialize, Serialize};
 
-/// Creates a ReadOnlySignal that automatically persists changes to Firestore
+/// Creates a reactive Signal derived from a ReadOnlySignal (client-side)
 ///
+/// Wraps a leptos_ws ReadOnlySignal in a Leptos Signal::derive, making it:
+/// - Reactive: accessing the signal tracks the underlying ReadOnlySignal
+/// - Copy: can be moved into multiple closures without cloning
+///
+/// The ReadOnlySignal is only captured in one closure (inside Signal::derive),
+/// avoiding move/borrow issues while maintaining full reactivity.
+///
+/// Note: The signal is read-only on the client. To update it, call a server function
+/// which will use get_server_signal() to update the value.
 pub fn get_signal<T>(
     session_id: &str,
     signal_name: &str,
     default: T,
-) -> StoredValue<ReadOnlySignal<T>>
+) -> Signal<T>
 where
     T: Clone + Send + Sync + Serialize + for<'de> Deserialize<'de> + 'static + PartialEq,
 {
@@ -198,11 +208,32 @@ where
     log::debug!("📡 get_signal: Creating signal '{}'", full_signal_name);
 
     // Create the remote signal
-    let signal = ReadOnlySignal::new(&full_signal_name, default.clone()).unwrap_or_else(|e| {
-        panic!("Creating singal {full_signal_name} failed: {e:?}");
+    let ws_signal = ReadOnlySignal::new(&full_signal_name, default.clone()).unwrap_or_else(|e| {
+        panic!("Creating signal {full_signal_name} failed: {e:?}");
     });
 
-    StoredValue::new(signal)
+    // Wrap it in a derived signal - now it's Copy and reactive!
+    Signal::derive(move || ws_signal.get())
+}
+
+/// Gets a ReadOnlySignal for server-side use (server-side only)
+///
+/// This is used by server functions to update signals that broadcast to all clients.
+/// Unlike get_signal which returns a derived Signal for client use, this directly
+/// returns the ReadOnlySignal so it can be modified with .set() or .update().
+///
+/// Note: ReadOnlySignal is NOT Copy, so it can only be used once or must be cloned.
+#[cfg(feature = "ssr")]
+pub fn get_server_signal<T>(session_id: &str, signal_name: &str, default: T) -> ReadOnlySignal<T>
+where
+    T: Clone + Send + Sync + Serialize + for<'de> Deserialize<'de> + 'static + PartialEq,
+{
+    let full_signal_name = signal_names::for_session(session_id, signal_name);
+
+    // Create/get the remote signal
+    ReadOnlySignal::new(&full_signal_name, default).unwrap_or_else(|e| {
+        panic!("Creating signal {full_signal_name} failed: {e:?}");
+    })
 }
 
 // ============================================================================
@@ -308,14 +339,13 @@ macro_rules! generate_setter {
             );
 
             // Update WebSocket signal to broadcast to all clients
-            get_signal(&session_id, signal_names::$signal_const, $default).with_value(|s| {
-                info!(
-                    "🚨 Setting signal {} to {:?}.",
-                    signal_names::for_session(&session_id, signal_names::$signal_const),
-                    value
-                );
-                s.set(value)
-            });
+            info!(
+                "🚨 Setting signal {} to {:?}.",
+                signal_names::for_session(&session_id, signal_names::$signal_const),
+                value
+            );
+            let signal = get_server_signal(&session_id, signal_names::$signal_const, $default);
+            signal.set(value);
 
             info!(
                 "Signal set in {}.",
