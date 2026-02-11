@@ -113,6 +113,7 @@ use crate::trade::TradeClass;
 /// - **buy_price_roll**: Raw 3d6 roll for buy price calculation
 /// - **sell_price_roll**: Raw 3d6 roll for sell price calculation (if applicable)
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(default)]
 pub struct Good {
     /// Name of the good
     pub name: String,
@@ -180,6 +181,7 @@ impl Display for Good {
 /// - **Lookup**: Fast access to specific goods by trade table index
 /// - **Display**: Human-readable market summaries with pricing information
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
 pub struct AvailableGoodsTable {
     /// List of available goods
     pub goods: Vec<Good>,

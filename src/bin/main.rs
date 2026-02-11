@@ -7,6 +7,7 @@ use web_sys::js_sys::{Function, Object, Reflect};
 
 use leptos::prelude::*;
 use leptos_meta::{provide_meta_context, MetaTags};
+use std::sync::Arc;
 use worldgen::components::app::App;
 
 #[cfg(not(feature = "ssr"))]
@@ -123,27 +124,6 @@ pub struct AppState {
     pub session_cache: worldgen::backend::SessionCache,
 }
 
-/// Handler for server functions with all app context
-#[cfg(feature = "ssr")]
-async fn server_fn_handler(
-    axum::extract::State(state): axum::extract::State<AppState>,
-    _path: axum::extract::Path<String>,
-    request: axum::extract::Request,
-) -> impl axum::response::IntoResponse {
-    leptos_axum::handle_server_fns_with_context(
-        move || {
-            // Provide WsSignals context - MUST be provided before any other context
-            // This is required by leptos_ws WebSocket server function
-            leptos::prelude::provide_context(state.ws_signals.clone());
-            leptos::prelude::provide_context(state.leptos_options.clone());
-            leptos::prelude::provide_context(state.firestore_db.clone());
-            leptos::prelude::provide_context(state.session_cache.clone());
-        },
-        request,
-    )
-    .await
-}
-
 #[cfg(feature = "ssr")]
 use axum::{
     body::Body,
@@ -206,37 +186,25 @@ pub async fn leptos_fallback(State(options): State<LeptosOptions>, req: Request<
 async fn main() {
     use ssr_imports::*;
 
-    // Tracing support
-    let filter = EnvFilter::new("debug")
-        .add_directive("leptos_meta=debug".parse().unwrap())
-        .add_directive("leptos_axum=debug".parse().unwrap())
-        .add_directive("leptos=debug".parse().unwrap())
-        .add_directive("leptos_router=debug".parse().unwrap())
-        .add_directive("tachys=debug".parse().unwrap());
+    // Tracing support - only show logs from our code and critical Leptos logs
+    let filter = EnvFilter::new("warn") // Default to warn for all crates
+        .add_directive("worldgen=debug".parse().unwrap()) // Our crate at debug level
+        .add_directive("worldgen_server=debug".parse().unwrap()) // Our binary at debug level
+        .add_directive("worldgen::backend=info".parse().unwrap()) // Backend module at info level
+        .add_directive("worldgen::backend::firestore=info".parse().unwrap()) // Firestore module at info level
+        .add_directive("leptos=info".parse().unwrap()) // Leptos at info level
+        .add_directive("leptos_axum=info".parse().unwrap())
+        .add_directive("leptos_ws=info".parse().unwrap());
 
     tracing_subscriber::registry()
         .with(fmt::layer())
         .with(filter)
         .init();
 
-    debug!("TEST THAT DEBUG IS WORKING");
-    leptos::logging::debug_warn!("IF YOU SEE THIS, LEPTOS CORE HAS TRACING");
-
-    // 1. Check the compiler flag for meta specifically
-    if cfg!(feature = "leptos_meta") {
-        info!("CANARY: leptos_meta dependency is ACTIVE");
-    }
-
-    // 2. Try to trigger a manual trace from within the meta namespace
-    // In Leptos 0.8, this should emit a trace if the feature is on.
-    let _ = leptos_meta::MetaContext::default();
-    info!("CANARY: Created a manual MetaContext without panicking.");
-
     // 3. Force a manual debug log from the leptos_meta crate's logic
     // We can't call their internal private macros, but we can see if
     // provide_meta_context runs without the "no global spawner" or "no head" error here.
     leptos_meta::provide_meta_context();
-    info!("CANARY: provide_meta_context() executed in main successfully.");
 
     // Get port from environment (Cloud Run sets PORT)
     let port: u16 = std::env::var("PORT")
@@ -300,20 +268,27 @@ async fn main() {
     let routes = generate_route_list(App);
     info!("Ready to set up router");
     let app = Router::new()
-        .route("/api/{*fn_name}", post(server_fn_handler))
-        .route("/api/{*fn_name}", get(server_fn_handler))
-        .leptos_routes_with_context(&app_state, routes, {
-            let app_state = app_state.clone();
-            move || {
-                provide_meta_context();
-                provide_context(app_state.clone());
-                // Provide WsSignals - needed for WebSocket server function
-                provide_context(app_state.ws_signals.clone());
-            }
-        }, {
-            let _app_state = app_state.clone();
-            move || view! { <AppShell /> }
-        })
+        .leptos_routes_with_context(
+            &app_state,
+            routes,
+            {
+                log::info!(
+                    "============================= SOMETHING IS HAPPENING ========================"
+                );
+                let app_state = app_state.clone();
+                move || {
+                    // Provide context in the same order as leptos_ws example: options first, then ws_signals
+                    leptos::prelude::provide_context(app_state.leptos_options.clone());
+                    leptos::prelude::provide_context(app_state.ws_signals.clone());
+                    leptos::prelude::provide_context(app_state.firestore_db.clone());
+                    leptos::prelude::provide_context(app_state.session_cache.clone());
+                }
+            },
+            {
+                let _app_state = app_state.clone();
+                move || view! { <AppShell /> }
+            },
+        )
         .fallback(leptos_fallback)
         .layer(cors)
         .with_state(app_state);

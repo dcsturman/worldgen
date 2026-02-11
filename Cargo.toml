@@ -20,6 +20,11 @@ assets-dir = "public"
 bin-features = ["ssr"]
 lib-features = ["hydrate"]
 
+# Enable source maps and better debugging for WASM
+# This helps map JavaScript/WASM errors back to Rust source code
+wasm-opt = false  # Disable wasm-opt to preserve debug info
+hash-files = false  # Disable file hashing for easier debugging
+
 [dependencies]
 console_error_panic_hook = "0.1.7"
 itertools = "0.14.0"
@@ -93,3 +98,14 @@ path = "src/bin/trade.rs"
 [[bin]]
 name = "world"
 path = "src/bin/world.rs"
+
+[profile.dev]
+# Enable debug info for better stack traces in WASM
+debug = true
+
+[profile.release]
+# Keep debug info even in release for better error messages
+# This increases binary size but makes debugging much easier
+debug = true
+opt-level = "z"  # Optimize for size
+lto = true       # Link-time optimization

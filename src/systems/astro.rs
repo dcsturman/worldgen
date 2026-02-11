@@ -62,22 +62,31 @@ const EARTH_TEMP: f32 = 288.0;
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct AstroData {
     /// Orbital period in Earth years
+    #[serde(default)]
     orbital_period: f32,
     /// Orbital distance in AU (Astronomical Units)
+    #[serde(default)]
     orbit_distance: f32,
     /// Surface albedo (reflectivity) from 0.0 to 1.0
+    #[serde(default)]
     albedo: f32,
     /// Surface temperature in Kelvin
+    #[serde(default)]
     temp: f32,
     /// Surface gravity in Earth gravities
+    #[serde(default)]
     gravity: f32,
     /// Planetary mass in Earth equivalents
+    #[serde(default)]
     mass: f32,
     /// Percentage of surface covered by ice caps (0.0 to 1.0)
+    #[serde(default)]
     ice_cap_percent: f32,
     /// Greenhouse effect multiplier
+    #[serde(default)]
     greenhouse: f32,
     /// Stellar luminosity in solar units
+    #[serde(default)]
     luminosity: f32,
 }
 

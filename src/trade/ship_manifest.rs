@@ -20,6 +20,7 @@ use crate::trade::available_passengers::AvailablePassengers;
 /// freight lots being carried, and speculative trade goods purchased.
 /// Used to calculate total revenue for a trading voyage between worlds.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ShipManifest {
     /// Number of high passage passengers (luxury accommodations)
     pub high_passengers: i32,

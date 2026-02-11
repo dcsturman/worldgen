@@ -39,9 +39,9 @@
 //! error handling in server functions. Errors are logged and converted to
 //! appropriate HTTP responses.
 
-use firestore::*;
+use firestore::FirestoreDb;
+
 use log::{debug, error, info};
-use std::sync::OnceLock;
 use thiserror::Error;
 
 use crate::backend::state::TradeState;
@@ -51,12 +51,6 @@ const COLLECTION_NAME: &str = "trade_sessions";
 
 /// Default session ID for shared state (all users see the same state)
 pub const DEFAULT_SESSION_ID: &str = "default";
-
-/// Global Firestore database instance
-///
-/// Initialized once on first use via `get_db()`. Using OnceLock ensures
-/// thread-safe lazy initialization without runtime overhead after first access.
-static FIRESTORE_DB: OnceLock<FirestoreDb> = OnceLock::new();
 
 /// Custom error type for Firestore operations
 #[derive(Error, Debug)]
@@ -77,55 +71,6 @@ pub enum FirestoreError {
     SerializationError(String),
 }
 
-/// Initializes and returns the Firestore database client
-///
-/// This function lazily initializes the Firestore client on first call.
-/// Subsequent calls return the cached instance. The client automatically
-/// detects GCP credentials from the environment.
-///
-/// # Returns
-///
-/// A reference to the initialized FirestoreDb instance
-///
-/// # Panics
-///
-/// Panics if Firestore initialization fails. This is intentional as the
-/// application cannot function without database access.
-///
-/// # Environment Variables
-///
-/// - `GCP_PROJECT` or `GOOGLE_CLOUD_PROJECT`: The GCP project ID (required)
-/// - `GOOGLE_APPLICATION_CREDENTIALS`: Path to service account JSON (optional, for local dev)
-pub async fn get_db() -> &'static FirestoreDb {
-    // If already initialized, return the cached instance
-    if let Some(db) = FIRESTORE_DB.get() {
-        return db;
-    }
-
-    // Get project ID from environment
-    let project_id = std::env::var("GCP_PROJECT")
-        .or_else(|_| std::env::var("GOOGLE_CLOUD_PROJECT"))
-        .expect("GCP_PROJECT or GOOGLE_CLOUD_PROJECT environment variable must be set");
-
-    let database_id = std::env::var("FIRESTORE_DATABASE_ID")
-        .expect("FIRESTORE_DATABASE_ID environment variable must be set");
-
-    info!("Initializing Firestore client for project: {} database: {}", &project_id, &database_id);
-
-    let options = FirestoreDbOptions::new(project_id)
-        .with_database_id(database_id);
-
-    // Create the Firestore client
-    let db = FirestoreDb::with_options(options)
-        .await
-        .expect("Failed to initialize Firestore client");
-
-    // Store in the global static
-    let _ = FIRESTORE_DB.set(db);
-
-    FIRESTORE_DB.get().expect("Firestore DB should be set")
-}
-
 /// Retrieves the trade state for a given session from Firestore
 ///
 /// If the session doesn't exist, returns a default TradeState and creates
@@ -133,6 +78,7 @@ pub async fn get_db() -> &'static FirestoreDb {
 ///
 /// # Arguments
 ///
+/// * `db` - The Firestore database client
 /// * `session_id` - The session identifier (use `DEFAULT_SESSION_ID` for shared state)
 ///
 /// # Returns
@@ -142,10 +88,8 @@ pub async fn get_db() -> &'static FirestoreDb {
 /// # Errors
 ///
 /// Returns `FirestoreError` if the database operation fails
-pub async fn get_trade_state(session_id: &str) -> Result<TradeState, FirestoreError> {
-    let db = get_db().await;
-
-    debug!("Fetching trade state for session: {}", session_id);
+pub async fn get_trade_state(db: &FirestoreDb, session_id: &str) -> Result<TradeState, FirestoreError> {
+    debug!("📖 Firestore: Fetching trade state for session: {}", session_id);
 
     // Try to get the document
     let result: Option<TradeState> = db
@@ -156,24 +100,25 @@ pub async fn get_trade_state(session_id: &str) -> Result<TradeState, FirestoreEr
         .one(session_id)
         .await
         .map_err(|e| {
-            error!("Failed to read trade state: {}", e);
+            error!("❌ Firestore: Failed to read trade state: {}", e);
+            error!("❌ Firestore: Error details: {:?}", e);
             FirestoreError::ReadError(e.to_string())
         })?;
 
     match result {
         Some(state) => {
-            debug!("Found existing trade state for session: {}", session_id);
+            debug!("✅ Firestore: Found existing trade state for session: {}", session_id);
             // Apply any necessary migrations
             Ok(state.migrate())
         }
         None => {
             info!(
-                "No trade state found for session: {}, creating default",
+                "📝 Firestore: No trade state found for session: {}, creating default",
                 session_id
             );
             // Create default state and save it
             let default_state = TradeState::default();
-            save_trade_state(session_id, &default_state).await?;
+            save_trade_state(db, session_id, &default_state).await?;
             Ok(default_state)
         }
     }
@@ -186,6 +131,7 @@ pub async fn get_trade_state(session_id: &str) -> Result<TradeState, FirestoreEr
 ///
 /// # Arguments
 ///
+/// * `db` - The Firestore database client
 /// * `session_id` - The session identifier (use `DEFAULT_SESSION_ID` for shared state)
 /// * `state` - The TradeState to save
 ///
@@ -196,13 +142,25 @@ pub async fn get_trade_state(session_id: &str) -> Result<TradeState, FirestoreEr
 /// # Errors
 ///
 /// Returns `FirestoreError` if the database operation fails
-pub async fn save_trade_state(session_id: &str, state: &TradeState) -> Result<(), FirestoreError> {
-    let db = get_db().await;
-
+pub async fn save_trade_state(db: &FirestoreDb, session_id: &str, state: &TradeState) -> Result<(), FirestoreError> {
     info!("📝 Firestore: Starting save for session: {}", session_id);
 
+    // Log what we're trying to serialize
+    debug!("📝 Firestore: Serializing state: {:?}", state);
+
+    // Try to serialize to JSON to see what it looks like
+    match serde_json::to_string_pretty(state) {
+        Ok(json) => {
+            debug!("📝 Firestore: State as JSON:\n{}", json);
+        }
+        Err(e) => {
+            error!("❌ Firestore: Failed to serialize state to JSON for logging: {}", e);
+        }
+    }
+
     // Upsert the document (create or update)
-    let result = db.fluent()
+    let result = db
+        .fluent()
         .update()
         .in_col(COLLECTION_NAME)
         .document_id(session_id)
@@ -212,11 +170,18 @@ pub async fn save_trade_state(session_id: &str, state: &TradeState) -> Result<()
 
     match result {
         Ok(_) => {
-            info!("✅ Firestore: Successfully saved trade state for session: {}", session_id);
+            info!(
+                "✅ Firestore: Successfully saved trade state for session: {}",
+                session_id
+            );
             Ok(())
         }
         Err(e) => {
-            error!("❌ Firestore: Failed to save trade state for session {}: {}", session_id, e);
+            error!(
+                "❌ Firestore: Failed to save trade state for session {}: {}",
+                session_id, e
+            );
+            error!("❌ Firestore: Error details: {:?}", e);
             Err(FirestoreError::WriteError(e.to_string()))
         }
     }
@@ -228,6 +193,7 @@ pub async fn save_trade_state(session_id: &str, state: &TradeState) -> Result<()
 ///
 /// # Arguments
 ///
+/// * `db` - The Firestore database client
 /// * `session_id` - The session identifier to delete
 ///
 /// # Returns
@@ -237,9 +203,7 @@ pub async fn save_trade_state(session_id: &str, state: &TradeState) -> Result<()
 /// # Errors
 ///
 /// Returns `FirestoreError` if the database operation fails
-pub async fn delete_trade_state(session_id: &str) -> Result<(), FirestoreError> {
-    let db = get_db().await;
-
+pub async fn delete_trade_state(db: &FirestoreDb, session_id: &str) -> Result<(), FirestoreError> {
     debug!("Deleting trade state for session: {}", session_id);
 
     db.fluent()
@@ -261,6 +225,7 @@ pub async fn delete_trade_state(session_id: &str) -> Result<(), FirestoreError> 
 ///
 /// # Arguments
 ///
+/// * `db` - The Firestore database client
 /// * `session_id` - The session identifier to check
 ///
 /// # Returns
@@ -270,9 +235,7 @@ pub async fn delete_trade_state(session_id: &str) -> Result<(), FirestoreError> 
 /// # Errors
 ///
 /// Returns `FirestoreError` if the database operation fails
-pub async fn trade_state_exists(session_id: &str) -> Result<bool, FirestoreError> {
-    let db = get_db().await;
-
+pub async fn trade_state_exists(db: &FirestoreDb, session_id: &str) -> Result<bool, FirestoreError> {
     let result: Option<TradeState> = db
         .fluent()
         .select()

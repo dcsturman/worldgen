@@ -9,9 +9,10 @@
 //!
 //! ## Sessions
 //!
-//! The server supports multiple concurrent sessions. Each client should call `use_session(session_id)`
-//! early in its lifecycle to initialize or connect to a session. Sessions are lazily loaded from
-//! Firestore when first accessed.
+//! The server supports multiple concurrent sessions. Sessions are lazily loaded from
+//! Firestore on first access - when a server function needs session state, it's automatically
+//! loaded from Firestore if not already in the cache. If the session doesn't exist in Firestore,
+//! a default state is created and saved.
 //!
 //! ## WebSocket Signals
 //!
@@ -37,12 +38,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 #[cfg(feature = "ssr")]
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 
 use leptos::prelude::*;
 use state::TradeState;
 
-// Re-export types needed for the signal functions
 pub use crate::systems::world::World;
 pub use crate::trade::available_goods::AvailableGoodsTable;
 pub use crate::trade::available_passengers::AvailablePassengers;
@@ -53,6 +53,7 @@ pub const DEFAULT_SESSION_ID: &str = "default";
 
 /// Signal name constants for WebSocket signals (base names, will be prefixed with session_id)
 pub mod signal_names {
+    pub const ORIGIN_WORLD: &str = "origin_world";
     pub const DEST_WORLD: &str = "dest_world";
     pub const AVAILABLE_GOODS: &str = "available_goods";
     pub const AVAILABLE_PASSENGERS: &str = "available_passengers";
@@ -72,60 +73,6 @@ pub mod signal_names {
 #[cfg(feature = "ssr")]
 pub type SessionCache = Arc<RwLock<HashMap<String, TradeState>>>;
 
-/// Initializes or retrieves a session's cached state
-///
-/// This function should be called early by every client to ensure their session
-/// is loaded into the server's cache. If the session doesn't exist in the cache,
-/// it will be loaded from Firestore (or created with defaults if not found).
-///
-/// # Arguments
-/// * `session_id` - The unique identifier for the session
-///
-/// # Returns
-/// The current TradeState for the session
-#[server]
-pub async fn use_session(session_id: String) -> Result<TradeState, ServerFnError> {
-    let session_cache: SessionCache =
-        use_context().ok_or_else(|| ServerFnError::new("session_cache not found in context"))?;
-
-    // Check if session already exists in cache
-    let is_new_session = {
-        let cache = session_cache.read().unwrap();
-        if let Some(state) = cache.get(&session_id) {
-            debug!("Session {} already in cache", session_id);
-            return Ok(state.clone());
-        }
-        true
-    };
-
-    // Session not in cache, load from Firestore
-    info!("Loading session {} from Firestore", session_id);
-    let state = firestore::get_trade_state(&session_id)
-        .await
-        .unwrap_or_else(|e| {
-            info!(
-                "Session {} not found in Firestore ({}), creating default",
-                session_id, e
-            );
-            TradeState::default()
-        });
-
-    // Add to cache
-    {
-        let mut cache = session_cache.write().unwrap();
-        cache.insert(session_id.clone(), state.clone());
-    }
-
-    info!("Session {} initialized", session_id);
-
-    // Set up persistence subscriptions for this new session
-    if is_new_session {
-        setup_session_persistence(session_id.clone(), session_cache.clone());
-    }
-
-    Ok(state)
-}
-
 /// Internal function to update trade state (can be called from server-side code)
 ///
 /// This function compares the incoming state with the cached state and only
@@ -135,12 +82,15 @@ pub async fn use_session(session_id: String) -> Result<TradeState, ServerFnError
 /// * `session_id` - The session to update
 /// * `state` - The new state to save
 /// * `session_cache` - The session cache
+/// * `firestore_db` - The Firestore database client
 #[cfg(feature = "ssr")]
 async fn update_trade_state_internal(
     session_id: String,
     state: TradeState,
     session_cache: SessionCache,
+    firestore_db: ::firestore::FirestoreDb,
 ) -> Result<(), ServerFnError> {
+    debug!("Updating trade state on session '{session_id}'");
     // Check if state has changed from cached version
     let should_save = {
         let cache = session_cache.read().unwrap();
@@ -174,7 +124,7 @@ async fn update_trade_state_internal(
         );
 
         // Save to Firestore
-        match firestore::save_trade_state(&session_id, &state).await {
+        match firestore::save_trade_state(&firestore_db, &session_id, &state).await {
             Ok(_) => {
                 info!(
                     "✅ Successfully saved trade state for session {} to Firestore",
@@ -211,102 +161,48 @@ pub async fn update_trade_state(
     session_id: String,
     state: TradeState,
 ) -> Result<(), ServerFnError> {
-    let session_cache: SessionCache =
-        use_context().ok_or_else(|| ServerFnError::new("session_cache not found in context"))?;
+    let session_cache: SessionCache = use_context().ok_or_else(|| {
+        error!("💥 Not finding session_cache in update_trade_state.");
+        ServerFnError::new("session_cache not found in context")
+    })?;
 
-    update_trade_state_internal(session_id, state, session_cache).await
+    let firestore_db: ::firestore::FirestoreDb = use_context().ok_or_else(|| {
+        error!("💥 Not finding firestore_db in update_trade_state.");
+        ServerFnError::new("firestore_db not found in context")
+    })?;
+
+    update_trade_state_internal(session_id, state, session_cache, firestore_db).await
 }
 
 // ============================================================================
-// BiDirectional Signal Helper
+// Signal Helper
 // ============================================================================
 //
-// Helper function to create BiDirectionalSignals that automatically persist
-// to Firestore when updated on either client or server side.
+// Helper function to create a ReadOnlySignal to update clients to changes to the trade state.
+// Its used to disseminate changes to all clients.
 
-use leptos_ws::BiDirectionalSignal;
+use leptos_ws::ReadOnlySignal;
 use serde::{Deserialize, Serialize};
 
-/// Creates a BiDirectionalSignal that automatically persists changes to Firestore
+/// Creates a ReadOnlySignal that automatically persists changes to Firestore
 ///
-/// This function creates a bidirectional WebSocket signal that:
-/// 1. Syncs state between client and server in real-time
-/// 2. Allows updates from both client and server
-/// 3. Automatically persists changes to Firestore on the server side
-///
-/// # Type Parameters
-/// * `T` - The type of data stored in the signal. Must implement Clone, Serialize, Deserialize, and PartialEq
-/// * `F` - A function that updates the TradeState with the new value
-///
-/// # Arguments
-/// * `session_id` - The session identifier
-/// * `signal_name` - The base name of the signal (will be prefixed with session_id)
-/// * `default` - The default value if no cached value exists
-/// * `update_fn` - Function that takes a mutable TradeState and the new value, updating the appropriate field
-///
-/// # Returns
-/// A BiDirectionalSignal that can be used like a normal signal with `.get()` and `.set()`
-pub fn create_persisted_signal<T, F>(
+pub fn get_signal<T>(
     session_id: &str,
     signal_name: &str,
     default: T,
-    update_fn: F,
-) -> BiDirectionalSignal<T>
+) -> StoredValue<ReadOnlySignal<T>>
 where
     T: Clone + Send + Sync + Serialize + for<'de> Deserialize<'de> + 'static + PartialEq,
-    F: Fn(&mut TradeState, T) + Clone + Send + Sync + 'static,
 {
     let full_signal_name = signal_names::for_session(session_id, signal_name);
-    log::warn!(
-        "📡 create_persisted_signal: Creating signal '{}'",
-        full_signal_name
-    );
-    let session_id = session_id.to_string();
+    log::debug!("📡 get_signal: Creating signal '{}'", full_signal_name);
 
-    // Create the bidirectional signal
-    log::warn!(
-        "📡 create_persisted_signal: Calling BiDirectionalSignal::new for '{}'",
-        full_signal_name
-    );
-    let signal = BiDirectionalSignal::new(&full_signal_name, default.clone()).unwrap_or_else(|e| {
+    // Create the remote signal
+    let signal = ReadOnlySignal::new(&full_signal_name, default.clone()).unwrap_or_else(|e| {
         panic!("Creating singal {full_signal_name} failed: {e:?}");
     });
-    log::warn!(
-        "📡 create_persisted_signal: BiDirectionalSignal created successfully for '{}'",
-        full_signal_name
-    );
 
-    // Note: Persistence is handled by a centralized service, not here
-    // This function just creates the signal
-    #[cfg(feature = "ssr")]
-    {
-        log::info!("📌 Created persisted signal '{}' for session '{}'", full_signal_name, session_id);
-    }
-
-    signal
-}
-
-/// Sets up persistence listeners for all trade signals across all sessions
-/// This should be called once at server startup
-#[cfg(feature = "ssr")]
-pub fn setup_signal_persistence(session_cache: SessionCache) {
-    use leptos_ws::traits::WsSignalCore;
-    use tokio::spawn;
-
-    log::info!("🔧 Setting up global signal persistence system");
-
-    // We'll set up a registry that tracks which sessions have active signals
-    // For now, we'll use a simple approach: subscribe to signals as they're created
-    // by monitoring the session cache
-
-    // Actually, the better approach is to subscribe when signals are created in create_persisted_signal
-    // But since we can't do that during SSR, we need a different strategy
-
-    // The key insight: We can't subscribe to signals that don't exist yet
-    // So we need to subscribe AFTER they're created
-    // The best place is actually in a background task that monitors for new sessions
-
-    log::info!("✅ Signal persistence system initialized (subscriptions will be set up per-session)");
+    StoredValue::new(signal)
 }
 
 // ============================================================================
@@ -319,201 +215,162 @@ pub fn setup_signal_persistence(session_cache: SessionCache) {
 // All signals are session-specific.
 
 /// Helper to get the current trade state for a session from the cache
+///
+/// If the session is not in the cache, it will attempt to load it from Firestore.
+/// If it doesn't exist in Firestore, it will create a default state and save it.
 #[cfg(feature = "ssr")]
-fn get_session_state(session_id: &str) -> Result<TradeState, ServerFnError> {
-    let session_cache: SessionCache =
-        use_context().ok_or_else(|| ServerFnError::new("session_cache not found in context"))?;
+async fn get_session_state(session_id: &str) -> Result<TradeState, ServerFnError> {
+    info!("🎯 Attempting to get session state for session '{session_id}'");
+    let session_cache: SessionCache = use_context().ok_or_else(|| {
+        error!("🔥 Unable to obtain session cache from context for session '{session_id}'!");
+        ServerFnError::new("session_cache not found in context")
+    })?;
 
-    let cache = session_cache.read().unwrap();
-    cache.get(session_id).cloned().ok_or_else(|| {
-        ServerFnError::new(format!(
-            "Session {} not found. Call use_session first.",
-            session_id
-        ))
-    })
+    // First, check if it's in the cache
+    {
+        let cache = session_cache.read().unwrap();
+        if let Some(state) = cache.get(session_id) {
+            info!("✅ Found session '{session_id}' in cache");
+            return Ok(state.clone());
+        }
+    }
+
+    // Not in cache, try to load from Firestore
+    info!("📥 Session '{session_id}' not in cache, loading from Firestore");
+
+    let firestore_db: ::firestore::FirestoreDb = use_context().ok_or_else(|| {
+        error!("🔥 Unable to obtain Firestore DB from context!");
+        ServerFnError::new("firestore_db not found in context")
+    })?;
+
+    // get_trade_state will create a default and save it if it doesn't exist
+    let state = firestore::get_trade_state(&firestore_db, session_id)
+        .await
+        .map_err(|e| {
+            error!(
+                "🔥 Failed to load session '{}' from Firestore: {:?}",
+                session_id, e
+            );
+            ServerFnError::new(format!("Failed to load session from Firestore: {}", e))
+        })?;
+
+    // Add to cache for future requests
+    {
+        let mut cache = session_cache.write().unwrap();
+        cache.insert(session_id.to_string(), state.clone());
+        info!("✅ Loaded session '{session_id}' from Firestore and added to cache");
+    }
+
+    Ok(state)
 }
 
-/// Sets the destination world via WebSocket signal for a specific session
-#[server]
-pub async fn set_dest_world(session_id: String, value: Option<World>) -> Result<(), ServerFnError> {
-    use leptos_ws::ReadOnlySignal;
+/// Macro to generate setter functions for session state fields
+///
+/// Usage: `generate_setter!(set_dest_world, dest_world, DEST_WORLD, Option<World>, None);`
+///
+/// This generates a server function that:
+/// 1. Updates the session state field
+/// 2. Persists to Firestore
+/// 3. Updates the WebSocket signal to broadcast to all clients
+macro_rules! generate_setter {
+    ($fn_name:ident, $field:ident, $signal_const:ident, $type:ty, $default:expr) => {
+        #[server]
+        pub async fn $fn_name(session_id: String, value: $type) -> Result<(), ServerFnError> {
+            info!(
+                "🚨 {} called for session {} via server function",
+                stringify!($fn_name),
+                session_id
+            );
 
-    debug!(
-        "Setting dest_world for session {} via WebSocket signal",
-        session_id
-    );
+            // Update state and persist to Firestore
+            let mut state = match get_session_state(&session_id).await {
+                Ok(state) => state,
+                Err(e) => {
+                    error!(
+                        "🔥 Failed to get session state for session '{}' in {}: {:?}",
+                        session_id,
+                        stringify!($fn_name),
+                        e
+                    );
+                    return Err(e);
+                }
+            };
+            state.$field = value.clone();
 
-    // Update the session-specific WebSocket signal
-    let signal_name = signal_names::for_session(&session_id, signal_names::DEST_WORLD);
-    let signal = ReadOnlySignal::new(&signal_name, None::<World>)
-        .map_err(|e| ServerFnError::new(format!("Failed to create signal: {}", e)))?;
-    signal.update(|v| *v = value.clone());
+            info!(
+                "Updating trade state in {}.",
+                signal_names::for_session(&session_id, signal_names::$signal_const)
+            );
+            let res = update_trade_state(session_id.clone(), state).await;
+            info!(
+                "Trade state updated in {}.  Try to set signal",
+                signal_names::for_session(&session_id, signal_names::$signal_const)
+            );
 
-    // Update state and persist to Firestore
-    let mut state = get_session_state(&session_id)?;
-    state.dest_world = value;
-    update_trade_state(session_id, state).await
+            // Update WebSocket signal to broadcast to all clients
+            get_signal(&session_id, signal_names::$signal_const, $default).with_value(|s| {
+                info!(
+                    "🚨 Setting signal {} to {:?}.",
+                    signal_names::for_session(&session_id, signal_names::$signal_const),
+                    value
+                );
+                s.set(value)
+            });
+
+            info!(
+                "Signal set in {}.",
+                signal_names::for_session(&session_id, signal_names::$signal_const)
+            );
+
+            res
+        }
+    };
 }
 
-/// Sets the available goods table via WebSocket signal for a specific session
-#[server]
-pub async fn set_available_goods(
-    session_id: String,
-    value: AvailableGoodsTable,
-) -> Result<(), ServerFnError> {
-    use leptos_ws::ReadOnlySignal;
+// Generate setter functions for all session state fields
+generate_setter!(
+    set_origin_world,
+    origin_world,
+    ORIGIN_WORLD,
+    World,
+    World::default()
+);
 
-    debug!(
-        "Setting available_goods for session {} via WebSocket signal",
-        session_id
-    );
-
-    // Update the session-specific WebSocket signal
-    let signal_name = signal_names::for_session(&session_id, signal_names::AVAILABLE_GOODS);
-    let signal = ReadOnlySignal::new(&signal_name, AvailableGoodsTable::default())
-        .map_err(|e| ServerFnError::new(format!("Failed to create signal: {}", e)))?;
-    signal.update(|v| *v = value.clone());
-
-    // Update state and persist to Firestore
-    let mut state = get_session_state(&session_id)?;
-    state.available_goods = value;
-    update_trade_state(session_id, state).await
-}
-
-/// Sets the available passengers via WebSocket signal for a specific session
-#[server]
-pub async fn set_available_passengers(
-    session_id: String,
-    value: Option<AvailablePassengers>,
-) -> Result<(), ServerFnError> {
-    use leptos_ws::ReadOnlySignal;
-
-    debug!(
-        "Setting available_passengers for session {} via WebSocket signal",
-        session_id
-    );
-
-    // Update the session-specific WebSocket signal
-    let signal_name = signal_names::for_session(&session_id, signal_names::AVAILABLE_PASSENGERS);
-    let signal = ReadOnlySignal::new(&signal_name, None::<AvailablePassengers>)
-        .map_err(|e| ServerFnError::new(format!("Failed to create signal: {}", e)))?;
-    signal.update(|v| *v = value.clone());
-
-    // Update state and persist to Firestore
-    let mut state = get_session_state(&session_id)?;
-    state.available_passengers = value;
-    update_trade_state(session_id, state).await
-}
-
-/// Sets the ship manifest via WebSocket signal for a specific session
-#[server]
-pub async fn set_ship_manifest(
-    session_id: String,
-    value: ShipManifest,
-) -> Result<(), ServerFnError> {
-    use leptos_ws::ReadOnlySignal;
-
-    debug!(
-        "Setting ship_manifest for session {} via WebSocket signal",
-        session_id
-    );
-
-    // Update the session-specific WebSocket signal
-    let signal_name = signal_names::for_session(&session_id, signal_names::SHIP_MANIFEST);
-    let signal = ReadOnlySignal::new(&signal_name, ShipManifest::default())
-        .map_err(|e| ServerFnError::new(format!("Failed to create signal: {}", e)))?;
-    signal.update(|v| *v = value.clone());
-
-    // Update state and persist to Firestore
-    let mut state = get_session_state(&session_id)?;
-    state.ship_manifest = value;
-    update_trade_state(session_id, state).await
-}
-
-/// Sets the buyer broker skill via WebSocket signal for a specific session
-#[server]
-pub async fn set_buyer_broker_skill(session_id: String, value: i16) -> Result<(), ServerFnError> {
-    use leptos_ws::ReadOnlySignal;
-
-    debug!(
-        "Setting buyer_broker_skill for session {}: {}",
-        session_id, value
-    );
-
-    // Update the session-specific WebSocket signal
-    let signal_name = signal_names::for_session(&session_id, signal_names::BUYER_BROKER_SKILL);
-    let signal = ReadOnlySignal::new(&signal_name, 0i16)
-        .map_err(|e| ServerFnError::new(format!("Failed to create signal: {}", e)))?;
-    signal.update(|v| *v = value);
-
-    // Update state and persist to Firestore
-    let mut state = get_session_state(&session_id)?;
-    state.buyer_broker_skill = value;
-    update_trade_state(session_id, state).await
-}
-
-/// Sets the seller broker skill via WebSocket signal for a specific session
-#[server]
-pub async fn set_seller_broker_skill(session_id: String, value: i16) -> Result<(), ServerFnError> {
-    use leptos_ws::ReadOnlySignal;
-
-    debug!(
-        "Setting seller_broker_skill for session {}: {}",
-        session_id, value
-    );
-
-    // Update the session-specific WebSocket signal
-    let signal_name = signal_names::for_session(&session_id, signal_names::SELLER_BROKER_SKILL);
-    let signal = ReadOnlySignal::new(&signal_name, 0i16)
-        .map_err(|e| ServerFnError::new(format!("Failed to create signal: {}", e)))?;
-    signal.update(|v| *v = value);
-
-    // Update state and persist to Firestore
-    let mut state = get_session_state(&session_id)?;
-    state.seller_broker_skill = value;
-    update_trade_state(session_id, state).await
-}
-
-/// Sets the steward skill via WebSocket signal for a specific session
-#[server]
-pub async fn set_steward_skill(session_id: String, value: i16) -> Result<(), ServerFnError> {
-    use leptos_ws::ReadOnlySignal;
-
-    debug!(
-        "Setting steward_skill for session {}: {}",
-        session_id, value
-    );
-
-    // Update the session-specific WebSocket signal
-    let signal_name = signal_names::for_session(&session_id, signal_names::STEWARD_SKILL);
-    let signal = ReadOnlySignal::new(&signal_name, 0i16)
-        .map_err(|e| ServerFnError::new(format!("Failed to create signal: {}", e)))?;
-    signal.update(|v| *v = value);
-
-    // Update state and persist to Firestore
-    let mut state = get_session_state(&session_id)?;
-    state.steward_skill = value;
-    update_trade_state(session_id, state).await
-}
-
-/// Sets the illegal goods flag via WebSocket signal for a specific session
-#[server]
-pub async fn set_illegal_goods(session_id: String, value: bool) -> Result<(), ServerFnError> {
-    use leptos_ws::ReadOnlySignal;
-
-    debug!(
-        "Setting illegal_goods for session {}: {}",
-        session_id, value
-    );
-
-    // Update the session-specific WebSocket signal
-    let signal_name = signal_names::for_session(&session_id, signal_names::ILLEGAL_GOODS);
-    let signal = ReadOnlySignal::new(&signal_name, false)
-        .map_err(|e| ServerFnError::new(format!("Failed to create signal: {}", e)))?;
-    signal.update(|v| *v = value);
-
-    // Update state and persist to Firestore
-    let mut state = get_session_state(&session_id)?;
-    state.illegal_goods = value;
-    update_trade_state(session_id, state).await
-}
+generate_setter!(set_dest_world, dest_world, DEST_WORLD, Option<World>, None);
+generate_setter!(
+    set_buyer_broker_skill,
+    buyer_broker_skill,
+    BUYER_BROKER_SKILL,
+    i16,
+    0i16
+);
+generate_setter!(
+    set_seller_broker_skill,
+    seller_broker_skill,
+    SELLER_BROKER_SKILL,
+    i16,
+    0i16
+);
+generate_setter!(set_steward_skill, steward_skill, STEWARD_SKILL, i16, 0i16);
+generate_setter!(set_illegal_goods, illegal_goods, ILLEGAL_GOODS, bool, false);
+generate_setter!(
+    set_available_goods,
+    available_goods,
+    AVAILABLE_GOODS,
+    AvailableGoodsTable,
+    AvailableGoodsTable::default()
+);
+generate_setter!(
+    set_available_passengers,
+    available_passengers,
+    AVAILABLE_PASSENGERS,
+    Option<AvailablePassengers>,
+    None
+);
+generate_setter!(
+    set_ship_manifest,
+    ship_manifest,
+    SHIP_MANIFEST,
+    ShipManifest,
+    ShipManifest::default()
+);

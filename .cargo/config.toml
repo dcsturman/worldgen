@@ -2,4 +2,8 @@
 rustflags = [
   '--cfg',
   'getrandom_backend="wasm_js"',
+  # Enable debug info for better stack traces
+  '-C', 'debuginfo=2',
+  # Keep function names for better error messages
+  '-C', 'symbol-mangling-version=v0',
 ]

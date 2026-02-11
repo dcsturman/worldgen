@@ -11,6 +11,7 @@ use log::debug;
 
 /// Represents a lot of freight available for shipping at a specific world
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(default)]
 pub struct FreightLot {
     /// Size in tons (1-60)
     pub size: i32,
@@ -20,6 +21,7 @@ pub struct FreightLot {
 
 /// Represents available passengers (by class of passage) and freight for a route between two worlds
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
 pub struct AvailablePassengers {
     /// Number of high passage passengers
     pub high: i32,

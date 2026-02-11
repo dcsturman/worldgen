@@ -22,10 +22,14 @@ use crate::trade::PortCode;
 use crate::trade::TradeClass;
 use crate::trade::ZoneClassification;
 
+use crate::INITIAL_NAME;
+use crate::INITIAL_UPP;
+
 /// Container for world satellites
 ///
 /// Stores a vector of satellite worlds with a key based on the parent world's name.
-#[derive(Debug, Clone, Store, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Store, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct World {
     pub name: String,
     pub orbit: usize,
@@ -67,6 +71,13 @@ pub enum Facility {
 pub struct Satellites {
     #[store(key: String = |world| world.name.clone())]
     pub sats: Vec<World>,
+}
+
+impl Default for World {
+    fn default() -> Self {
+        World::from_upp(INITIAL_NAME, INITIAL_UPP, false, true)
+            .expect("Error in initial default UPP of {INITIAL_UPP}.")
+    }
 }
 
 impl World {
@@ -202,7 +213,7 @@ impl World {
         )
     }
 
-    /// Creates a new world from a Traveller UWP string.  
+    /// Creates a new world from a Traveller UWP string.
     ///
     /// # Arguments
     ///

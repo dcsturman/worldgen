@@ -45,6 +45,7 @@ use crate::{INITIAL_NAME, INITIAL_UPP};
 /// The `version` field allows for future schema migrations. When loading state,
 /// the application can check the version and apply any necessary transformations.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
 pub struct TradeState {
     /// Schema version for future migrations
     pub version: u32,
