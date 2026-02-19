@@ -142,10 +142,9 @@ use std::rc::Rc;
 use leptos::prelude::*;
 #[allow(unused_imports)]
 use log::{debug, error, info};
-use rand::Rng;
 
-use crate::comms::client::{Client, TradeSignals};
 use crate::comms::TradeState;
+use crate::comms::client::{Client, TradeSignals};
 use crate::components::traveller_map::WorldSearch;
 use crate::systems::world::World;
 
@@ -228,9 +227,6 @@ pub fn Trade(
 
     // Ship manifest
     let (ship_manifest, write_ship_manifest) = signal(ShipManifest::default());
-
-    // Used solely because there's a bug in `use_local_storage` that seems to restore from storage when we don't want it to
-    let (hack_ship_recompute_manifest_price, hack_ship_recompute_manifest_price_set) = signal(0u64);
 
     // Skills involved, both player and adversary.
     let (buyer_broker_skill, write_buyer_broker_skill) = signal::<i16>(0);
@@ -381,28 +377,14 @@ pub fn Trade(
         }
     };
 
-    // This Effect is a complete hack/workaround to the fact that while using `use_session_storage` there's
-    // a bug not forcing repricing in some cases.
-    Effect::new(move |_| {
-        let _ = hack_ship_recompute_manifest_price.get();
-        write_ship_manifest.update(|manifest| {
-            // Set world_to_use to be the dest_world if it exists otherwise use the origin_world.
-            let world_to_use = dest_world.get().unwrap_or_else(|| origin_world.get());
-            manifest.price_goods(
-                &Some(world_to_use),
-                buyer_broker_skill.get(),
-                seller_broker_skill.get(),
-            );
-        });
-    });
-
     // Keep origin world updated based on changes in name or uwp.
     // If name or uwp changes, update origin_world.
     Effect::new(move |prev: Option<(String, String)>| {
-        if let Some((prev_name, prev_uwp)) = &prev {
-            if *prev_name == origin_world_name.get() && *prev_uwp == origin_uwp.get() {
-                return (prev_name.to_string(), prev_uwp.to_string());
-            }
+        if let Some((prev_name, prev_uwp)) = &prev
+            && *prev_name == origin_world_name.get()
+            && *prev_uwp == origin_uwp.get()
+        {
+            return (prev_name.to_string(), prev_uwp.to_string());
         }
 
         let name = origin_world_name.get();
@@ -439,10 +421,11 @@ pub fn Trade(
     // Keep destination world updated based on changes in name or uwp.
     // If name or uwp changes, update dest_world.
     Effect::new(move |prev: Option<(String, String)>| {
-        if let Some((prev_name, prev_uwp)) = &prev {
-            if *prev_name == dest_world_name.get() && *prev_uwp == dest_uwp.get() {
-                return (prev_name.to_string(), prev_uwp.to_string());
-            }
+        if let Some((prev_name, prev_uwp)) = &prev
+            && *prev_name == dest_world_name.get()
+            && *prev_uwp == dest_uwp.get()
+        {
+            return (prev_name.to_string(), prev_uwp.to_string());
         }
 
         let name = dest_world_name.get();
@@ -527,30 +510,27 @@ pub fn Trade(
         });
 
         // Recalculate passengers and freight using saved rolls
-        if let Some(ref world) = dest_world {
-            if dist > 0 {
-                write_available_passengers.update(|passengers_opt| {
-                    if let Some(passengers) = passengers_opt {
-                        passengers.generate(
-                            origin_world.get_population(),
-                            origin_world.port,
-                            origin_world.travel_zone,
-                            origin_world.tech_level,
-                            world.get_population(),
-                            world.port,
-                            world.travel_zone,
-                            world.tech_level,
-                            dist,
-                            i32::from(steward),
-                            i32::from(buyer),
-                        );
-                    }
-                });
-            }
+        if let Some(ref world) = dest_world
+            && dist > 0
+        {
+            write_available_passengers.update(|passengers_opt| {
+                if let Some(passengers) = passengers_opt {
+                    passengers.generate(
+                        origin_world.get_population(),
+                        origin_world.port,
+                        origin_world.travel_zone,
+                        origin_world.tech_level,
+                        world.get_population(),
+                        world.port,
+                        world.travel_zone,
+                        world.tech_level,
+                        dist,
+                        i32::from(steward),
+                        i32::from(buyer),
+                    );
+                }
+            });
         }
-
-        let mut rng = rand::rng();
-        hack_ship_recompute_manifest_price_set.set(rng.random());
 
         current_dest_name
     });
@@ -601,27 +581,27 @@ pub fn Trade(
                                             seller_broker_skill.get(),
                                         );
                                 });
-                            let mut rng = rand::rng();
-                            hack_ship_recompute_manifest_price_set.set(rng.random());
                             if let Some(world) = dest_world.get() {
                                 if distance.get() > 0 {
-                                    write_available_passengers.update(|passengers| {
-                                        let p = passengers.get_or_insert_with(AvailablePassengers::default);
-                                        p.reset_die_rolls();
-                                        p.generate(
-                                            origin.get_population(),
-                                            origin.port,
-                                            origin.travel_zone,
-                                            origin.tech_level,
-                                            world.get_population(),
-                                            world.port,
-                                            world.travel_zone,
-                                            world.tech_level,
-                                            distance.get(),
-                                            i32::from(steward_skill.get()),
-                                            i32::from(buyer_broker_skill.get()),
-                                        );
-                                    });
+                                    write_available_passengers
+                                        .update(|passengers| {
+                                            let p = passengers
+                                                .get_or_insert_with(AvailablePassengers::default);
+                                            p.reset_die_rolls();
+                                            p.generate(
+                                                origin.get_population(),
+                                                origin.port,
+                                                origin.travel_zone,
+                                                origin.tech_level,
+                                                world.get_population(),
+                                                world.port,
+                                                world.travel_zone,
+                                                world.tech_level,
+                                                distance.get(),
+                                                i32::from(steward_skill.get()),
+                                                i32::from(buyer_broker_skill.get()),
+                                            );
+                                        });
                                 } else {
                                     write_available_passengers.set(None);
                                 }
@@ -759,7 +739,6 @@ pub fn Trade(
                 write_available_goods=write_available_goods
                 available_passengers=available_passengers.into()
                 show_add_manual=show_add_manual
-                hack_set=hack_ship_recompute_manifest_price_set
             />
 
             <GoodsToSellView
@@ -1496,7 +1475,6 @@ fn ShipManifestView(
     write_available_goods: WriteSignal<AvailableGoodsTable>,
     available_passengers: Signal<Option<AvailablePassengers>>,
     show_add_manual: RwSignal<bool>,
-    hack_set: WriteSignal<u64>,
 ) -> impl IntoView {
     let manual_selected_index = RwSignal::new(11i16);
     let manual_qty_input = RwSignal::new(String::new());
@@ -1788,8 +1766,6 @@ fn ShipManifestView(
                                         write_available_goods.update(|ag| ag.zero_transacted());
                                         origin_swap();
                                     });
-                                let mut rng = rand::rng();
-                                hack_set.set(rng.random());
                             }
                         >
                             "Execute Trades"
@@ -1861,17 +1837,13 @@ fn ShipManifestView(
                                 on:click=move |_| {
                                     let qty_txt = manual_qty_input.get();
                                     let qty = qty_txt.parse::<i32>().unwrap_or(0);
-                                    if qty <= 0 {
-                                        if let Some(d) = web_sys::window()
+                                    if qty <= 0 && let Some(d) = web_sys::window()
                                             .and_then(|w| w.document())
-                                        {
-                                            if let Some(err) = d.get_element_by_id("tg-modal-error") {
+                                        && let Some(err) = d.get_element_by_id("tg-modal-error") {
                                                 err.set_text_content(
                                                     Some("Please enter a quantity greater than zero."),
                                                 );
                                             }
-                                        }
-                                    }
                                     let table = TradeTable::default();
                                     if let Some(entry) = table.get(manual_selected_index.get()) {
                                         let good = Good {
@@ -1892,16 +1864,12 @@ fn ShipManifestView(
                                             .update(|manifest| {
                                                 manifest.update_trade_good(good);
                                             });
-                                        let mut rng = rand::rng();
-                                        hack_set.set(rng.random());
                                         manual_qty_input.set(String::new());
                                         if let Some(d) = web_sys::window()
                                             .and_then(|w| w.document())
-                                        {
-                                            if let Some(err) = d.get_element_by_id("tg-modal-error") {
+                                            && let Some(err) = d.get_element_by_id("tg-modal-error") {
                                                 err.set_text_content(None);
                                             }
-                                        }
                                         show_add_manual.set(false);
                                     }
                                 }
