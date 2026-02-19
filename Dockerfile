@@ -4,7 +4,8 @@
 
 # Stage 1: Base image with tools (cached unless Rust version changes)
 FROM rust:bookworm AS base
-RUN rustup update && \
+RUN --mount=type=cache,target=/usr/local/rustup \
+    rustup update && \
     rustup target add wasm32-unknown-unknown
 
 # Stage 2: Install trunk (cached separately, rarely changes)

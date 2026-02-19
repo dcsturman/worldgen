@@ -22,8 +22,14 @@ pub mod systems;
 pub mod trade;
 pub mod util;
 
+#[cfg(feature = "hydrate")]
 use leptos::prelude::*;
+
+#[cfg(feature = "hydrate")]
 use log::debug;
+
+#[cfg(feature = "hydrate")]
+use web_sys::js_sys::{Function, Object, Reflect};
 
 /// Default UWP (Universal World Profile) used for initial world generation
 pub const INITIAL_UPP: &str = "A788899-A";
@@ -31,6 +37,22 @@ pub const INITIAL_UPP: &str = "A788899-A";
 /// Default name for the initial main world
 pub const INITIAL_NAME: &str = "Main World";
 
+#[cfg(feature = "hydrate")]
+const GA_MEASUREMENT_ID: &str = "G-L26P5SCYR2";
+/// Track page view for analytics
+#[cfg(feature = "hydrate")]
+fn track_page_view(_path: &str) {
+    if let Some(window) = web_sys::window()
+        && let Ok(gtag) = Reflect::get(&window, &"gtag".into())
+    {
+        let _ = Function::from(gtag).call3(
+            &window,
+            &"config".into(),
+            &GA_MEASUREMENT_ID.into(),
+            &Object::new(),
+        );
+    }
+}
 #[cfg(feature = "hydrate")]
 #[wasm_bindgen::prelude::wasm_bindgen]
 pub fn hydrate() {

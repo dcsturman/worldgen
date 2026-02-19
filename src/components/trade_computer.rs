@@ -143,20 +143,19 @@ use leptos::task::spawn_local;
 use log::{debug, error, info, warn};
 
 use crate::backend::{
-    get_signal, set_available_goods, set_available_passengers, set_buyer_broker_skill,
-    set_dest_world, set_illegal_goods, set_origin_world, set_seller_broker_skill,
-    set_ship_manifest, set_steward_skill, signal_names, WsReadOnlySignal as ReadOnlySignal,
-    DEFAULT_SESSION_ID,
+    DEFAULT_SESSION_ID, ReadOnlySignal, get_signal, set_available_goods, set_available_passengers,
+    set_buyer_broker_skill, set_dest_world, set_illegal_goods, set_origin_world,
+    set_seller_broker_skill, set_ship_manifest, set_steward_skill, signal_names,
 };
 use crate::components::traveller_map::WorldSearch;
 use crate::systems::world::World;
 
 use crate::trade::available_goods::{AvailableGoodsTable, Good};
 
+use crate::trade::ZoneClassification;
 use crate::trade::available_passengers::AvailablePassengers;
 use crate::trade::ship_manifest::ShipManifest;
 use crate::trade::table::TradeTable;
-use crate::trade::ZoneClassification;
 
 use crate::util::Credits;
 
@@ -204,6 +203,7 @@ use crate::util::Credits;
 ///
 /// Complete trade computer interface with all interactive elements
 /// and automatic reactive updates.
+///
 #[component]
 pub fn Trade() -> impl IntoView {
     log::info!("🎯 Trade component: Starting initialization");
@@ -274,14 +274,14 @@ pub fn Trade() -> impl IntoView {
 
     // Dialog state for manually adding goods to manifest
     let show_add_manual = RwSignal::new(false);
-    let o_world = origin_world.clone().get();
+    let o_world = origin_world.clone().get_untracked();
     let origin_world_name = RwSignal::new(o_world.name.clone());
     let origin_uwp = RwSignal::new(o_world.to_uwp());
 
     let origin_coords = RwSignal::new(o_world.coordinates);
     let origin_zone = RwSignal::new(o_world.travel_zone);
 
-    let d_world = dest_world.clone().get();
+    let d_world = dest_world.clone().get_untracked();
     let dest_world_name =
         RwSignal::new(d_world.clone().map(|w| w.name.clone()).unwrap_or_default());
     let dest_uwp = RwSignal::new(
@@ -327,22 +327,22 @@ pub fn Trade() -> impl IntoView {
     // Effect to keep origin world updated based on changes in name or uwp.
     // If name or uwp changes, update origin_world.
     {
-        let origin_world_name = origin_world_name.clone();
-        let origin_uwp = origin_uwp.clone();
-        let origin_coords = origin_coords.clone();
-        let origin_zone = origin_zone.clone();
         let illegal_goods = illegal_goods.clone();
+
         Effect::new(move |prev: Option<(String, String)>| {
-            info!("🔄 Effect: origin_world update running");
-            if let Some((prev_name, prev_uwp)) = &prev {
-                if *prev_name == origin_world_name.get() && *prev_uwp == origin_uwp.get() {
-                    return (prev_name.to_string(), prev_uwp.to_string());
-                }
+            info!("🔄 Effect B: origin_world update running");
+            if let Some((prev_name, prev_uwp)) = &prev
+                && *prev_name == origin_world_name.get()
+                && *prev_uwp == origin_uwp.get()
+            {
+                debug!("Effect B: no change.");
+                return (prev_name.to_string(), prev_uwp.to_string());
             }
 
             let name = origin_world_name.get();
             let uwp = origin_uwp.get();
             if !name.is_empty() && uwp.len() == 9 {
+                debug!("🎯 In origin update effect - have a valid name ({name}) and uwp ({uwp})");
                 let Ok(mut world) = World::from_upp(&name, &uwp, false, false) else {
                     log::error!("Failed to parse UPP in hook to build origin world: {uwp}");
                     return (name, uwp);
@@ -369,20 +369,9 @@ pub fn Trade() -> impl IntoView {
                 .unwrap();
 
                 spawn_local(async move {
-                    debug!(
-                        "📤 CLIENT: About to call set_available_goods with {} goods",
-                        ag.goods.len()
-                    );
-                    match serde_json::to_string(&ag) {
-                        Ok(json) => debug!("📤 CLIENT: Serialized AvailableGoodsTable: {}", json),
-                        Err(e) => error!(
-                            "❌ CLIENT: Failed to serialize AvailableGoodsTable to JSON: {}",
-                            e
-                        ),
-                    }
                     if let Err(e) = set_available_goods(session_id.to_string(), ag).await {
                         error!(
-                            "❌ CLIENT: Failed to set_available_goods on session {session_id}: {e:?}"
+                            "❌ (Effect B) Failed to set_available_goods on session {session_id}: {e:?}"
                         );
                     }
                 });
@@ -398,16 +387,13 @@ pub fn Trade() -> impl IntoView {
     // Effect to keep destination world updated based on changes in name or uwp.
     // If name or uwp changes, update dest_world.
     {
-        let dest_world_name = dest_world_name.clone();
-        let dest_uwp = dest_uwp.clone();
-        let dest_coords = dest_coords.clone();
-        let dest_zone = dest_zone.clone();
         Effect::new(move |prev: Option<(String, String)>| {
             info!("🔄 Effect: dest_world update running");
-            if let Some((prev_name, prev_uwp)) = &prev {
-                if *prev_name == dest_world_name.get() && *prev_uwp == dest_uwp.get() {
-                    return (prev_name.to_string(), prev_uwp.to_string());
-                }
+            if let Some((prev_name, prev_uwp)) = &prev
+                && *prev_name == dest_world_name.get()
+                && *prev_uwp == dest_uwp.get()
+            {
+                return (prev_name.to_string(), prev_uwp.to_string());
             }
 
             let name = dest_world_name.get();
@@ -459,10 +445,13 @@ pub fn Trade() -> impl IntoView {
         Effect::new(move |_| {
             info!("🔄 Effect: Regenerating passengers based on world and distance changes");
             let origin = origin_world.get();
-            let dest = dest_world.get();
+            let dw = dest_world.get();
 
-            if distance.get() > 0 && dest.is_some() {
-                let dest = dest.unwrap();
+            // Only regenerate passengers if there is a valid destination that has a valid distance
+            // to the origin world.
+            if let Some(dest) = dw
+                && distance.get() > 0
+            {
                 let mut ap_option = untrack(|| available_passengers.get());
 
                 let ap = ap_option.get_or_insert_with(AvailablePassengers::default);
@@ -524,7 +513,7 @@ pub fn Trade() -> impl IntoView {
         let available_goods = available_goods.clone();
         let ship_manifest = ship_manifest.clone();
         Effect::new(move |_| {
-            info!("🔄 Effect: Regenerating goods based on world or skill changes.");
+            info!("🔄 Effect (A): Regenerating goods based on world or skill changes.");
             let buyer = buyer_broker_skill.get();
             let supplier = seller_broker_skill.get();
             let dest_world = dest_world.get();
@@ -545,21 +534,15 @@ pub fn Trade() -> impl IntoView {
                     "📤 CLIENT: About to call set_available_goods (repricing) with {} goods",
                     current_goods.goods.len()
                 );
-                match serde_json::to_string(&current_goods) {
-                    Ok(json) => debug!(
-                        "📤 CLIENT: Serialized AvailableGoodsTable (repricing): {}",
-                        json
+
+                match set_available_goods(session_id.to_string(), current_goods).await {
+                    Ok(_) => {
+                        debug!("📤 CLIENT: (Effect A) Success in calling set_available_goods.")
+                    }
+                    Err(e) => log::error!(
+                        "❌ CLIENT:(Effect A) Failed to set_available_goods on session {session_id}: {e:?}"
                     ),
-                    Err(e) => error!(
-                        "❌ CLIENT: Failed to serialize AvailableGoodsTable to JSON (repricing): {}",
-                        e
-                    ),
-                }
-                if let Err(e) = set_available_goods(session_id.to_string(), current_goods).await {
-                    log::error!(
-                        "❌ CLIENT: Failed to set_available_goods on session {session_id}: {e:?}"
-                    );
-                }
+                };
             });
 
             // Reprice the manifest
@@ -582,6 +565,16 @@ pub fn Trade() -> impl IntoView {
         });
     }
 
+    {
+        let available_goods = available_goods.clone();
+        Effect::new(move |_| {
+            let ag = available_goods.get();
+            debug!(
+                "🔄 Effect: available_goods changed, now have {} goods",
+                ag.goods.len()
+            );
+        });
+    }
     view! {
         <div class:App>
             <h1 class="d-print-none">Trade Computer</h1>
@@ -619,8 +612,6 @@ pub fn Trade() -> impl IntoView {
                                 let session_id = DEFAULT_SESSION_ID.to_string();
                                 let session_id2 = session_id.clone();
                                 let session_id3 = session_id.clone();
-
-                                // Update available_goods
                                 let mut ag = available_goods.get();
                                 ag.reset_die_rolls();
                                 ag.price_goods_to_buy(
@@ -633,47 +624,52 @@ pub fn Trade() -> impl IntoView {
                                 spawn_local(async move {
                                     let _ = set_available_goods(session_id, ag_clone).await;
                                 });
-
-                                // Update ship_manifest
                                 let mut manifest = ship_manifest.get();
                                 manifest.reset_die_rolls();
-                                manifest.price_goods(
-                                    &Some(origin.clone()),
-                                    buyer_broker_skill.get(),
-                                    seller_broker_skill.get(),
-                                );
+                                manifest
+                                    .price_goods(
+                                        &Some(origin.clone()),
+                                        buyer_broker_skill.get(),
+                                        seller_broker_skill.get(),
+                                    );
                                 let manifest_clone = manifest.clone();
                                 spawn_local(async move {
                                     let _ = set_ship_manifest(session_id2, manifest_clone).await;
                                 });
-
-                                // Update available_passengers
                                 if let Some(world) = dest_world.get() {
                                     if distance.get() > 0 {
-                                        let mut passengers = available_passengers.get().unwrap_or_default();
+                                        let mut passengers = available_passengers
+                                            .get()
+                                            .unwrap_or_default();
                                         passengers.reset_die_rolls();
                                         let world: World = world;
-                                        passengers.generate(
-                                            origin.get_population(),
-                                            origin.port,
-                                            origin.travel_zone,
-                                            origin.tech_level,
-                                            world.get_population(),
-                                            world.port,
-                                            world.travel_zone,
-                                            world.tech_level,
-                                            distance.get(),
-                                            i32::from(steward_skill.get()),
-                                            i32::from(buyer_broker_skill.get()),
-                                        );
+                                        passengers
+                                            .generate(
+                                                origin.get_population(),
+                                                origin.port,
+                                                origin.travel_zone,
+                                                origin.tech_level,
+                                                world.get_population(),
+                                                world.port,
+                                                world.travel_zone,
+                                                world.tech_level,
+                                                distance.get(),
+                                                i32::from(steward_skill.get()),
+                                                i32::from(buyer_broker_skill.get()),
+                                            );
                                         let session_id3_clone = session_id3.clone();
                                         spawn_local(async move {
-                                            let _ = set_available_passengers(session_id3_clone, Some(passengers)).await;
+                                            let _ = set_available_passengers(
+                                                    session_id3_clone,
+                                                    Some(passengers),
+                                                )
+                                                .await;
                                         });
                                     } else {
                                         let session_id3_clone = session_id3.clone();
                                         spawn_local(async move {
-                                            let _ = set_available_passengers(session_id3_clone, None).await;
+                                            let _ = set_available_passengers(session_id3_clone, None)
+                                                .await;
                                         });
                                     }
                                 } else {
@@ -751,19 +747,20 @@ pub fn Trade() -> impl IntoView {
                                 let buyer_broker_skill = buyer_broker_skill.clone();
                                 move || buyer_broker_skill.get()
                             }
-                            on:change={
-                                let buyer_broker_skill = buyer_broker_skill.clone();
-                                move |ev| {
-                                    let value: i16 = event_target_value(&ev).parse().unwrap_or(0);
-                                    log::trace!("📝 buyer_broker_skill: user input({})", value);
-                                    let session = session_id.to_string();
-                                    spawn_local(async move {
-                                        log::trace!("📤 buyer_broker_skill: calling server function({})", value);
-                                        if let Err(e) = set_buyer_broker_skill(session, value).await {
-                                            log::error!("❌ buyer_broker_skill: server function failed: {:?}", e);
-                                        }
-                                    });
-                                }
+                            on:change=move |ev| {
+                                let value: i16 = event_target_value(&ev).parse().unwrap_or(0);
+                                log::trace!("📝 buyer_broker_skill: user input({})", value);
+                                let session = session_id.to_string();
+                                spawn_local(async move {
+                                    log::trace!(
+                                        "📤 buyer_broker_skill: calling server function({})", value
+                                    );
+                                    if let Err(e) = set_buyer_broker_skill(session, value).await {
+                                        log::error!(
+                                            "❌ buyer_broker_skill: server function failed: {:?}", e
+                                        );
+                                    }
+                                });
                             }
                         />
                     </div>
@@ -778,15 +775,12 @@ pub fn Trade() -> impl IntoView {
                                 let seller_broker_skill = seller_broker_skill.clone();
                                 move || seller_broker_skill.get()
                             }
-                            on:change={
-                                let seller_broker_skill = seller_broker_skill.clone();
-                                move |ev| {
-                                    let value: i16 = event_target_value(&ev).parse().unwrap_or(0);
-                                    let session = session_id.to_string();
-                                    spawn_local(async move {
-                                        let _ = set_seller_broker_skill(session, value).await;
-                                    });
-                                }
+                            on:change=move |ev| {
+                                let value: i16 = event_target_value(&ev).parse().unwrap_or(0);
+                                let session = session_id.to_string();
+                                spawn_local(async move {
+                                    let _ = set_seller_broker_skill(session, value).await;
+                                });
                             }
                         />
                     </div>
@@ -801,14 +795,12 @@ pub fn Trade() -> impl IntoView {
                                 let steward_skill = steward_skill.clone();
                                 move || steward_skill.get()
                             }
-                            on:change={
-                                move |ev| {
-                                    let value: i16 = event_target_value(&ev).parse().unwrap_or(0);
-                                    let session = session_id.to_string();
-                                    spawn_local(async move {
-                                        let _ = set_steward_skill(session, value).await;
-                                    });
-                                }
+                            on:change=move |ev| {
+                                let value: i16 = event_target_value(&ev).parse().unwrap_or(0);
+                                let session = session_id.to_string();
+                                spawn_local(async move {
+                                    let _ = set_steward_skill(session, value).await;
+                                });
                             }
                         />
                     </div>
@@ -882,14 +874,15 @@ pub fn Trade() -> impl IntoView {
 }
 
 fn compute_distance(origin: World, dest: Option<World>) -> i32 {
-    if let Some(dest) = dest {
-        if let (Some(o_coord), Some(d_coord)) = (origin.coordinates, dest.coordinates) {
-            return crate::components::traveller_map::calculate_hex_distance(
-                o_coord.0, o_coord.1, d_coord.0, d_coord.1,
-            );
-        }
+    if let Some(dest) = dest
+        && let (Some(o_coord), Some(d_coord)) = (origin.coordinates, dest.coordinates)
+    {
+        crate::components::traveller_map::calculate_hex_distance(
+            o_coord.0, o_coord.1, d_coord.0, d_coord.1,
+        )
+    } else {
+        0
     }
-    0
 }
 /// Print the current page (currently unused but available for future use)
 ///
@@ -923,6 +916,7 @@ fn GoodsToSellView(
         let origin_world = origin_world.clone();
         let dest_world = dest_world.clone();
         Memo::new(move |_| {
+            debug!("🔄 Memo for world_to_sell_on fired!");
             let world_name_classes = dest_world
                 .get()
                 .as_ref()
@@ -1216,12 +1210,14 @@ pub fn TradeView(
     view! {
         <div class="output-region">
             <h2 class="trade-header-title">
-                "Trade Goods for " {
+                "Trade Goods for "
+                {
                     let origin_world = origin_world.clone();
                     move || origin_world.get().name.clone()
                 }
                 <span class="trade-header-classifications">
-                    " [" {
+                    " ["
+                    {
                         let origin_world = origin_world.clone();
                         move || origin_world.get().trade_classes_string()
                     } "]"
@@ -1309,11 +1305,12 @@ pub fn TradeView(
                                                 available_goods=available_goods.clone()
                                             />
                                         }
-                                })
-                                .collect::<Vec<_>>()
-                                .into_any()
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .into_any()
+                            }
                         }
-                    }}
+                    }
                 </tbody>
 
             </table>
@@ -1466,7 +1463,8 @@ fn PassengerView(
                         let ship_manifest = ship_manifest.clone();
                         move || {
                             if let Some(passengers) = available_passengers.get() {
-                                let remaining = passengers.high - ship_manifest.read().high_passengers;
+                                let remaining = passengers.high
+                                    - ship_manifest.read().high_passengers;
                                 remaining.max(0).to_string()
                             } else {
                                 "0".to_string()
@@ -1519,7 +1517,8 @@ fn PassengerView(
                         let ship_manifest = ship_manifest.clone();
                         move || {
                             if let Some(passengers) = available_passengers.get() {
-                                let remaining = passengers.low - ship_manifest.read().low_passengers;
+                                let remaining = passengers.low
+                                    - ship_manifest.read().low_passengers;
                                 remaining.max(0).to_string()
                             } else {
                                 "0".to_string()
@@ -1809,9 +1808,11 @@ fn ShipManifestView(
 
                         view! {
                             <div class="summary-line">
-                                "Total Cargo Used: " <strong>{total_cargo.to_string()}" tons"</strong>
-                                " | Total Passengers: " <strong>{total_passengers.to_string()}</strong>
-                                " | Total Low: " <strong>{total_low.to_string()}</strong>
+                                "Total Cargo Used: "
+                                <strong>{total_cargo.to_string()}" tons"</strong>
+                                " | Total Passengers: "
+                                <strong>{total_passengers.to_string()}</strong> " | Total Low: "
+                                <strong>{total_low.to_string()}</strong>
                             </div>
                         }
                     }
@@ -1879,29 +1880,34 @@ fn ShipManifestView(
                                 + buy_goods.total_transacted_size();
                             let goods_cost = buy_goods.total_buy_cost();
                             let goods_proceeds = manifest.trade_goods_proceeds();
-                        view! {
-                            <div class="manifest-item">
-                                <span class="manifest-label">"Cargo:"</span>
-                                <span class="manifest-value">{format!("{} tons", cargo_tons)}</span>
-                            </div>
-                            <div class="manifest-item">
-                                <span class="manifest-label">"Goods:"</span>
-                                <span class="manifest-value">{format!("{} tons", goods_tons)}</span>
-                            </div>
-                            <div class="manifest-item">
-                                <span class="manifest-label">"Goods Cost:"</span>
-                                <span class="manifest-value">
-                                    {Credits::from(goods_cost).as_string()}
-                                </span>
-                            </div>
-                            <div class="manifest-item">
-                                <span class="manifest-label">"Goods Proceeds:"</span>
-                                <span class="manifest-value">
-                                    {Credits::from(goods_proceeds).as_string()}
-                                </span>
-                            </div>
+                            view! {
+                                <div class="manifest-item">
+                                    <span class="manifest-label">"Cargo:"</span>
+                                    <span class="manifest-value">
+                                        {format!("{} tons", cargo_tons)}
+                                    </span>
+                                </div>
+                                <div class="manifest-item">
+                                    <span class="manifest-label">"Goods:"</span>
+                                    <span class="manifest-value">
+                                        {format!("{} tons", goods_tons)}
+                                    </span>
+                                </div>
+                                <div class="manifest-item">
+                                    <span class="manifest-label">"Goods Cost:"</span>
+                                    <span class="manifest-value">
+                                        {Credits::from(goods_cost).as_string()}
+                                    </span>
+                                </div>
+                                <div class="manifest-item">
+                                    <span class="manifest-label">"Goods Proceeds:"</span>
+                                    <span class="manifest-value">
+                                        {Credits::from(goods_proceeds).as_string()}
+                                    </span>
+                                </div>
+                            }
                         }
-                    }}
+                    }
                 </div>
             </div>
 
@@ -1972,7 +1978,8 @@ fn ShipManifestView(
                         <span class="manifest-value">
                             {move || {
                                 let manifest = ship_manifest_2.get();
-                                let revenue = if let Some(passengers) = available_passengers_1.get() {
+                                let revenue = if let Some(passengers) = available_passengers_1.get()
+                                {
                                     manifest.freight_revenue(distance.get(), &passengers) as i64
                                 } else {
                                     0
@@ -2045,13 +2052,11 @@ fn ShipManifestView(
                                     spawn_local(async move {
                                         let _ = set_ship_manifest(session_id, manifest).await;
                                     });
-
                                     let mut ag = available_goods.get();
                                     ag.zero_transacted();
                                     spawn_local(async move {
                                         let _ = set_available_goods(session_id2, ag).await;
                                     });
-
                                     origin_swap();
                                 }
                             }
@@ -2127,19 +2132,18 @@ fn ShipManifestView(
                                     move |_| {
                                         let qty_txt = manual_qty_input.get();
                                         let qty = qty_txt.parse::<i32>().unwrap_or(0);
-                                        if qty <= 0 {
-                                            if let Some(d) = web_sys::window()
+                                        if qty <= 0
+                                            && let Some(d) = web_sys::window()
                                                 .and_then(|w| w.document())
-                                            {
-                                                if let Some(err) = d.get_element_by_id("tg-modal-error") {
-                                                    err.set_text_content(
-                                                        Some("Please enter a quantity greater than zero."),
-                                                    );
-                                                }
-                                            }
+                                            && let Some(err) = d.get_element_by_id("tg-modal-error")
+                                        {
+                                            err.set_text_content(
+                                                Some("Please enter a quantity greater than zero."),
+                                            );
                                         }
                                         let table = TradeTable::default();
-                                        if let Some(entry) = table.get(manual_selected_index.get()) {
+                                        if let Some(entry) = table.get(manual_selected_index.get())
+                                        {
                                             let good = Good {
                                                 name: entry.name.clone(),
                                                 quantity: qty,
@@ -2163,10 +2167,9 @@ fn ShipManifestView(
                                             manual_qty_input.set(String::new());
                                             if let Some(d) = web_sys::window()
                                                 .and_then(|w| w.document())
+                                                && let Some(err) = d.get_element_by_id("tg-modal-error")
                                             {
-                                                if let Some(err) = d.get_element_by_id("tg-modal-error") {
-                                                    err.set_text_content(None);
-                                                }
+                                                err.set_text_content(None);
                                             }
                                             show_add_manual.set(false);
                                         }

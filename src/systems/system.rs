@@ -33,8 +33,8 @@
 //! 8. **Companion Processing**: Recursively processes secondary/tertiary systems
 
 use log::{debug, error, warn};
-use rand::prelude::IndexedRandom;
 use rand::Rng;
+use rand::prelude::IndexedRandom;
 use reactive_stores::Store;
 use std::fmt::Display;
 
@@ -43,7 +43,7 @@ use crate::systems::has_satellites::HasSatellites;
 use crate::systems::name_tables::gen_star_system_name;
 use crate::systems::system_tables::get_zone;
 use crate::systems::world::World;
-use crate::util::{roll_10, roll_1d6, roll_2d6};
+use crate::util::{roll_1d6, roll_2d6, roll_10};
 
 /// A complete star system with primary star and optional companions
 ///
@@ -259,11 +259,7 @@ impl System {
             .enumerate()
             .filter_map(
                 |(index, body)| {
-                    if body.is_none() {
-                        Some(index)
-                    } else {
-                        None
-                    }
+                    if body.is_none() { Some(index) } else { None }
                 },
             )
             .collect()
@@ -363,11 +359,7 @@ impl System {
             .enumerate()
             .filter_map(
                 |(index, body)| {
-                    if body.is_none() {
-                        Some(index)
-                    } else {
-                        None
-                    }
+                    if body.is_none() { Some(index) } else { None }
                 },
             )
             .collect();
@@ -554,16 +546,16 @@ impl System {
             }
         }
 
-        if let Some(secondary) = &mut self.secondary {
-            if secondary.orbit != StarOrbit::Primary {
-                secondary.fill_system(main_world_copy.clone(), false);
-            }
+        if let Some(secondary) = &mut self.secondary
+            && secondary.orbit != StarOrbit::Primary
+        {
+            secondary.fill_system(main_world_copy.clone(), false);
         }
 
-        if let Some(tertiary) = &mut self.tertiary {
-            if tertiary.orbit != StarOrbit::Primary {
-                tertiary.fill_system(main_world_copy, false);
-            }
+        if let Some(tertiary) = &mut self.tertiary
+            && tertiary.orbit != StarOrbit::Primary
+        {
+            tertiary.fill_system(main_world_copy, false);
         }
     }
 
@@ -572,7 +564,12 @@ impl System {
             main_world.atmosphere > 1 && main_world.atmosphere < 10 && main_world.size > 0;
         let mut habitable = get_zone(&self.star).habitable;
         if (habitable <= 0 || habitable == get_zone(&self.star).inner) && requires_habitable {
-            warn!("No habitable zone for main world for system: {:?}. Habitable = {}. Inner = {}. Using orbit 0.", self, habitable, get_zone(&self.star).inner);
+            warn!(
+                "No habitable zone for main world for system: {:?}. Habitable = {}. Inner = {}. Using orbit 0.",
+                self,
+                habitable,
+                get_zone(&self.star).inner
+            );
             habitable = get_zone(&self.star).inner.max(0);
         }
 
@@ -750,21 +747,21 @@ impl Display for System {
         for body in self.orbit_slots.iter() {
             match body {
                 Some(OrbitContent::Secondary) => {
-                    if let Some(secondary) = &self.secondary {
-                        if let StarOrbit::System(orbit) = secondary.orbit {
-                            writeln!(
-                                f,
-                                "{:<7}{:<24}{:<12}",
-                                orbit, secondary.name, secondary.star
-                            )?;
-                        }
+                    if let Some(secondary) = &self.secondary
+                        && let StarOrbit::System(orbit) = secondary.orbit
+                    {
+                        writeln!(
+                            f,
+                            "{:<7}{:<24}{:<12}",
+                            orbit, secondary.name, secondary.star
+                        )?;
                     }
                 }
                 Some(OrbitContent::Tertiary) => {
-                    if let Some(tertiary) = &self.tertiary {
-                        if let StarOrbit::System(orbit) = tertiary.orbit {
-                            writeln!(f, "{:<7}{:<24}{:<12}", orbit, tertiary.name, tertiary.star)?;
-                        }
+                    if let Some(tertiary) = &self.tertiary
+                        && let StarOrbit::System(orbit) = tertiary.orbit
+                    {
+                        writeln!(f, "{:<7}{:<24}{:<12}", orbit, tertiary.name, tertiary.star)?;
                     }
                 }
                 Some(OrbitContent::World(world)) => {
@@ -922,11 +919,7 @@ fn gen_max_orbits(star: &Star) -> usize {
     }
 
     let orbits = roll_2d6() + modifier;
-    if orbits < 0 {
-        0
-    } else {
-        orbits as usize
-    }
+    if orbits < 0 { 0 } else { orbits as usize }
 }
 
 fn empty_orbits_near_companion(system: &mut System, orbit: usize) {

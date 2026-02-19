@@ -33,17 +33,19 @@ pub mod firestore;
 pub mod state;
 
 #[cfg(feature = "ssr")]
+pub use ::firestore::FirestoreDb;
+
+#[cfg(feature = "ssr")]
 use std::collections::HashMap;
 #[cfg(feature = "ssr")]
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
+#[allow(unused_imports)]
 #[cfg(feature = "ssr")]
 use log::{debug, error, info, warn};
 
 use leptos::prelude::*;
-
-#[cfg(any(feature = "ssr", feature = "hydrate", feature = "csr"))]
-use leptos_ws::ReadOnlySignal;
+use leptos::server_fn::codec::Json;
 
 use state::TradeState;
 
@@ -51,9 +53,7 @@ pub use crate::systems::world::World;
 pub use crate::trade::available_goods::AvailableGoodsTable;
 pub use crate::trade::available_passengers::AvailablePassengers;
 pub use crate::trade::ship_manifest::ShipManifest;
-
-#[cfg(any(feature = "ssr", feature = "hydrate", feature = "csr"))]
-pub use leptos_ws::ReadOnlySignal as WsReadOnlySignal;
+pub use leptos_ws::ReadOnlySignal;
 
 /// Default session ID used by clients until proper session management is implemented
 pub const DEFAULT_SESSION_ID: &str = "default";
@@ -76,6 +76,27 @@ pub mod signal_names {
     }
 }
 
+#[cfg(feature = "ssr")]
+pub mod server_signals {
+    use std::sync::OnceLock;
+    use leptos_ws::ReadOnlySignal;
+    use crate::trade::{available_goods::AvailableGoodsTable, available_passengers::AvailablePassengers, ship_manifest::ShipManifest};
+    use crate::systems::world::World;
+
+    pub static ORIGIN_WORLD: OnceLock<ReadOnlySignal<World>> = OnceLock::new();
+    pub static DEST_WORLD: OnceLock<ReadOnlySignal<Option<World>>> = OnceLock::new();
+    pub static AVAILABLE_GOODS: OnceLock<ReadOnlySignal<AvailableGoodsTable>> =
+        OnceLock::new();
+    pub static AVAILABLE_PASSENGERS: OnceLock<ReadOnlySignal<Option<AvailablePassengers>>> =
+        OnceLock::new();
+    pub static SHIP_MANIFEST: OnceLock<ReadOnlySignal<ShipManifest>> =
+        OnceLock::new();
+    pub static BUYER_BROKER_SKILL: OnceLock<ReadOnlySignal<i16>> = OnceLock::new();
+    pub static SELLER_BROKER_SKILL: OnceLock<ReadOnlySignal<i16>> = OnceLock::new();
+    pub static STEWARD_SKILL: OnceLock<ReadOnlySignal<i16>> = OnceLock::new();
+    pub static ILLEGAL_GOODS: OnceLock<ReadOnlySignal<bool>> = OnceLock::new();
+}
+
 /// Type alias for the session cache - maps session IDs to their cached TradeState
 #[cfg(feature = "ssr")]
 pub type SessionCache = Arc<RwLock<HashMap<String, TradeState>>>;
@@ -95,7 +116,7 @@ async fn update_trade_state_internal(
     session_id: String,
     state: TradeState,
     session_cache: SessionCache,
-    firestore_db: ::firestore::FirestoreDb,
+    firestore_db: Option<FirestoreDb>,
 ) -> Result<(), ServerFnError> {
     debug!("Updating trade state on session '{session_id}'");
     // Check if state has changed from cached version
@@ -173,7 +194,7 @@ pub async fn update_trade_state(
         ServerFnError::new("session_cache not found in context")
     })?;
 
-    let firestore_db: ::firestore::FirestoreDb = use_context().ok_or_else(|| {
+    let firestore_db: Option<FirestoreDb> = use_context().ok_or_else(|| {
         error!("💥 Not finding firestore_db in update_trade_state.");
         ServerFnError::new("firestore_db not found in context")
     })?;
@@ -198,12 +219,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// Note: The signal is read-only on the client. To update it, call a server function
 /// which will use get_server_signal() to update the value.
-#[cfg(any(feature = "ssr", feature = "hydrate", feature = "csr"))]
-pub fn get_signal<T>(
-    session_id: &str,
-    signal_name: &str,
-    default: T,
-) -> ReadOnlySignal<T>
+pub fn get_signal<T>(session_id: &str, signal_name: &str, default: T) -> ReadOnlySignal<T>
 where
     T: Clone + Send + Sync + Serialize + for<'de> Deserialize<'de> + 'static + PartialEq,
 {
@@ -230,6 +246,10 @@ where
 {
     let full_signal_name = signal_names::for_session(session_id, signal_name);
 
+    debug!(
+        "📡 get_server_signal: Creating/getting signal '{}'",
+        full_signal_name
+    );
     // Create/get the remote signal
     ReadOnlySignal::new(&full_signal_name, default).unwrap_or_else(|e| {
         panic!("Creating signal {full_signal_name} failed: {e:?}");
@@ -269,7 +289,7 @@ async fn get_session_state(session_id: &str) -> Result<TradeState, ServerFnError
     // Not in cache, try to load from Firestore
     info!("📥 Session '{session_id}' not in cache, loading from Firestore");
 
-    let firestore_db: ::firestore::FirestoreDb = use_context().ok_or_else(|| {
+    let firestore_db: Option<FirestoreDb> = use_context().ok_or_else(|| {
         error!("🔥 Unable to obtain Firestore DB from context!");
         ServerFnError::new("firestore_db not found in context")
     })?;
@@ -305,10 +325,13 @@ async fn get_session_state(session_id: &str) -> Result<TradeState, ServerFnError
 /// 3. Updates the WebSocket signal to broadcast to all clients
 macro_rules! generate_setter {
     ($fn_name:ident, $field:ident, $signal_const:ident, $type:ty, $default:expr) => {
-        #[server]
+        #[server(input = Json, output = Json)]
         pub async fn $fn_name(session_id: String, value: $type) -> Result<(), ServerFnError> {
+            // let signal = get_server_signal(&session_id, signal_names::$signal_const, $default);
+            let signal = server_signals::$signal_const.get().unwrap();
+
             info!(
-                "🚨 {} called for session {} via server function",
+                "🚨 {} called for session '{}' via server function",
                 stringify!($fn_name),
                 session_id
             );
@@ -333,25 +356,27 @@ macro_rules! generate_setter {
                 signal_names::for_session(&session_id, signal_names::$signal_const)
             );
             let res = update_trade_state(session_id.clone(), state).await;
-            info!(
-                "Trade state updated in {}.  Try to set signal",
-                signal_names::for_session(&session_id, signal_names::$signal_const)
-            );
 
             // Update WebSocket signal to broadcast to all clients
             info!(
-                "🚨 Setting signal {} to {:?}.",
+                "🚨 Setting signal '{}' to {:?}.",
                 signal_names::for_session(&session_id, signal_names::$signal_const),
                 value
             );
-            let signal = get_server_signal(&session_id, signal_names::$signal_const, $default);
+
             signal.set(value);
 
             info!(
-                "Signal set in {}.",
+                "Signal set in '{}'.",
                 signal_names::for_session(&session_id, signal_names::$signal_const)
             );
 
+            info!(
+                "🚨 {} concluded with value {:?} for session '{}' via server function",
+                stringify!($fn_name),
+                res,
+                session_id
+            );
             res
         }
     };
@@ -383,6 +408,7 @@ generate_setter!(
 );
 generate_setter!(set_steward_skill, steward_skill, STEWARD_SKILL, i16, 0i16);
 generate_setter!(set_illegal_goods, illegal_goods, ILLEGAL_GOODS, bool, false);
+
 generate_setter!(
     set_available_goods,
     available_goods,
@@ -390,6 +416,7 @@ generate_setter!(
     AvailableGoodsTable,
     AvailableGoodsTable::default()
 );
+
 generate_setter!(
     set_available_passengers,
     available_passengers,

@@ -3,55 +3,46 @@
 //! This is the main entry point for the Worldgen web application.
 //! It sets up routing based on URL paths and renders the appropriate components.
 
-use web_sys::js_sys::{Function, Object, Reflect};
-
-use leptos::prelude::*;
-use leptos_meta::{provide_meta_context, MetaTags};
-use std::sync::Arc;
-use worldgen::components::app::App;
-
-#[cfg(not(feature = "ssr"))]
-use worldgen::logging;
-
+#[cfg(feature = "ssr")]
 use log::{debug, info, warn};
 
 #[cfg(feature = "ssr")]
+use worldgen::components::app::App;
+
+#[cfg(feature = "ssr")]
+pub use leptos::prelude::*;
+#[cfg(feature = "ssr")]
+pub use leptos_meta::{MetaTags, provide_meta_context};
+
+// Where we can, put all our ssr imports into this fake mod.
+// Cases above are used in places like component signatures where we can't
+// import the imports early enough.
+#[cfg(feature = "ssr")]
 mod ssr_imports {
-    pub use axum::{
-        routing::{get, post},
-        Router,
-    };
-    pub use firestore::FirestoreDb;
+    pub use axum::Router;
+    pub use firestore::{FirestoreDb, FirestoreDbOptions};
     pub use leptos::config::get_configuration;
-    pub use leptos::prelude::*;
     pub use leptos_axum::*;
     pub use leptos_ws::WsSignals;
     pub use std::collections::HashMap;
     pub use std::net::SocketAddr;
     pub use std::sync::{Arc, RwLock};
     pub use tower_http::cors::{Any, CorsLayer};
-    pub use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+    pub use tracing_subscriber::{EnvFilter, fmt, prelude::*};
     pub use worldgen::backend::SessionCache;
-}
-
-const GA_MEASUREMENT_ID: &str = "G-L26P5SCYR2";
-/// Track page view for analytics
-fn track_page_view(_path: &str) {
-    if let Some(window) = web_sys::window() {
-        if let Ok(gtag) = Reflect::get(&window, &"gtag".into()) {
-            let _ = Function::from(gtag).call3(
-                &window,
-                &"config".into(),
-                &GA_MEASUREMENT_ID.into(),
-                &Object::new(),
-            );
-        }
-    }
+    pub use worldgen::backend::{signal_names, server_signals, get_server_signal, DEFAULT_SESSION_ID};
+    pub use worldgen::systems::world::World;
+    pub use worldgen::trade::available_goods::AvailableGoodsTable;
+    pub use worldgen::trade::available_passengers::AvailablePassengers;
+    pub use worldgen::trade::ship_manifest::ShipManifest;
 }
 
 #[cfg(feature = "ssr")]
+const NULL_DATABASE_NAME: &str = "debug";
+
+#[cfg(feature = "ssr")]
 #[component]
-fn AppShell() -> impl IntoView {
+fn AppShell() -> impl leptos::prelude::IntoView {
     let thread_id = std::thread::current().id();
     debug!(
         "Rendering Thread {:?}: Entering Shell component.",
@@ -73,7 +64,6 @@ fn AppShell() -> impl IntoView {
     // Provide WsSignals context - required by leptos_ws
     provide_context(app_state.ws_signals.clone());
 
-    let site_root = options.site_root.clone();
     let pkg_path = options.site_pkg_dir.clone();
     let css_file = format!("{pkg_path}/{}.css", options.output_name);
     view! {
@@ -118,7 +108,7 @@ pub struct AppState {
     pub leptos_options: leptos::config::LeptosOptions,
     pub ws_signals: leptos_ws::WsSignals,
     /// Firestore database client - already handles internal sharing via Arc
-    pub firestore_db: firestore::FirestoreDb,
+    pub firestore_db: Option<firestore::FirestoreDb>,
     /// Session cache - maps session IDs to their cached TradeState
     /// Sessions are lazily loaded when clients call use_session()
     pub session_cache: worldgen::backend::SessionCache,
@@ -180,17 +170,24 @@ pub async fn leptos_fallback(State(options): State<LeptosOptions>, req: Request<
     }
 }
 
+// Dummy main for not-ssr just to elininate build warnings
+#[cfg(not(feature = "ssr"))]
+fn main() {
+    // Do nothing.
+}
+
 /// Start for the Axum server (backend - server side)
 #[cfg(feature = "ssr")]
 #[tokio::main]
 async fn main() {
     use ssr_imports::*;
+    use worldgen::backend::DEFAULT_SESSION_ID;
 
     // Tracing support - only show logs from our code and critical Leptos logs
-    let filter = EnvFilter::new("warn") // Default to warn for all crates
+    let filter = EnvFilter::new("trace") // Default to warn for all crates
         .add_directive("worldgen=debug".parse().unwrap()) // Our crate at debug level
         .add_directive("worldgen_server=debug".parse().unwrap()) // Our binary at debug level
-        .add_directive("worldgen::backend=info".parse().unwrap()) // Backend module at info level
+        .add_directive("worldgen::backend=debug".parse().unwrap()) // Backend module at info level
         .add_directive("worldgen::backend::firestore=info".parse().unwrap()) // Firestore module at info level
         .add_directive("leptos=info".parse().unwrap()) // Leptos at info level
         .add_directive("leptos_axum=info".parse().unwrap())
@@ -242,12 +239,20 @@ async fn main() {
         &project_id, &database_id
     );
 
-    let options = firestore::FirestoreDbOptions::new(project_id).with_database_id(database_id);
+    // We use the special name in NULL_DATABASE to allow off-line debugging.  The code will just
+    // not write anything to FireStore.
+    let firestore_db = if database_id.to_lowercase() == NULL_DATABASE_NAME {
+        warn!("🔥 Initializing system with NULL FirestoreDb.");
+        None
+    } else {
+        let options = FirestoreDbOptions::new(project_id).with_database_id(database_id);
 
-    let firestore_db = FirestoreDb::with_options(options)
-        .await
-        .expect("Failed to initialize Firestore client");
-    info!("Firestore client initialized successfully");
+        let firestore_db = FirestoreDb::with_options(options)
+            .await
+            .expect("Failed to initialize Firestore client");
+        info!("Firestore client initialized successfully");
+        Some(firestore_db)
+    };
 
     // Create empty session cache - sessions are loaded lazily when clients call use_session()
     let session_cache: SessionCache = Arc::new(RwLock::new(HashMap::new()));
@@ -261,6 +266,16 @@ async fn main() {
         session_cache,
     };
 
+    // Create all the signals.
+    server_signals::ORIGIN_WORLD.set(get_server_signal(DEFAULT_SESSION_ID, signal_names::ORIGIN_WORLD, World::default())).unwrap();
+    server_signals::DEST_WORLD.set(get_server_signal(DEFAULT_SESSION_ID, signal_names::DEST_WORLD, None)).unwrap();
+    server_signals::AVAILABLE_GOODS.set(get_server_signal(DEFAULT_SESSION_ID, signal_names::AVAILABLE_GOODS, AvailableGoodsTable::default())).unwrap();
+    server_signals::AVAILABLE_PASSENGERS.set(get_server_signal(DEFAULT_SESSION_ID, signal_names::AVAILABLE_PASSENGERS, None)).unwrap();
+    server_signals::SHIP_MANIFEST.set(get_server_signal(DEFAULT_SESSION_ID, signal_names::SHIP_MANIFEST, ShipManifest::default())).unwrap();
+    server_signals::BUYER_BROKER_SKILL.set(get_server_signal(DEFAULT_SESSION_ID, signal_names::BUYER_BROKER_SKILL, 0)).unwrap();
+    server_signals::SELLER_BROKER_SKILL.set(get_server_signal(DEFAULT_SESSION_ID, signal_names::SELLER_BROKER_SKILL, 0)).unwrap();
+    server_signals::STEWARD_SKILL.set(get_server_signal(DEFAULT_SESSION_ID, signal_names::STEWARD_SKILL,0)).unwrap();
+    server_signals::ILLEGAL_GOODS.set(get_server_signal(DEFAULT_SESSION_ID, signal_names::ILLEGAL_GOODS, false)).unwrap();
     info!("========================================");
     info!("WORLDGEN SERVER STARTING - NEW BUILD");
     info!("========================================");
@@ -272,9 +287,6 @@ async fn main() {
             &app_state,
             routes,
             {
-                log::info!(
-                    "============================= SOMETHING IS HAPPENING ========================"
-                );
                 let app_state = app_state.clone();
                 move || {
                     // Provide context in the same order as leptos_ws example: options first, then ws_signals

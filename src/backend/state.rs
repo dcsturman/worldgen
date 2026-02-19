@@ -125,4 +125,3 @@ impl TradeState {
         self
     }
 }
-

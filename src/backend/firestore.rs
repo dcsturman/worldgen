@@ -41,7 +41,7 @@
 
 use firestore::FirestoreDb;
 
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use thiserror::Error;
 
 use crate::backend::state::TradeState;
@@ -88,38 +88,55 @@ pub enum FirestoreError {
 /// # Errors
 ///
 /// Returns `FirestoreError` if the database operation fails
-pub async fn get_trade_state(db: &FirestoreDb, session_id: &str) -> Result<TradeState, FirestoreError> {
-    debug!("📖 Firestore: Fetching trade state for session: {}", session_id);
+pub async fn get_trade_state(
+    db_option: &Option<FirestoreDb>,
+    session_id: &str,
+) -> Result<TradeState, FirestoreError> {
+    debug!(
+        "📖 Firestore: Fetching trade state for session: {}",
+        session_id
+    );
 
-    // Try to get the document
-    let result: Option<TradeState> = db
-        .fluent()
-        .select()
-        .by_id_in(COLLECTION_NAME)
-        .obj()
-        .one(session_id)
-        .await
-        .map_err(|e| {
-            error!("❌ Firestore: Failed to read trade state: {}", e);
-            error!("❌ Firestore: Error details: {:?}", e);
-            FirestoreError::ReadError(e.to_string())
-        })?;
-
-    match result {
-        Some(state) => {
-            debug!("✅ Firestore: Found existing trade state for session: {}", session_id);
-            // Apply any necessary migrations
-            Ok(state.migrate())
-        }
+    match db_option {
         None => {
-            info!(
-                "📝 Firestore: No trade state found for session: {}, creating default",
-                session_id
-            );
-            // Create default state and save it
-            let default_state = TradeState::default();
-            save_trade_state(db, session_id, &default_state).await?;
-            Ok(default_state)
+            warn!("🔥 Running without Firestore connection.");
+            Ok(TradeState::default())
+        }
+        Some(db) => {
+            // Try to get the document
+            let result: Option<TradeState> = db
+                .fluent()
+                .select()
+                .by_id_in(COLLECTION_NAME)
+                .obj()
+                .one(session_id)
+                .await
+                .map_err(|e| {
+                    error!("❌ Firestore: Failed to read trade state: {}", e);
+                    error!("❌ Firestore: Error details: {:?}", e);
+                    FirestoreError::ReadError(e.to_string())
+                })?;
+
+            match result {
+                Some(state) => {
+                    debug!(
+                        "✅ Firestore: Found existing trade state for session: {}",
+                        session_id
+                    );
+                    // Apply any necessary migrations
+                    Ok(state.migrate())
+                }
+                None => {
+                    info!(
+                        "📝 Firestore: No trade state found for session: {}, creating default",
+                        session_id
+                    );
+                    // Create default state and save it
+                    let default_state = TradeState::default();
+                    save_trade_state(db_option, session_id, &default_state).await?;
+                    Ok(default_state)
+                }
+            }
         }
     }
 }
@@ -142,47 +159,62 @@ pub async fn get_trade_state(db: &FirestoreDb, session_id: &str) -> Result<Trade
 /// # Errors
 ///
 /// Returns `FirestoreError` if the database operation fails
-pub async fn save_trade_state(db: &FirestoreDb, session_id: &str, state: &TradeState) -> Result<(), FirestoreError> {
+pub async fn save_trade_state(
+    db_option: &Option<FirestoreDb>,
+    session_id: &str,
+    state: &TradeState,
+) -> Result<(), FirestoreError> {
     info!("📝 Firestore: Starting save for session: {}", session_id);
 
-    // Log what we're trying to serialize
-    debug!("📝 Firestore: Serializing state: {:?}", state);
-
-    // Try to serialize to JSON to see what it looks like
-    match serde_json::to_string_pretty(state) {
-        Ok(json) => {
-            debug!("📝 Firestore: State as JSON:\n{}", json);
-        }
-        Err(e) => {
-            error!("❌ Firestore: Failed to serialize state to JSON for logging: {}", e);
-        }
-    }
-
-    // Upsert the document (create or update)
-    let result = db
-        .fluent()
-        .update()
-        .in_col(COLLECTION_NAME)
-        .document_id(session_id)
-        .object(state)
-        .execute::<()>()
-        .await;
-
-    match result {
-        Ok(_) => {
-            info!(
-                "✅ Firestore: Successfully saved trade state for session: {}",
-                session_id
-            );
+    match db_option {
+        None => {
+            warn!("🔥 Saving state without Firestore connection.");
             Ok(())
         }
-        Err(e) => {
-            error!(
-                "❌ Firestore: Failed to save trade state for session {}: {}",
-                session_id, e
-            );
-            error!("❌ Firestore: Error details: {:?}", e);
-            Err(FirestoreError::WriteError(e.to_string()))
+        Some(db) => {
+            // Log what we're trying to serialize
+            debug!("📝 Firestore: Serializing state: {:?}", state);
+
+            // Try to serialize to JSON to see what it looks like
+            match serde_json::to_string_pretty(state) {
+                Ok(json) => {
+                    debug!("📝 Firestore: State as JSON:\n{}", json);
+                }
+                Err(e) => {
+                    error!(
+                        "❌ Firestore: Failed to serialize state to JSON for logging: {}",
+                        e
+                    );
+                }
+            }
+
+            // Upsert the document (create or update)
+            let result = db
+                .fluent()
+                .update()
+                .in_col(COLLECTION_NAME)
+                .document_id(session_id)
+                .object(state)
+                .execute::<()>()
+                .await;
+
+            match result {
+                Ok(_) => {
+                    info!(
+                        "✅ Firestore: Successfully saved trade state for session: {}",
+                        session_id
+                    );
+                    Ok(())
+                }
+                Err(e) => {
+                    error!(
+                        "❌ Firestore: Failed to save trade state for session {}: {}",
+                        session_id, e
+                    );
+                    error!("❌ Firestore: Error details: {:?}", e);
+                    Err(FirestoreError::WriteError(e.to_string()))
+                }
+            }
         }
     }
 }
@@ -203,22 +235,33 @@ pub async fn save_trade_state(db: &FirestoreDb, session_id: &str, state: &TradeS
 /// # Errors
 ///
 /// Returns `FirestoreError` if the database operation fails
-pub async fn delete_trade_state(db: &FirestoreDb, session_id: &str) -> Result<(), FirestoreError> {
+pub async fn delete_trade_state(
+    db_option: &Option<FirestoreDb>,
+    session_id: &str,
+) -> Result<(), FirestoreError> {
     debug!("Deleting trade state for session: {}", session_id);
 
-    db.fluent()
-        .delete()
-        .from(COLLECTION_NAME)
-        .document_id(session_id)
-        .execute()
-        .await
-        .map_err(|e| {
-            error!("Failed to delete trade state: {}", e);
-            FirestoreError::WriteError(e.to_string())
-        })?;
+    match db_option {
+        None => {
+            warn!("🔥 Deleting state without Firestore connection.");
+            Ok(())
+        }
+        Some(db) => {
+            db.fluent()
+                .delete()
+                .from(COLLECTION_NAME)
+                .document_id(session_id)
+                .execute()
+                .await
+                .map_err(|e| {
+                    error!("Failed to delete trade state: {}", e);
+                    FirestoreError::WriteError(e.to_string())
+                })?;
 
-    info!("Deleted trade state for session: {}", session_id);
-    Ok(())
+            info!("Deleted trade state for session: {}", session_id);
+            Ok(())
+        }
+    }
 }
 
 /// Checks if a trade state exists for a given session
@@ -235,15 +278,26 @@ pub async fn delete_trade_state(db: &FirestoreDb, session_id: &str) -> Result<()
 /// # Errors
 ///
 /// Returns `FirestoreError` if the database operation fails
-pub async fn trade_state_exists(db: &FirestoreDb, session_id: &str) -> Result<bool, FirestoreError> {
-    let result: Option<TradeState> = db
-        .fluent()
-        .select()
-        .by_id_in(COLLECTION_NAME)
-        .obj()
-        .one(session_id)
-        .await
-        .map_err(|e| FirestoreError::ReadError(e.to_string()))?;
+pub async fn trade_state_exists(
+    db_option: &Option<FirestoreDb>,
+    session_id: &str,
+) -> Result<bool, FirestoreError> {
+    match db_option {
+        None => {
+            debug!("🔥 Saving state without Firestore connection.");
+            Ok(true)
+        }
+        Some(db) => {
+            let result: Option<TradeState> = db
+                .fluent()
+                .select()
+                .by_id_in(COLLECTION_NAME)
+                .obj()
+                .one(session_id)
+                .await
+                .map_err(|e| FirestoreError::ReadError(e.to_string()))?;
 
-    Ok(result.is_some())
+            Ok(result.is_some())
+        }
+    }
 }
