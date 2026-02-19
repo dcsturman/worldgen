@@ -2,6 +2,10 @@
 //!
 //! This module provides a WebSocket server for handling trade state updates
 //! and broadcasting them to connected clients.
+//!
+//! The server is authoritative for trade table generation and pricing calculations.
+//! When clients send state updates with changed world names/UWPs or skills, the server
+//! recalculates the trade table and prices before broadcasting to all clients.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -15,6 +19,10 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::backend::firestore::{get_trade_state, initialize_firestore, save_trade_state, FirestoreError};
 use crate::backend::TradeState;
+use crate::systems::world::World;
+use crate::trade::available_goods::AvailableGoodsTable;
+use crate::trade::table::TradeTable;
+use crate::util::calculate_hex_distance;
 
 /// Unique identifier for connected clients
 type ClientId = u64;
@@ -27,6 +35,9 @@ type Clients = Arc<RwLock<HashMap<ClientId, ClientSender>>>;
 
 /// Database wrapped in Arc for sharing across tasks
 type SharedDb = Arc<Option<FirestoreDb>>;
+
+/// Current trade state wrapped in Arc for sharing across tasks
+type SharedState = Arc<RwLock<Option<TradeState>>>;
 
 /// Default session ID for shared state (all users see the same state)
 pub const DEFAULT_SESSION: &str = "default";
@@ -41,6 +52,8 @@ pub struct TradeServer {
     next_client_id: Arc<RwLock<ClientId>>,
     /// Firestore database connection (None if running in debug mode without Firestore)
     db: SharedDb,
+    /// Current trade state (used to detect changes and recalculate)
+    current_state: SharedState,
 }
 
 impl TradeServer {
@@ -64,6 +77,7 @@ impl TradeServer {
             clients: Arc::new(RwLock::new(HashMap::new())),
             next_client_id: Arc::new(RwLock::new(0)),
             db: Arc::new(db),
+            current_state: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -84,9 +98,10 @@ impl TradeServer {
             let clients = self.clients.clone();
             let next_id = self.next_client_id.clone();
             let db = self.db.clone();
+            let current_state = self.current_state.clone();
 
             tokio::spawn(async move {
-                if let Err(e) = handle_connection(stream, addr, clients, next_id, db).await {
+                if let Err(e) = handle_connection(stream, addr, clients, next_id, db, current_state).await {
                     log::error!("Error handling connection from {}: {}", addr, e);
                 }
             });
@@ -121,6 +136,7 @@ async fn handle_connection(
     clients: Clients,
     next_id: Arc<RwLock<ClientId>>,
     db: SharedDb,
+    current_state: SharedState,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let ws_stream = tokio_tungstenite::accept_async(stream).await?;
     log::info!("WebSocket connection established: {}", addr);
@@ -147,8 +163,14 @@ async fn handle_connection(
     log::info!("Client {} connected from {}", client_id, addr);
 
     // Load the current state from Firestore and send it to the new client
+    // Also update the shared current_state if we loaded from Firestore
     match get_trade_state(&db, DEFAULT_SESSION).await {
         Ok(state) => {
+            // Update the shared current state
+            {
+                let mut state_guard = current_state.write().await;
+                *state_guard = Some(state.clone());
+            }
             match serde_json::to_string(&state) {
                 Ok(json) => {
                     if tx.send(Message::Text(json.into())).is_ok() {
@@ -168,6 +190,11 @@ async fn handle_connection(
             let default_state = TradeState::default();
             if let Err(save_err) = save_trade_state(&db, DEFAULT_SESSION, &default_state).await {
                 log::error!("Failed to save default state after schema error: {}", save_err);
+            }
+            // Update the shared current state
+            {
+                let mut state_guard = current_state.write().await;
+                *state_guard = Some(default_state.clone());
             }
             // Send the default state to the client
             match serde_json::to_string(&default_state) {
@@ -203,7 +230,7 @@ async fn handle_connection(
             Ok(Message::Text(text)) => {
                 match serde_json::from_str::<TradeState>(&text) {
                     Ok(trade_state) => {
-                        handle_trade_state_update(trade_state, &db, &clients, client_id).await;
+                        handle_trade_state_update(trade_state, &db, &clients, &current_state).await;
                     }
                     Err(e) => {
                         log::warn!(
@@ -295,31 +322,230 @@ async fn broadcast_to_clients(
 
 /// Handler for processing received TradeState updates
 ///
-/// Saves the state to Firestore and broadcasts it to all other connected clients.
+/// The server is authoritative for trade table generation and pricing.
+/// When world names/UWPs or skills change, the server recalculates:
+/// - AvailableGoodsTable when origin world changes
+/// - Buy/sell prices when skills or worlds change
+/// - Ship manifest prices when destination or skills change
+/// - Available passengers when worlds, distance, or skills change
+///
+/// After recalculation, the updated state is broadcast to ALL clients (including sender).
 ///
 /// # Arguments
 ///
 /// * `state` - The received TradeState from a client
 /// * `db` - The Firestore database connection
 /// * `clients` - The shared clients map
-/// * `sender_client_id` - The ID of the client who sent the update (will be excluded from broadcast)
+/// * `current_state` - The shared current state for detecting changes
 async fn handle_trade_state_update(
-    state: TradeState,
+    mut state: TradeState,
     db: &SharedDb,
     clients: &Clients,
-    sender_client_id: ClientId,
+    current_state: &SharedState,
 ) {
+    // Get the previous state to detect what changed
+    let prev_state = {
+        let state_guard = current_state.read().await;
+        state_guard.clone()
+    };
+
+    // Detect what changed and recalculate as needed
+    let recalculated = recalculate_trade_state(&mut state, prev_state.as_ref());
+
+    if recalculated {
+        log::info!("Server recalculated trade state due to world/skill changes");
+    }
+
+    // Update the shared current state
+    {
+        let mut state_guard = current_state.write().await;
+        *state_guard = Some(state.clone());
+    }
+
     // Save to Firestore
     if let Err(e) = save_trade_state(db, DEFAULT_SESSION, &state).await {
         log::error!("Failed to save trade state to Firestore: {}", e);
         // Continue to broadcast even if Firestore save fails
     }
 
-    // Broadcast to all clients except the sender
-    let sent_count = broadcast_to_clients(clients, &state, Some(sender_client_id)).await;
+    // Broadcast to ALL clients (server is authoritative, so sender gets the recalculated state too)
+    let sent_count = broadcast_to_clients(clients, &state, None).await;
     log::info!(
-        "Broadcast trade state update from client {} to {} other clients",
-        sender_client_id,
-        sent_count
+        "Broadcast trade state update to {} clients (recalculated: {})",
+        sent_count,
+        recalculated
     );
+}
+
+/// Recalculates trade state when world names/UWPs or skills change
+///
+/// Returns true if any recalculation was performed.
+fn recalculate_trade_state(state: &mut TradeState, prev_state: Option<&TradeState>) -> bool {
+    let mut recalculated = false;
+
+    // Parse origin world from name/UWP, setting coordinates and zone
+    let origin_world = if !state.origin_world_name.is_empty() && state.origin_uwp.len() == 9 {
+        match World::from_upp(&state.origin_world_name, &state.origin_uwp, false, false) {
+            Ok(mut world) => {
+                world.gen_trade_classes();
+                // Set coordinates and zone from state
+                world.coordinates = state.origin_coords;
+                world.travel_zone = state.origin_zone;
+                Some(world)
+            }
+            Err(e) => {
+                log::error!("Failed to parse origin UWP '{}': {}", state.origin_uwp, e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // Parse destination world from name/UWP, setting coordinates and zone
+    let dest_world = if !state.dest_world_name.is_empty() && state.dest_uwp.len() == 9 {
+        match World::from_upp(&state.dest_world_name, &state.dest_uwp, false, false) {
+            Ok(mut world) => {
+                world.gen_trade_classes();
+                // Set coordinates and zone from state
+                world.coordinates = state.dest_coords;
+                world.travel_zone = state.dest_zone;
+                Some(world)
+            }
+            Err(e) => {
+                log::error!("Failed to parse dest UWP '{}': {}", state.dest_uwp, e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // Calculate distance from coordinates if both are available
+    let distance = match (state.origin_coords, state.dest_coords) {
+        (Some((ox, oy)), Some((dx, dy))) => calculate_hex_distance(ox, oy, dx, dy),
+        _ => 0,
+    };
+
+    // Check if origin world changed (need to regenerate trade table)
+    let origin_changed = prev_state.is_none()
+        || prev_state.is_some_and(|prev| {
+            prev.origin_world_name != state.origin_world_name
+                || prev.origin_uwp != state.origin_uwp
+                || prev.origin_coords != state.origin_coords
+                || prev.origin_zone != state.origin_zone
+                || prev.illegal_goods != state.illegal_goods
+        });
+
+    // Check if destination world changed
+    let dest_changed = prev_state.is_none()
+        || prev_state.is_some_and(|prev| {
+            prev.dest_world_name != state.dest_world_name
+                || prev.dest_uwp != state.dest_uwp
+                || prev.dest_coords != state.dest_coords
+                || prev.dest_zone != state.dest_zone
+        });
+
+    // Check if skills changed
+    let skills_changed = prev_state.is_none()
+        || prev_state.is_some_and(|prev| {
+            prev.buyer_broker_skill != state.buyer_broker_skill
+                || prev.seller_broker_skill != state.seller_broker_skill
+                || prev.steward_skill != state.steward_skill
+        });
+
+    // Regenerate trade table if origin world changed
+    if origin_changed {
+        if let Some(ref world) = origin_world {
+            match AvailableGoodsTable::for_world(
+                TradeTable::global(),
+                &world.get_trade_classes(),
+                world.get_population(),
+                state.illegal_goods,
+            ) {
+                Ok(new_table) => {
+                    state.available_goods = new_table;
+                    recalculated = true;
+                    log::info!(
+                        "Regenerated trade table for origin world: {}",
+                        state.origin_world_name
+                    );
+                }
+                Err(e) => {
+                    log::error!("Failed to generate trade table: {}", e);
+                }
+            }
+        }
+    }
+
+    // Reprice goods if origin changed, dest changed, or skills changed
+    if origin_changed || dest_changed || skills_changed {
+        if let Some(ref world) = origin_world {
+            // Price goods to buy at origin
+            state.available_goods.price_goods_to_buy(
+                &world.get_trade_classes(),
+                state.buyer_broker_skill,
+                state.seller_broker_skill,
+            );
+
+            // Price goods to sell at destination
+            let dest_trade_classes = dest_world.as_ref().map(|w| w.get_trade_classes());
+            state.available_goods.price_goods_to_sell(
+                dest_trade_classes,
+                state.seller_broker_skill,
+                state.buyer_broker_skill,
+            );
+
+            state.available_goods.sort_by_discount();
+            recalculated = true;
+            log::info!("Repriced available goods");
+        }
+
+        // Reprice ship manifest goods
+        state.ship_manifest.price_goods(
+            &dest_world,
+            state.buyer_broker_skill,
+            state.seller_broker_skill,
+        );
+        recalculated = true;
+        log::info!("Repriced ship manifest");
+    }
+
+    // Regenerate passengers if worlds or skills changed and we have both worlds
+    if (origin_changed || dest_changed || skills_changed)
+        && origin_world.is_some()
+        && dest_world.is_some()
+    {
+        let origin = origin_world.as_ref().unwrap();
+        let dest = dest_world.as_ref().unwrap();
+
+        let mut passengers = state.available_passengers.take().unwrap_or_default();
+        // Reset die rolls so we get fresh random values
+        passengers.reset_die_rolls();
+
+        passengers.generate(
+            origin.get_population(),
+            origin.port,
+            origin.travel_zone,
+            origin.tech_level,
+            dest.get_population(),
+            dest.port,
+            dest.travel_zone,
+            dest.tech_level,
+            distance,
+            state.steward_skill as i32,
+            state.buyer_broker_skill as i32,
+        );
+
+        state.available_passengers = Some(passengers);
+        recalculated = true;
+        log::info!(
+            "Regenerated passengers for route {} -> {} (distance: {} parsecs)",
+            state.origin_world_name,
+            state.dest_world_name,
+            distance
+        );
+    }
+
+    recalculated
 }

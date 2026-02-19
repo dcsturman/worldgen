@@ -7,12 +7,14 @@ use serde::{Deserialize, Serialize};
 use crate::trade::available_goods::AvailableGoodsTable;
 use crate::trade::available_passengers::AvailablePassengers;
 use crate::trade::ship_manifest::ShipManifest;
+use crate::trade::ZoneClassification;
 
 /// The synchronized trade state shared between all connected clients
 ///
-/// Worlds are NOT included in the state - instead, world name and UWP are sent.
-/// Clients regenerate World objects from name/UWP using the existing Effects.
-/// This ensures unidirectional data flow: name/uwp → world (no loops).
+/// Worlds are NOT included in the state - instead, world name, UWP, coordinates, and zone are sent.
+/// The server generates World objects from these fields and calculates distance from coordinates.
+/// Clients still use TravellerMap for world lookup (user picks the world), but the server is
+/// authoritative for World generation, trade tables, pricing, and passenger generation.
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct TradeState {
     /// Version number for state compatibility
@@ -21,10 +23,18 @@ pub struct TradeState {
     pub origin_world_name: String,
     /// Origin world UWP (9-character code)
     pub origin_uwp: String,
+    /// Origin world galactic hex coordinates (from TravellerMap)
+    pub origin_coords: Option<(i32, i32)>,
+    /// Origin world travel zone classification
+    pub origin_zone: ZoneClassification,
     /// Destination world name (empty if no destination)
     pub dest_world_name: String,
     /// Destination world UWP (empty if no destination)
     pub dest_uwp: String,
+    /// Destination world galactic hex coordinates (from TravellerMap)
+    pub dest_coords: Option<(i32, i32)>,
+    /// Destination world travel zone classification
+    pub dest_zone: ZoneClassification,
     /// Available goods at the origin
     pub available_goods: AvailableGoodsTable,
     /// Available passengers at the origin

@@ -257,13 +257,34 @@ pub fn Trade(
             .unwrap_or_default(),
     );
 
+    // World coordinates and zone signals (needed by server for distance and World generation)
+    let origin_coords = RwSignal::new(origin_world.get_untracked().coordinates);
+    let origin_zone = RwSignal::new(origin_world.get_untracked().travel_zone);
+    let dest_coords = RwSignal::new(
+        dest_world
+            .get_untracked()
+            .as_ref()
+            .and_then(|w| w.coordinates),
+    );
+    let dest_zone = RwSignal::new(
+        dest_world
+            .get_untracked()
+            .as_ref()
+            .map(|w| w.travel_zone)
+            .unwrap_or(ZoneClassification::Green),
+    );
+
     // Register signals with the client if provided
     if let Some(ref client) = client {
         let signals = TradeSignals {
             origin_world_name: origin_world_name.write_only(),
             origin_uwp: origin_uwp.write_only(),
+            origin_coords: origin_coords.write_only(),
+            origin_zone: origin_zone.write_only(),
             dest_world_name: dest_world_name.write_only(),
             dest_uwp: dest_uwp.write_only(),
+            dest_coords: dest_coords.write_only(),
+            dest_zone: dest_zone.write_only(),
             available_goods: write_available_goods,
             available_passengers: write_available_passengers,
             ship_manifest: write_ship_manifest,
@@ -280,8 +301,12 @@ pub fn Trade(
             // Read all signals to track them (this registers them as dependencies)
             let current_origin_name = origin_world_name.get();
             let current_origin_uwp = origin_uwp.get();
+            let current_origin_coords = origin_coords.get();
+            let current_origin_zone = origin_zone.get();
             let current_dest_name = dest_world_name.get();
             let current_dest_uwp = dest_uwp.get();
+            let current_dest_coords = dest_coords.get();
+            let current_dest_zone = dest_zone.get();
             let current_goods = available_goods.get();
             let current_passengers = available_passengers.get();
             let current_manifest = ship_manifest.get();
@@ -303,13 +328,17 @@ pub fn Trade(
                 return;
             }
 
-            // Build the TradeState from name/uwp (not world objects)
+            // Build the TradeState from name/uwp/coords/zone
             let state = TradeState {
                 version: 1, // Version for state compatibility
                 origin_world_name: current_origin_name,
                 origin_uwp: current_origin_uwp,
+                origin_coords: current_origin_coords,
+                origin_zone: current_origin_zone,
                 dest_world_name: current_dest_name,
                 dest_uwp: current_dest_uwp,
+                dest_coords: current_dest_coords,
+                dest_zone: current_dest_zone,
                 available_goods: current_goods,
                 available_passengers: current_passengers,
                 ship_manifest: current_manifest,
@@ -335,24 +364,7 @@ pub fn Trade(
         });
     }
 
-    // Additional world-related signals (coordinates and zone)
-    let origin_coords = RwSignal::new(origin_world.get_untracked().coordinates);
-    let origin_zone = RwSignal::new(origin_world.get_untracked().travel_zone);
-    let dest_coords = RwSignal::new(
-        dest_world
-            .get_untracked()
-            .as_ref()
-            .and_then(|w| w.coordinates),
-    );
-    let dest_zone = RwSignal::new(
-        dest_world
-            .get_untracked()
-            .as_ref()
-            .map(|w| w.travel_zone)
-            .unwrap_or(ZoneClassification::Green),
-    );
-
-    // Distance between worlds
+    // Distance between worlds (calculated from coordinates)
     let distance = RwSignal::new(0);
 
     let dest_to_origin = move || {
@@ -379,6 +391,7 @@ pub fn Trade(
 
     // Keep origin world updated based on changes in name or uwp.
     // If name or uwp changes, update origin_world.
+    // NOTE: Trade table generation is now handled by the server.
     Effect::new(move |prev: Option<(String, String)>| {
         if let Some((prev_name, prev_uwp)) = &prev
             && *prev_name == origin_world_name.get()
@@ -399,16 +412,6 @@ pub fn Trade(
             world.travel_zone = origin_zone.get();
             world.gen_trade_classes();
             write_origin_world.set(world);
-
-            // Now update available goods only after the first (restoration) pass
-            let ag = AvailableGoodsTable::for_world(
-                TradeTable::global(),
-                &origin_world.read().get_trade_classes(),
-                origin_world.read().get_population(),
-                illegal_goods.get(),
-            )
-            .unwrap();
-            write_available_goods.set(ag);
             calc_distance_closure();
         } else {
             // If we don't have a valid name, reset other UI elements to reasonable defaults.
@@ -420,6 +423,7 @@ pub fn Trade(
 
     // Keep destination world updated based on changes in name or uwp.
     // If name or uwp changes, update dest_world.
+    // NOTE: Passenger generation is now handled by the server.
     Effect::new(move |prev: Option<(String, String)>| {
         if let Some((prev_name, prev_uwp)) = &prev
             && *prev_name == dest_world_name.get()
@@ -443,26 +447,6 @@ pub fn Trade(
 
             write_dest_world.set(Some(world.clone()));
             calc_distance_closure();
-
-            if distance.get() > 0 {
-                write_available_passengers.update(|ap| {
-                    let origin = origin_world.get();
-                    ap.get_or_insert_with(AvailablePassengers::default)
-                        .generate(
-                            origin.get_population(),
-                            origin.port,
-                            origin.travel_zone,
-                            origin.tech_level,
-                            world.get_population(),
-                            world.port,
-                            world.travel_zone,
-                            world.tech_level,
-                            distance.get(),
-                            i32::from(steward_skill.get()),
-                            i32::from(buyer_broker_skill.get()),
-                        )
-                })
-            }
         } else {
             // If we don't have a valid name, reset other UI elements to reasonable defaults.
             write_dest_world.set(None);
@@ -472,68 +456,12 @@ pub fn Trade(
         (name, uwp)
     });
 
-    // Recalculate prices and passengers when skills or world parameters change (using saved rolls, not regenerating)
-    Effect::new(move |_| {
-        let buyer = buyer_broker_skill.get();
-        let supplier = seller_broker_skill.get();
-        let steward = steward_skill.get();
-        let origin_world = origin_world.get();
-        let dest_world = dest_world.get();
-        let dist = distance.get();
-
-        // Check if destination world changed (not just skills)
-        let current_dest_name = dest_world.as_ref().map(|w| w.name.clone());
-
-        // Recalculate buy prices using saved rolls
-        write_available_goods.update(|ag| {
-            ag.price_goods_to_buy(&origin_world.get_trade_classes(), buyer, supplier);
-
-            // Recalculate sell prices if we have a destination
-            if let Some(ref world) = dest_world {
-                ag.price_goods_to_sell(Some(world.get_trade_classes()), supplier, buyer);
-            } else {
-                ag.price_goods_to_sell(None, supplier, buyer);
-            }
-
-            ag.sort_by_discount();
-        });
-
-        // Reprice the manifest
-        // Manifest goods are sold at the destination, so use dest_world for pricing
-        write_ship_manifest.update(|manifest| {
-            // Destination changed - generate new sell price rolls
-            manifest.price_goods(
-                &dest_world,
-                buyer_broker_skill.get(),
-                seller_broker_skill.get(),
-            );
-        });
-
-        // Recalculate passengers and freight using saved rolls
-        if let Some(ref world) = dest_world
-            && dist > 0
-        {
-            write_available_passengers.update(|passengers_opt| {
-                if let Some(passengers) = passengers_opt {
-                    passengers.generate(
-                        origin_world.get_population(),
-                        origin_world.port,
-                        origin_world.travel_zone,
-                        origin_world.tech_level,
-                        world.get_population(),
-                        world.port,
-                        world.travel_zone,
-                        world.tech_level,
-                        dist,
-                        i32::from(steward),
-                        i32::from(buyer),
-                    );
-                }
-            });
-        }
-
-        current_dest_name
-    });
+    // NOTE: Trade table generation and pricing recalculation is now handled by the server.
+    // The server is authoritative for:
+    // - Regenerating AvailableGoodsTable when origin world changes
+    // - Repricing goods when skills or worlds change
+    // - Repricing ship manifest when destination or skills change
+    // Clients only control amounts bought/sold.
 
     view! {
         <div class:App>
@@ -712,14 +640,8 @@ pub fn Trade(
                             on:change=move |ev| {
                                 let checked = event_target_checked(&ev);
                                 write_illegal_goods.set(checked);
-                                let ag = AvailableGoodsTable::for_world(
-                                        TradeTable::global(),
-                                        &origin_world.read().get_trade_classes(),
-                                        origin_world.read().get_population(),
-                                        checked,
-                                    )
-                                    .unwrap();
-                                write_available_goods.set(ag);
+                                // NOTE: Trade table regeneration is now handled by the server
+                                // when it receives the updated illegal_goods value
                             }
                         />
                     </div>

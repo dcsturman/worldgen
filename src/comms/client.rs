@@ -15,18 +15,24 @@ use super::TradeState;
 use crate::trade::available_goods::AvailableGoodsTable;
 use crate::trade::available_passengers::AvailablePassengers;
 use crate::trade::ship_manifest::ShipManifest;
+use crate::trade::ZoneClassification;
 
 /// Holds the write signals for all trade state fields
 ///
-/// Note: World objects are NOT synced - instead we sync world name and UWP.
-/// Clients regenerate World objects from name/UWP using Effects.
-/// This ensures unidirectional data flow and prevents infinite loops.
+/// Note: World objects are NOT synced - instead we sync world name, UWP, coordinates, and zone.
+/// The server generates World objects from these fields.
+/// Clients use TravellerMap for world lookup (user picks the world), but the server is
+/// authoritative for World generation, trade tables, pricing, and passenger generation.
 #[derive(Clone)]
 pub struct TradeSignals {
     pub origin_world_name: WriteSignal<String>,
     pub origin_uwp: WriteSignal<String>,
+    pub origin_coords: WriteSignal<Option<(i32, i32)>>,
+    pub origin_zone: WriteSignal<ZoneClassification>,
     pub dest_world_name: WriteSignal<String>,
     pub dest_uwp: WriteSignal<String>,
+    pub dest_coords: WriteSignal<Option<(i32, i32)>>,
+    pub dest_zone: WriteSignal<ZoneClassification>,
     pub available_goods: WriteSignal<AvailableGoodsTable>,
     pub available_passengers: WriteSignal<Option<AvailablePassengers>>,
     pub ship_manifest: WriteSignal<ShipManifest>,
@@ -174,8 +180,12 @@ fn states_equal(a: &TradeState, b: &TradeState) -> bool {
     // Compare all fields except version
     a.origin_world_name == b.origin_world_name
         && a.origin_uwp == b.origin_uwp
+        && a.origin_coords == b.origin_coords
+        && a.origin_zone == b.origin_zone
         && a.dest_world_name == b.dest_world_name
         && a.dest_uwp == b.dest_uwp
+        && a.dest_coords == b.dest_coords
+        && a.dest_zone == b.dest_zone
         && a.available_goods == b.available_goods
         && a.available_passengers == b.available_passengers
         && a.ship_manifest == b.ship_manifest
@@ -218,8 +228,12 @@ fn handle_message(
     // Using set() which will trigger reactivity only if the value changed
     signals.origin_world_name.set(state.origin_world_name);
     signals.origin_uwp.set(state.origin_uwp);
+    signals.origin_coords.set(state.origin_coords);
+    signals.origin_zone.set(state.origin_zone);
     signals.dest_world_name.set(state.dest_world_name);
     signals.dest_uwp.set(state.dest_uwp);
+    signals.dest_coords.set(state.dest_coords);
+    signals.dest_zone.set(state.dest_zone);
     signals.available_goods.set(state.available_goods);
     signals.available_passengers.set(state.available_passengers);
     signals.ship_manifest.set(state.ship_manifest);
