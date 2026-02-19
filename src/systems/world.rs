@@ -486,13 +486,13 @@ impl World {
 
     /// Returns a formatted string of all trade classifications
     pub fn trade_classes_string(&self) -> String {
-        let res = self
+        
+        self
             .trade_classes
             .iter()
             .map(|x| x.to_string())
             .collect::<Vec<String>>()
-            .join(", ");
-        res
+            .join(", ")
     }
 
     /// Computes astronomical data for the world based on its star

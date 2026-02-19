@@ -554,17 +554,15 @@ impl System {
             }
         }
 
-        if let Some(secondary) = &mut self.secondary {
-            if secondary.orbit != StarOrbit::Primary {
+        if let Some(secondary) = &mut self.secondary
+            && secondary.orbit != StarOrbit::Primary {
                 secondary.fill_system(main_world_copy.clone(), false);
             }
-        }
 
-        if let Some(tertiary) = &mut self.tertiary {
-            if tertiary.orbit != StarOrbit::Primary {
+        if let Some(tertiary) = &mut self.tertiary
+            && tertiary.orbit != StarOrbit::Primary {
                 tertiary.fill_system(main_world_copy, false);
             }
-        }
     }
 
     fn place_main_world(&mut self, mut main_world: World) {
@@ -750,22 +748,20 @@ impl Display for System {
         for body in self.orbit_slots.iter() {
             match body {
                 Some(OrbitContent::Secondary) => {
-                    if let Some(secondary) = &self.secondary {
-                        if let StarOrbit::System(orbit) = secondary.orbit {
+                    if let Some(secondary) = &self.secondary
+                        && let StarOrbit::System(orbit) = secondary.orbit {
                             writeln!(
                                 f,
                                 "{:<7}{:<24}{:<12}",
                                 orbit, secondary.name, secondary.star
                             )?;
                         }
-                    }
                 }
                 Some(OrbitContent::Tertiary) => {
-                    if let Some(tertiary) = &self.tertiary {
-                        if let StarOrbit::System(orbit) = tertiary.orbit {
+                    if let Some(tertiary) = &self.tertiary
+                        && let StarOrbit::System(orbit) = tertiary.orbit {
                             writeln!(f, "{:<7}{:<24}{:<12}", orbit, tertiary.name, tertiary.star)?;
                         }
-                    }
                 }
                 Some(OrbitContent::World(world)) => {
                     writeln!(f, "{world}")?;

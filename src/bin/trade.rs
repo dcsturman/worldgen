@@ -18,8 +18,8 @@ use worldgen::logging;
 /// Uses the current page's host to construct a WebSocket URL.
 /// In production, this will be proxied through nginx to the backend server.
 fn get_ws_url() -> String {
-    if let Some(window) = web_sys::window() {
-        if let Ok(location) = window.location().host() {
+    if let Some(window) = web_sys::window()
+        && let Ok(location) = window.location().host() {
             let protocol = if window.location().protocol().unwrap_or_default() == "https:" {
                 "wss"
             } else {
@@ -27,7 +27,6 @@ fn get_ws_url() -> String {
             };
             return format!("{}://{}/ws/trade", protocol, location);
         }
-    }
     // Fallback for local development
     "ws://localhost:8081/ws/trade".to_string()
 }
