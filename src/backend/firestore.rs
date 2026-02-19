@@ -74,6 +74,9 @@ pub enum FirestoreError {
 
     #[error("Serialization error: {0}")]
     SerializationError(String),
+
+    #[error("Schema mismatch (document has old format): {0}")]
+    SchemaError(String),
 }
 
 pub async fn initialize_firestore() -> Result<Option<FirestoreDb>, FirestoreError> {
@@ -150,9 +153,18 @@ pub async fn get_trade_state(
                 .one(STATE_DOCUMENT_NAME)
                 .await
                 .map_err(|e| {
-                    error!("❌ Firestore: Failed to read trade state: {}", e);
-                    error!("❌ Firestore: Error details: {:?}", e);
-                    FirestoreError::ReadError(e.to_string())
+                    // Check if this is a deserialization error (schema mismatch)
+                    let error_str = e.to_string();
+                    if error_str.contains("SerializationError") || error_str.contains("missing field") {
+                        warn!("⚠️  Firestore: Document exists but has incompatible schema (likely old format): {}", e);
+                        warn!("⚠️  Firestore: Will use default state and overwrite with new schema");
+                        // Return a special error that we'll handle by using default state
+                        FirestoreError::SchemaError(e.to_string())
+                    } else {
+                        error!("❌ Firestore: Failed to read trade state: {}", e);
+                        error!("❌ Firestore: Error details: {:?}", e);
+                        FirestoreError::ReadError(e.to_string())
+                    }
                 })?;
 
             match result {

@@ -162,6 +162,27 @@ async fn handle_connection(
                 }
             }
         }
+        Err(FirestoreError::SchemaError(e)) => {
+            // Schema mismatch - use default state and overwrite the old document
+            log::warn!("Schema mismatch detected: {}. Using default state and overwriting old document.", e);
+            let default_state = TradeState::default();
+            if let Err(save_err) = save_trade_state(&db, DEFAULT_SESSION, &default_state).await {
+                log::error!("Failed to save default state after schema error: {}", save_err);
+            }
+            // Send the default state to the client
+            match serde_json::to_string(&default_state) {
+                Ok(json) => {
+                    if tx.send(Message::Text(json.into())).is_ok() {
+                        log::info!("Sent default state to client {} after schema migration", client_id);
+                    } else {
+                        log::warn!("Failed to queue default state for client {}", client_id);
+                    }
+                }
+                Err(e) => {
+                    log::error!("Failed to serialize default state for client {}: {}", client_id, e);
+                }
+            }
+        }
         Err(e) => {
             log::error!("Failed to load initial state for client {}: {}", client_id, e);
         }

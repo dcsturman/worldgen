@@ -3,7 +3,7 @@
 //! This module provides a WebSocket client for syncing trade state
 //! with the server and other connected clients.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use leptos::prelude::*;
@@ -12,16 +12,21 @@ use wasm_bindgen::prelude::*;
 use web_sys::{CloseEvent, ErrorEvent, MessageEvent, WebSocket};
 
 use super::TradeState;
-use crate::systems::world::World;
 use crate::trade::available_goods::AvailableGoodsTable;
 use crate::trade::available_passengers::AvailablePassengers;
 use crate::trade::ship_manifest::ShipManifest;
 
 /// Holds the write signals for all trade state fields
+///
+/// Note: World objects are NOT synced - instead we sync world name and UWP.
+/// Clients regenerate World objects from name/UWP using Effects.
+/// This ensures unidirectional data flow and prevents infinite loops.
 #[derive(Clone)]
 pub struct TradeSignals {
-    pub origin_world: WriteSignal<World>,
-    pub dest_world: WriteSignal<Option<World>>,
+    pub origin_world_name: WriteSignal<String>,
+    pub origin_uwp: WriteSignal<String>,
+    pub dest_world_name: WriteSignal<String>,
+    pub dest_uwp: WriteSignal<String>,
     pub available_goods: WriteSignal<AvailableGoodsTable>,
     pub available_passengers: WriteSignal<Option<AvailablePassengers>>,
     pub ship_manifest: WriteSignal<ShipManifest>,
@@ -40,6 +45,9 @@ pub struct Client {
     /// Last state received from server (used to detect echoes)
     /// If current state matches this exactly, we don't send it back
     last_received_state: Rc<RefCell<Option<TradeState>>>,
+    /// Whether we have received the initial state from the server
+    /// This prevents sending default state before server has a chance to send us the real state
+    received_initial_state: Rc<Cell<bool>>,
 }
 
 impl Client {
@@ -58,13 +66,15 @@ impl Client {
 
         let signals: Rc<RefCell<Option<TradeSignals>>> = Rc::new(RefCell::new(None));
         let last_received_state: Rc<RefCell<Option<TradeState>>> = Rc::new(RefCell::new(None));
+        let received_initial_state: Rc<Cell<bool>> = Rc::new(Cell::new(false));
 
         // Set up message handler
         let signals_clone = signals.clone();
         let last_received_clone = last_received_state.clone();
+        let received_initial_clone = received_initial_state.clone();
         let onmessage_callback = Closure::<dyn FnMut(_)>::new(move |e: MessageEvent| {
             if let Some(text) = e.data().as_string() {
-                handle_message(&text, &signals_clone, &last_received_clone);
+                handle_message(&text, &signals_clone, &last_received_clone, &received_initial_clone);
             }
         });
         ws.set_onmessage(Some(onmessage_callback.as_ref().unchecked_ref()));
@@ -91,7 +101,7 @@ impl Client {
         ws.set_onclose(Some(onclose_callback.as_ref().unchecked_ref()));
         onclose_callback.forget();
 
-        Ok(Self { ws, signals, last_received_state })
+        Ok(Self { ws, signals, last_received_state, received_initial_state })
     }
 
     /// Register signals with the client for receiving updates
@@ -148,13 +158,24 @@ impl Client {
     pub fn clear_last_received(&self) {
         *self.last_received_state.borrow_mut() = None;
     }
+
+    /// Check if we have received the initial state from the server
+    ///
+    /// This is used to prevent sending default state before the server has a chance
+    /// to send us the real state. Once we receive the first message from the server,
+    /// this returns true and we can start sending user changes.
+    pub fn has_received_initial_state(&self) -> bool {
+        self.received_initial_state.get()
+    }
 }
 
 /// Compare two TradeState instances for equality (ignoring version)
 fn states_equal(a: &TradeState, b: &TradeState) -> bool {
     // Compare all fields except version
-    a.origin_world == b.origin_world
-        && a.dest_world == b.dest_world
+    a.origin_world_name == b.origin_world_name
+        && a.origin_uwp == b.origin_uwp
+        && a.dest_world_name == b.dest_world_name
+        && a.dest_uwp == b.dest_uwp
         && a.available_goods == b.available_goods
         && a.available_passengers == b.available_passengers
         && a.ship_manifest == b.ship_manifest
@@ -169,6 +190,7 @@ fn handle_message(
     text: &str,
     signals: &Rc<RefCell<Option<TradeSignals>>>,
     last_received: &Rc<RefCell<Option<TradeState>>>,
+    received_initial_state: &Rc<Cell<bool>>,
 ) {
     let signals_opt = signals.borrow();
     let Some(signals) = signals_opt.as_ref() else {
@@ -186,13 +208,18 @@ fn handle_message(
 
     debug!("Received trade state update from server");
 
+    // Mark that we've received the initial state from the server
+    received_initial_state.set(true);
+
     // Store the received state so we can detect echoes
     *last_received.borrow_mut() = Some(state.clone());
 
     // Update each signal with the new state values
     // Using set() which will trigger reactivity only if the value changed
-    signals.origin_world.set(state.origin_world);
-    signals.dest_world.set(state.dest_world);
+    signals.origin_world_name.set(state.origin_world_name);
+    signals.origin_uwp.set(state.origin_uwp);
+    signals.dest_world_name.set(state.dest_world_name);
+    signals.dest_uwp.set(state.dest_uwp);
     signals.available_goods.set(state.available_goods);
     signals.available_passengers.set(state.available_passengers);
     signals.ship_manifest.set(state.ship_manifest);

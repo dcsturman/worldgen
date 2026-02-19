@@ -240,78 +240,12 @@ pub fn Trade(
     // Toggle for including illegal goods in market generation
     let (illegal_goods, write_illegal_goods) = signal::<bool>(false);
 
-    // Register signals with the client if provided
-    if let Some(ref client) = client {
-        let signals = TradeSignals {
-            origin_world: write_origin_world,
-            dest_world: write_dest_world,
-            available_goods: write_available_goods,
-            available_passengers: write_available_passengers,
-            ship_manifest: write_ship_manifest,
-            buyer_broker_skill: write_buyer_broker_skill,
-            seller_broker_skill: write_seller_broker_skill,
-            steward_skill: write_steward_skill,
-            illegal_goods: write_illegal_goods,
-        };
-        client.register_signals(signals);
-
-        // Set up Effect to send state to server on any signal change
-        let client_for_effect = client.clone();
-        Effect::new(move |_| {
-            // Read all signals to track them (this registers them as dependencies)
-            let current_origin = origin_world.get();
-            let current_dest = dest_world.get();
-            let current_goods = available_goods.get();
-            let current_passengers = available_passengers.get();
-            let current_manifest = ship_manifest.get();
-            let current_buyer_skill = buyer_broker_skill.get();
-            let current_seller_skill = seller_broker_skill.get();
-            let current_steward = steward_skill.get();
-            let current_illegal = illegal_goods.get();
-
-            // Only send if the client is connected
-            if !client_for_effect.is_connected() {
-                debug!("Skipping send - client not connected");
-                return;
-            }
-
-            // Build the TradeState
-            let state = TradeState {
-                version: 1, // Version for state compatibility
-                origin_world: current_origin,
-                dest_world: current_dest,
-                available_goods: current_goods,
-                available_passengers: current_passengers,
-                ship_manifest: current_manifest,
-                buyer_broker_skill: current_buyer_skill,
-                seller_broker_skill: current_seller_skill,
-                steward_skill: current_steward,
-                illegal_goods: current_illegal,
-            };
-
-            // Skip sending if this is just an echo of what we received from server
-            // This prevents infinite loops while still allowing user changes during
-            // server updates to be sent
-            if client_for_effect.is_echo_of_received(&state) {
-                debug!("Skipping send - state matches last received from server");
-                // Clear the stored state so future identical changes will be sent
-                client_for_effect.clear_last_received();
-                return;
-            }
-
-            info!("Sending trade state update to server");
-            client_for_effect.send_state(&state);
-        });
-    }
-
     // Dialog state for manually adding goods to manifest
     let show_add_manual = RwSignal::new(false);
 
     let origin_world_name = RwSignal::new(origin_world.get_untracked().name.clone());
     let origin_uwp = RwSignal::new(origin_world.get_untracked().to_uwp());
 
-    let origin_coords = RwSignal::new(origin_world.get_untracked().coordinates);
-    let origin_zone = RwSignal::new(origin_world.get_untracked().travel_zone);
     let dest_world_name = RwSignal::new(
         dest_world
             .get_untracked()
@@ -327,9 +261,87 @@ pub fn Trade(
             .unwrap_or_default(),
     );
 
-    // Distance between worlds
-    let distance = RwSignal::new(0);
+    // Register signals with the client if provided
+    if let Some(ref client) = client {
+        let signals = TradeSignals {
+            origin_world_name: origin_world_name.write_only(),
+            origin_uwp: origin_uwp.write_only(),
+            dest_world_name: dest_world_name.write_only(),
+            dest_uwp: dest_uwp.write_only(),
+            available_goods: write_available_goods,
+            available_passengers: write_available_passengers,
+            ship_manifest: write_ship_manifest,
+            buyer_broker_skill: write_buyer_broker_skill,
+            seller_broker_skill: write_seller_broker_skill,
+            steward_skill: write_steward_skill,
+            illegal_goods: write_illegal_goods,
+        };
+        client.register_signals(signals);
 
+        // Set up Effect to send state to server on any signal change
+        let client_for_effect = client.clone();
+        Effect::new(move |_| {
+            // Read all signals to track them (this registers them as dependencies)
+            let current_origin_name = origin_world_name.get();
+            let current_origin_uwp = origin_uwp.get();
+            let current_dest_name = dest_world_name.get();
+            let current_dest_uwp = dest_uwp.get();
+            let current_goods = available_goods.get();
+            let current_passengers = available_passengers.get();
+            let current_manifest = ship_manifest.get();
+            let current_buyer_skill = buyer_broker_skill.get();
+            let current_seller_skill = seller_broker_skill.get();
+            let current_steward = steward_skill.get();
+            let current_illegal = illegal_goods.get();
+
+            // Only send if the client is connected
+            if !client_for_effect.is_connected() {
+                debug!("Skipping send - client not connected");
+                return;
+            }
+
+            // Don't send until we've received the initial state from the server
+            // This prevents sending default values before the server has a chance to sync
+            if !client_for_effect.has_received_initial_state() {
+                debug!("Skipping send - waiting for initial state from server");
+                return;
+            }
+
+            // Build the TradeState from name/uwp (not world objects)
+            let state = TradeState {
+                version: 1, // Version for state compatibility
+                origin_world_name: current_origin_name,
+                origin_uwp: current_origin_uwp,
+                dest_world_name: current_dest_name,
+                dest_uwp: current_dest_uwp,
+                available_goods: current_goods,
+                available_passengers: current_passengers,
+                ship_manifest: current_manifest,
+                buyer_broker_skill: current_buyer_skill,
+                seller_broker_skill: current_seller_skill,
+                steward_skill: current_steward,
+                illegal_goods: current_illegal,
+            };
+
+            // Skip sending if this is just an echo of what we received from server
+            // This prevents infinite loops while still allowing user changes during
+            // server updates to be sent
+            if client_for_effect.is_echo_of_received(&state) {
+                debug!("Skipping send - state matches last received from server");
+                // Don't clear the stored state - keep it so we can continue detecting echoes
+                return;
+            }
+
+            info!("Sending trade state update to server");
+            client_for_effect.send_state(&state);
+            // Clear the stored state after sending so we don't echo our own message back
+            client_for_effect.clear_last_received();
+        });
+    }
+
+    // Additional world-related signals (coordinates and zone)
+    let origin_coords = RwSignal::new(origin_world.get_untracked().coordinates);
+    let origin_zone = RwSignal::new(origin_world.get_untracked().travel_zone);
     let dest_coords = RwSignal::new(
         dest_world
             .get_untracked()
@@ -343,6 +355,9 @@ pub fn Trade(
             .map(|w| w.travel_zone)
             .unwrap_or(ZoneClassification::Green),
     );
+
+    // Distance between worlds
+    let distance = RwSignal::new(0);
 
     let dest_to_origin = move || {
         origin_world_name.set(dest_world_name.get());
