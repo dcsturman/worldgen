@@ -14,11 +14,13 @@ use std::sync::Arc;
 use firestore::FirestoreDb;
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 use tokio_tungstenite::tungstenite::Message;
 
-use crate::backend::firestore::{get_trade_state, initialize_firestore, save_trade_state, FirestoreError};
 use crate::backend::TradeState;
+use crate::backend::firestore::{
+    FirestoreError, get_trade_state, initialize_firestore, save_trade_state,
+};
 use crate::systems::world::World;
 use crate::trade::available_goods::AvailableGoodsTable;
 use crate::trade::table::TradeTable;
@@ -101,7 +103,9 @@ impl TradeServer {
             let current_state = self.current_state.clone();
 
             tokio::spawn(async move {
-                if let Err(e) = handle_connection(stream, addr, clients, next_id, db, current_state).await {
+                if let Err(e) =
+                    handle_connection(stream, addr, clients, next_id, db, current_state).await
+                {
                     log::error!("Error handling connection from {}: {}", addr, e);
                 }
             });
@@ -180,16 +184,26 @@ async fn handle_connection(
                     }
                 }
                 Err(e) => {
-                    log::error!("Failed to serialize initial state for client {}: {}", client_id, e);
+                    log::error!(
+                        "Failed to serialize initial state for client {}: {}",
+                        client_id,
+                        e
+                    );
                 }
             }
         }
         Err(FirestoreError::SchemaError(e)) => {
             // Schema mismatch - use default state and overwrite the old document
-            log::warn!("Schema mismatch detected: {}. Using default state and overwriting old document.", e);
+            log::warn!(
+                "Schema mismatch detected: {}. Using default state and overwriting old document.",
+                e
+            );
             let default_state = TradeState::default();
             if let Err(save_err) = save_trade_state(&db, DEFAULT_SESSION, &default_state).await {
-                log::error!("Failed to save default state after schema error: {}", save_err);
+                log::error!(
+                    "Failed to save default state after schema error: {}",
+                    save_err
+                );
             }
             // Update the shared current state
             {
@@ -200,18 +214,29 @@ async fn handle_connection(
             match serde_json::to_string(&default_state) {
                 Ok(json) => {
                     if tx.send(Message::Text(json.into())).is_ok() {
-                        log::info!("Sent default state to client {} after schema migration", client_id);
+                        log::info!(
+                            "Sent default state to client {} after schema migration",
+                            client_id
+                        );
                     } else {
                         log::warn!("Failed to queue default state for client {}", client_id);
                     }
                 }
                 Err(e) => {
-                    log::error!("Failed to serialize default state for client {}: {}", client_id, e);
+                    log::error!(
+                        "Failed to serialize default state for client {}: {}",
+                        client_id,
+                        e
+                    );
                 }
             }
         }
         Err(e) => {
-            log::error!("Failed to load initial state for client {}: {}", client_id, e);
+            log::error!(
+                "Failed to load initial state for client {}: {}",
+                client_id,
+                e
+            );
         }
     }
 
@@ -227,20 +252,18 @@ async fn handle_connection(
     // Process incoming messages
     while let Some(msg) = ws_receiver.next().await {
         match msg {
-            Ok(Message::Text(text)) => {
-                match serde_json::from_str::<TradeState>(&text) {
-                    Ok(trade_state) => {
-                        handle_trade_state_update(trade_state, &db, &clients, &current_state).await;
-                    }
-                    Err(e) => {
-                        log::warn!(
-                            "Failed to deserialize TradeState from client {}: {}",
-                            client_id,
-                            e
-                        );
-                    }
+            Ok(Message::Text(text)) => match serde_json::from_str::<TradeState>(&text) {
+                Ok(trade_state) => {
+                    handle_trade_state_update(trade_state, &db, &clients, &current_state).await;
                 }
-            }
+                Err(e) => {
+                    log::warn!(
+                        "Failed to deserialize TradeState from client {}: {}",
+                        client_id,
+                        e
+                    );
+                }
+            },
             Ok(Message::Close(_)) => {
                 log::info!("Client {} requested close", client_id);
                 break;
@@ -455,27 +478,26 @@ fn recalculate_trade_state(state: &mut TradeState, prev_state: Option<&TradeStat
         });
 
     // Regenerate trade table if origin world changed
-    if origin_changed
-        && let Some(ref world) = origin_world {
-            match AvailableGoodsTable::for_world(
-                TradeTable::global(),
-                &world.get_trade_classes(),
-                world.get_population(),
-                state.illegal_goods,
-            ) {
-                Ok(new_table) => {
-                    state.available_goods = new_table;
-                    recalculated = true;
-                    log::info!(
-                        "Regenerated trade table for origin world: {}",
-                        state.origin_world_name
-                    );
-                }
-                Err(e) => {
-                    log::error!("Failed to generate trade table: {}", e);
-                }
+    if origin_changed && let Some(ref world) = origin_world {
+        match AvailableGoodsTable::for_world(
+            TradeTable::global(),
+            &world.get_trade_classes(),
+            world.get_population(),
+            state.illegal_goods,
+        ) {
+            Ok(new_table) => {
+                state.available_goods = new_table;
+                recalculated = true;
+                log::info!(
+                    "Regenerated trade table for origin world: {}",
+                    state.origin_world_name
+                );
+            }
+            Err(e) => {
+                log::error!("Failed to generate trade table: {}", e);
             }
         }
+    }
 
     // Reprice goods if origin changed, dest changed, or skills changed
     if origin_changed || dest_changed || skills_changed {
@@ -496,7 +518,6 @@ fn recalculate_trade_state(state: &mut TradeState, prev_state: Option<&TradeStat
             );
 
             state.available_goods.sort_by_discount();
-            recalculated = true;
             log::info!("Repriced available goods");
         }
 
@@ -512,12 +533,9 @@ fn recalculate_trade_state(state: &mut TradeState, prev_state: Option<&TradeStat
 
     // Regenerate passengers if worlds or skills changed and we have both worlds
     if (origin_changed || dest_changed || skills_changed)
-        && origin_world.is_some()
-        && dest_world.is_some()
+        && let Some(origin) = origin_world
+        && let Some(dest) = dest_world
     {
-        let origin = origin_world.as_ref().unwrap();
-        let dest = dest_world.as_ref().unwrap();
-
         let mut passengers = state.available_passengers.take().unwrap_or_default();
         // Reset die rolls so we get fresh random values
         passengers.reset_die_rolls();
