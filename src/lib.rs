@@ -15,6 +15,7 @@
 //!
 //! The entire system is written in Rust using Leptos as a reactive front-end framework.
 
+pub mod backend;
 pub mod components;
 pub mod logging;
 pub mod systems;
