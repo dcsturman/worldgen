@@ -455,8 +455,8 @@ fn recalculate_trade_state(state: &mut TradeState, prev_state: Option<&TradeStat
         });
 
     // Regenerate trade table if origin world changed
-    if origin_changed {
-        if let Some(ref world) = origin_world {
+    if origin_changed
+        && let Some(ref world) = origin_world {
             match AvailableGoodsTable::for_world(
                 TradeTable::global(),
                 &world.get_trade_classes(),
@@ -476,7 +476,6 @@ fn recalculate_trade_state(state: &mut TradeState, prev_state: Option<&TradeStat
                 }
             }
         }
-    }
 
     // Reprice goods if origin changed, dest changed, or skills changed
     if origin_changed || dest_changed || skills_changed {
