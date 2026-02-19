@@ -1,6 +1,7 @@
 FROM rust:latest AS base
 RUN rustup update
-RUN cargo install trunk
+RUN curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash && \
+    cargo binstall -y trunk
 RUN rustup target add wasm32-unknown-unknown
 
 FROM base AS build-wasm
