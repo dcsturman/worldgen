@@ -137,22 +137,24 @@
 //!
 //! Includes print functionality for generating hard copies of trade data,
 //! though this feature is currently disabled but available for future use.
-use codee::string::JsonSerdeCodec;
+use std::rc::Rc;
+
 use leptos::prelude::*;
-use leptos_use::storage::{use_local_storage, use_local_storage_with_options, UseStorageOptions};
 #[allow(unused_imports)]
-use log::{debug, error};
+use log::{debug, error, info};
 use rand::Rng;
 
+use crate::comms::client::{Client, TradeSignals};
+use crate::comms::TradeState;
 use crate::components::traveller_map::WorldSearch;
 use crate::systems::world::World;
 
 use crate::trade::available_goods::{AvailableGoodsTable, Good};
 
+use crate::trade::ZoneClassification;
 use crate::trade::available_passengers::AvailablePassengers;
 use crate::trade::ship_manifest::ShipManifest;
 use crate::trade::table::TradeTable;
-use crate::trade::ZoneClassification;
 
 use crate::util::Credits;
 
@@ -204,69 +206,122 @@ use crate::INITIAL_UPP;
 /// Complete trade computer interface with all interactive elements
 /// and automatic reactive updates.
 #[component]
-pub fn Trade() -> impl IntoView {
-    // The main world always exists (starts with a default value) and we use that type in the context.
-    let (origin_world, write_origin_world, _) =
-        use_local_storage_with_options::<World, JsonSerdeCodec>(
-            "worldgen:origin_world:v1",
-            UseStorageOptions::default()
-                .initial_value(World::from_upp(INITIAL_NAME, INITIAL_UPP, false, true).unwrap()),
-        );
+pub fn Trade(
+    /// Optional WebSocket client for syncing state with server
+    #[prop(optional)]
+    client: Option<Rc<Client>>,
+) -> impl IntoView {
+    // The main world always exists (starts with a default value)
+    let (origin_world, write_origin_world) =
+        signal(World::from_upp(INITIAL_NAME, INITIAL_UPP, false, true).unwrap());
 
-    // The destination world doesn't always exist - there is valid function w/o it.  So its an Option and starts as value None.
-    // Important to remember this as given the way Leptos_store works, this is the way you differentiate between the main world
-    // and the destination world in the state.
+    // The destination world doesn't always exist - there is valid function w/o it.
+    // So it's an Option and starts as value None.
+    let (dest_world, write_dest_world) = signal::<Option<World>>(None);
 
-    let (dest_world, write_dest_world, _) =
-        use_local_storage::<Option<World>, JsonSerdeCodec>("worldgen:dest_world:v1");
-    let (available_goods, write_available_goods, _) =
-        use_local_storage::<AvailableGoodsTable, JsonSerdeCodec>("worldgen:available_goods:v1");
+    // Available goods table
+    let (available_goods, write_available_goods) = signal(AvailableGoodsTable::default());
 
-    let (available_passengers, write_available_passengers, _) =
-        use_local_storage::<Option<AvailablePassengers>, JsonSerdeCodec>(
-            "worldgen:available_passengers:v1",
-        );
-    let (ship_manifest, write_ship_manifest, _) =
-        use_local_storage_with_options::<ShipManifest, JsonSerdeCodec>(
-            "worldgen:manifest:v1",
-            UseStorageOptions::default()
-                .initial_value(ShipManifest::default())
-                .delay_during_hydration(true),
-        );
-    //let (ship_manifest, write_ship_manifest) = signal(ShipManifest::default());
+    // Available passengers (optional)
+    let (available_passengers, write_available_passengers) =
+        signal::<Option<AvailablePassengers>>(None);
+
+    // Ship manifest
+    let (ship_manifest, write_ship_manifest) = signal(ShipManifest::default());
 
     // Used solely because there's a bug in `use_local_storage` that seems to restore from storage when we don't want it to
     let (hack_ship_recompute_manifest_price, hack_ship_recompute_manifest_price_set) = signal(0u64);
 
     // Skills involved, both player and adversary.
-    let (buyer_broker_skill, write_buyer_broker_skill, _) =
-        use_local_storage::<i16, JsonSerdeCodec>("worldgen:buyer_broker_skill:v1");
-    let (seller_broker_skill, write_seller_broker_skill, _) =
-        use_local_storage::<i16, JsonSerdeCodec>("worldgen:seller_broker_skill:v1");
-    let (steward_skill, write_steward_skill, _) =
-        use_local_storage::<i16, JsonSerdeCodec>("worldgen:steward_skill:v1");
+    let (buyer_broker_skill, write_buyer_broker_skill) = signal::<i16>(0);
+    let (seller_broker_skill, write_seller_broker_skill) = signal::<i16>(0);
+    let (steward_skill, write_steward_skill) = signal::<i16>(0);
+
     // Toggle for including illegal goods in market generation
-    let (illegal_goods, write_illegal_goods, _) =
-        use_local_storage::<bool, JsonSerdeCodec>("worldgen:illegal_goods:v1");
+    let (illegal_goods, write_illegal_goods) = signal::<bool>(false);
+
+    // Register signals with the client if provided
+    if let Some(ref client) = client {
+        let signals = TradeSignals {
+            origin_world: write_origin_world,
+            dest_world: write_dest_world,
+            available_goods: write_available_goods,
+            available_passengers: write_available_passengers,
+            ship_manifest: write_ship_manifest,
+            buyer_broker_skill: write_buyer_broker_skill,
+            seller_broker_skill: write_seller_broker_skill,
+            steward_skill: write_steward_skill,
+            illegal_goods: write_illegal_goods,
+        };
+        client.register_signals(signals);
+
+        // Set up Effect to send state to server on any signal change
+        let client_for_effect = client.clone();
+        Effect::new(move |_| {
+            // Read all signals to track them (this registers them as dependencies)
+            let current_origin = origin_world.get();
+            let current_dest = dest_world.get();
+            let current_goods = available_goods.get();
+            let current_passengers = available_passengers.get();
+            let current_manifest = ship_manifest.get();
+            let current_buyer_skill = buyer_broker_skill.get();
+            let current_seller_skill = seller_broker_skill.get();
+            let current_steward = steward_skill.get();
+            let current_illegal = illegal_goods.get();
+
+            // Only send if the client is connected
+            if !client_for_effect.is_connected() {
+                debug!("Skipping send - client not connected");
+                return;
+            }
+
+            // Build the TradeState
+            let state = TradeState {
+                version: 1, // Version for state compatibility
+                origin_world: current_origin,
+                dest_world: current_dest,
+                available_goods: current_goods,
+                available_passengers: current_passengers,
+                ship_manifest: current_manifest,
+                buyer_broker_skill: current_buyer_skill,
+                seller_broker_skill: current_seller_skill,
+                steward_skill: current_steward,
+                illegal_goods: current_illegal,
+            };
+
+            // Skip sending if this is just an echo of what we received from server
+            // This prevents infinite loops while still allowing user changes during
+            // server updates to be sent
+            if client_for_effect.is_echo_of_received(&state) {
+                debug!("Skipping send - state matches last received from server");
+                // Clear the stored state so future identical changes will be sent
+                client_for_effect.clear_last_received();
+                return;
+            }
+
+            info!("Sending trade state update to server");
+            client_for_effect.send_state(&state);
+        });
+    }
 
     // Dialog state for manually adding goods to manifest
     let show_add_manual = RwSignal::new(false);
 
-    let origin_world_name = RwSignal::new(origin_world.read_untracked().name.clone());
-    let origin_uwp = RwSignal::new(origin_world.read_untracked().to_uwp());
+    let origin_world_name = RwSignal::new(origin_world.get_untracked().name.clone());
+    let origin_uwp = RwSignal::new(origin_world.get_untracked().to_uwp());
 
-    let origin_coords = RwSignal::new(origin_world.read_untracked().coordinates);
-    let origin_zone = RwSignal::new(origin_world.read_untracked().travel_zone);
+    let origin_coords = RwSignal::new(origin_world.get_untracked().coordinates);
+    let origin_zone = RwSignal::new(origin_world.get_untracked().travel_zone);
     let dest_world_name = RwSignal::new(
         dest_world
-            .read_untracked()
+            .get_untracked()
             .as_ref()
             .map(|w| w.name.clone())
             .unwrap_or_default(),
     );
     let dest_uwp = RwSignal::new(
         dest_world
-            .read_untracked()
+            .get_untracked()
             .as_ref()
             .map(|w| w.to_uwp())
             .unwrap_or_default(),
@@ -277,13 +332,13 @@ pub fn Trade() -> impl IntoView {
 
     let dest_coords = RwSignal::new(
         dest_world
-            .read_untracked()
+            .get_untracked()
             .as_ref()
             .and_then(|w| w.coordinates),
     );
     let dest_zone = RwSignal::new(
         dest_world
-            .read_untracked()
+            .get_untracked()
             .as_ref()
             .map(|w| w.travel_zone)
             .unwrap_or(ZoneClassification::Green),
@@ -678,35 +733,35 @@ pub fn Trade() -> impl IntoView {
             </div>
             <ShipManifestView
                 origin_swap=dest_to_origin
-                _origin_world=origin_world
-                dest_world=dest_world
-                buyer_broker_skill=buyer_broker_skill
-                seller_broker_skill=seller_broker_skill
+                _origin_world=origin_world.into()
+                dest_world=dest_world.into()
+                buyer_broker_skill=buyer_broker_skill.into()
+                seller_broker_skill=seller_broker_skill.into()
                 distance=distance
-                ship_manifest=ship_manifest
+                ship_manifest=ship_manifest.into()
                 write_ship_manifest=write_ship_manifest
-                available_goods=available_goods
+                available_goods=available_goods.into()
                 write_available_goods=write_available_goods
-                available_passengers=available_passengers
+                available_passengers=available_passengers.into()
                 show_add_manual=show_add_manual
                 hack_set=hack_ship_recompute_manifest_price_set
             />
 
             <GoodsToSellView
-                origin_world=origin_world
-                dest_world=dest_world
-                ship_manifest=ship_manifest
+                origin_world=origin_world.into()
+                dest_world=dest_world.into()
+                ship_manifest=ship_manifest.into()
                 write_ship_manifest=write_ship_manifest
                 show_add_manual=show_add_manual
             />
 
             <TradeView
-                origin_world=origin_world
-                dest_world=dest_world
-                available_goods=available_goods
+                origin_world=origin_world.into()
+                dest_world=dest_world.into()
+                available_goods=available_goods.into()
                 write_available_goods=write_available_goods
-                available_passengers=available_passengers
-                ship_manifest=ship_manifest
+                available_passengers=available_passengers.into()
+                ship_manifest=ship_manifest.into()
                 write_ship_manifest=write_ship_manifest
             />
 
