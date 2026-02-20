@@ -19,14 +19,15 @@ use worldgen::logging;
 /// In production, this will be proxied through nginx to the backend server.
 fn get_ws_url() -> String {
     if let Some(window) = web_sys::window()
-        && let Ok(location) = window.location().host() {
-            let protocol = if window.location().protocol().unwrap_or_default() == "https:" {
-                "wss"
-            } else {
-                "ws"
-            };
-            return format!("{}://{}/ws/trade", protocol, location);
-        }
+        && let Ok(location) = window.location().host()
+    {
+        let protocol = if window.location().protocol().unwrap_or_default() == "https:" {
+            "wss"
+        } else {
+            "ws"
+        };
+        return format!("{}://{}/ws/trade", protocol, location);
+    }
     // Fallback for local development
     "ws://localhost:8081/ws/trade".to_string()
 }

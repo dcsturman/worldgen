@@ -5,10 +5,10 @@
 use serde::{Deserialize, Serialize};
 
 use crate::systems::world::World;
+use crate::trade::ZoneClassification;
 use crate::trade::available_goods::AvailableGoodsTable;
 use crate::trade::available_passengers::AvailablePassengers;
 use crate::trade::ship_manifest::ShipManifest;
-use crate::trade::ZoneClassification;
 
 /// The synchronized trade state shared between all connected clients
 ///
@@ -55,4 +55,3 @@ pub struct TradeState {
     /// Whether illegal goods are allowed
     pub illegal_goods: bool,
 }
-

@@ -23,14 +23,15 @@ const GA_MEASUREMENT_ID: &str = "G-L26P5SCYR2";
 /// In production, this will be proxied through nginx to the backend server.
 fn get_ws_url() -> String {
     if let Some(window) = web_sys::window()
-        && let Ok(location) = window.location().host() {
-            let protocol = if window.location().protocol().unwrap_or_default() == "https:" {
-                "wss"
-            } else {
-                "ws"
-            };
-            return format!("{}://{}/ws/trade", protocol, location);
-        }
+        && let Ok(location) = window.location().host()
+    {
+        let protocol = if window.location().protocol().unwrap_or_default() == "https:" {
+            "wss"
+        } else {
+            "ws"
+        };
+        return format!("{}://{}/ws/trade", protocol, location);
+    }
     // Fallback for local development
     "ws://localhost:8081/ws/trade".to_string()
 }
@@ -38,14 +39,15 @@ fn get_ws_url() -> String {
 /// Track page view for analytics
 fn track_page_view(_path: &str) {
     if let Some(window) = web_sys::window()
-        && let Ok(gtag) = Reflect::get(&window, &"gtag".into()) {
-            let _ = Function::from(gtag).call3(
-                &window,
-                &"config".into(),
-                &GA_MEASUREMENT_ID.into(),
-                &Object::new(),
-            );
-        }
+        && let Ok(gtag) = Reflect::get(&window, &"gtag".into())
+    {
+        let _ = Function::from(gtag).call3(
+            &window,
+            &"config".into(),
+            &GA_MEASUREMENT_ID.into(),
+            &Object::new(),
+        );
+    }
 }
 
 /// Main application component that handles routing based on URL path

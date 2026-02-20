@@ -43,7 +43,7 @@
 
 use firestore::{FirestoreDb, FirestoreDbOptions};
 
-use log::{debug, error, info, warn};
+use log::{debug, error, warn};
 use thiserror::Error;
 
 use crate::comms::TradeState;
@@ -88,7 +88,7 @@ pub async fn initialize_firestore() -> Result<Option<FirestoreDb>, FirestoreErro
     let database_id = std::env::var("FIRESTORE_DATABASE_ID")
         .expect("FIRESTORE_DATABASE_ID environment variable must be set");
 
-    info!(
+    debug!(
         "Initializing Firestore client for project: {} database: {}",
         &project_id, &database_id
     );
@@ -106,7 +106,7 @@ pub async fn initialize_firestore() -> Result<Option<FirestoreDb>, FirestoreErro
             error!("❌ Firestore: Error details: {:?}", e);
             FirestoreError::InitError(e.to_string())
         })?;
-        info!("Firestore client initialized successfully");
+        debug!("Firestore client initialized successfully");
         Ok(Some(firestore_db))
     }
 }
@@ -177,7 +177,7 @@ pub async fn get_trade_state(
                     Ok(state)
                 }
                 None => {
-                    info!(
+                    debug!(
                         "📝 Firestore: No trade state found for session: {}, creating default",
                         session_id
                     );
@@ -214,7 +214,7 @@ pub async fn save_trade_state(
     session_id: &str,
     state: &TradeState,
 ) -> Result<(), FirestoreError> {
-    info!("📝 Firestore: Starting save for session: {}", session_id);
+    debug!("📝 Firestore: Starting save for session: {}", session_id);
 
     match db_option {
         None => {
@@ -251,7 +251,7 @@ pub async fn save_trade_state(
 
             match result {
                 Ok(_) => {
-                    info!(
+                    debug!(
                         "✅ Firestore: Successfully saved trade state for session: {}",
                         session_id
                     );
@@ -310,7 +310,7 @@ pub async fn delete_trade_state(
                     FirestoreError::WriteError(e.to_string())
                 })?;
 
-            info!("Deleted trade state for session: {}", session_id);
+            debug!("Deleted trade state for session: {}", session_id);
             Ok(())
         }
     }

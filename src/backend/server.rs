@@ -675,10 +675,10 @@ async fn handle_regenerate_command(db: &SharedDb, clients: &Clients, current_sta
     }
 
     // Regenerate passengers with fresh die rolls
-    if origin_world.is_some() && dest_world.is_some() {
-        let origin = origin_world.as_ref().unwrap();
-        let dest = dest_world.as_ref().unwrap();
 
+    if let Some(origin) = origin_world.as_ref()
+        && let Some(dest) = dest_world.as_ref()
+    {
         let mut passengers = state.available_passengers.take().unwrap_or_default();
         passengers.reset_die_rolls();
 

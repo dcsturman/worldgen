@@ -30,41 +30,38 @@ RUN trunk build --release
 
 FROM base AS build-server
 
+ARG TARGETARCH
+
+# Determine target architecture once and save it for reuse
+RUN if [ "$TARGETARCH" = "arm64" ]; then \
+      echo "aarch64-unknown-linux-musl" > /tmp/musl_target; \
+    else \
+      echo "x86_64-unknown-linux-musl" > /tmp/musl_target; \
+    fi && \
+    echo "Building for target: $(cat /tmp/musl_target)"
+
 # Build native WebSocket server for musl (Alpine compatibility)
-RUN rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
-RUN apt-get update && apt-get install -y musl-tools musl-dev
+RUN rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl && \
+    apt-get update && apt-get install -y musl-tools musl-dev
 
 RUN mkdir /server
 WORKDIR /server
 
-COPY Cargo.toml Cargo.lock /server/
+COPY Cargo.toml Cargo.lock ./
 
 # Copy the recipe from planner
 COPY --from=planner /app/recipe.json recipe.json
 
-# Determine target architecture and build dependencies
-ARG TARGETARCH
-RUN set -e; \
-    if [ "$TARGETARCH" = "arm64" ]; then \
-      MUSL_TARGET="aarch64-unknown-linux-musl"; \
-    else \
-      MUSL_TARGET="x86_64-unknown-linux-musl"; \
-    fi; \
-    echo "Building for target: $MUSL_TARGET"; \
+# Cook dependencies with cache mount - speeds up dependency compilation
+RUN --mount=type=cache,target=/server/target \
+    MUSL_TARGET=$(cat /tmp/musl_target) && \
     cargo chef cook --release --recipe-path recipe.json --target "$MUSL_TARGET"
 
 # Now copy the actual source code
 COPY src ./src/
 
-# Build the server binary
-ARG TARGETARCH
-RUN set -e; \
-    if [ "$TARGETARCH" = "arm64" ]; then \
-      MUSL_TARGET="aarch64-unknown-linux-musl"; \
-    else \
-      MUSL_TARGET="x86_64-unknown-linux-musl"; \
-    fi; \
-    echo "Building server for target: $MUSL_TARGET"; \
+# Build the server binary - uses cached dependencies from cook step
+RUN MUSL_TARGET=$(cat /tmp/musl_target) && \
     cargo build --release --bin server --features backend --target "$MUSL_TARGET" && \
     cp "/server/target/$MUSL_TARGET/release/server" /server/target/release/server
 

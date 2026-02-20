@@ -79,8 +79,8 @@ use std::fmt::{Display, Formatter, Result as FmtResult};
 #[allow(unused_imports)]
 use log::debug;
 
-use crate::trade::table::{Availability, TradeTable, TradeTableEntry};
 use crate::trade::TradeClass;
+use crate::trade::table::{Availability, TradeTable, TradeTableEntry};
 
 /// A trade good available for purchase at a specific world
 ///
@@ -775,7 +775,10 @@ impl Good {
     ) {
         if let Some(trade_classes) = trade_classes {
             // Roll 3d6 and save it
-            debug!("(Good.price_to_sell_rng) Pricing {} with prior roll of {:?} with trade classes {trade_classes:?}", self.name, self.sell_price_roll);
+            debug!(
+                "(Good.price_to_sell_rng) Pricing {} with prior roll of {:?} with trade classes {trade_classes:?}",
+                self.name, self.sell_price_roll
+            );
             let roll = match self.sell_price_roll {
                 Some(roll) => roll,
                 None => {
@@ -1031,7 +1034,7 @@ mod tests {
 
         table.gen_entry(entry.clone(), 5).unwrap();
         // First with a world with no trade classes
-        table.price_goods_to_buy(&Vec::default(), 0, 0);        
+        table.price_goods_to_buy(&Vec::default(), 0, 0);
 
         let original_cost = table.goods()[0].buy_cost;
 

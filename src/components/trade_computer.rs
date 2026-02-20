@@ -618,7 +618,7 @@ fn GoodsToSellView(
             .get()
             .as_ref()
             .map(|w| format!("{} [{}]", &w.name, &w.trade_classes_string()))
-            .unwrap_or_else(|| String::new())
+            .unwrap_or_default()
     });
 
     view! {
@@ -1297,6 +1297,7 @@ fn ShipManifestView(
 ) -> impl IntoView {
     let manual_selected_index = RwSignal::new(11i16);
     let manual_qty_input = RwSignal::new(String::new());
+    let manual_purchase_price_input = RwSignal::new(String::new());
 
     let remove_high_passenger = move |_| {
         write_ship_manifest.update(|manifest| {
@@ -1643,6 +1644,13 @@ fn ShipManifestView(
                                 prop:value=manual_qty_input
                                 on:input=move |ev| manual_qty_input.set(event_target_value(&ev))
                             />
+                            <label class="modal-label">"Purchase Price (Cr)"</label>
+                            <input
+                                type="number"
+                                min="0"
+                                prop:value=manual_purchase_price_input
+                                on:input=move |ev| manual_purchase_price_input.set(event_target_value(&ev))
+                                />
                         </div>
                         <div class="modal-actions">
                             <button
@@ -1663,6 +1671,15 @@ fn ShipManifestView(
                                                     Some("Please enter a quantity greater than zero."),
                                                 );
                                             }
+                                    let purchase_price_txt = manual_purchase_price_input.get();
+                                    let purchase_price = purchase_price_txt.parse::<i32>().unwrap_or(0);
+                                    if purchase_price < 0 && let Some(d) = web_sys::window()
+                                        .and_then(|w| w.document())
+                                         && let Some(err) = d.get_element_by_id("tg-modal-error") {
+                                                err.set_text_content(
+                                                    Some("Please enter a purchase price greater than zero."),
+                                            );
+                                    }
                                     let table = TradeTable::default();
                                     if let Some(entry) = table.get(manual_selected_index.get()) {
                                         let good = Good {
@@ -1670,7 +1687,7 @@ fn ShipManifestView(
                                             quantity: qty,
                                             transacted: 0,
                                             base_cost: entry.base_cost,
-                                            buy_cost: entry.base_cost,
+                                            buy_cost: purchase_price,
                                             buy_cost_comment: String::new(),
                                             sell_price: None,
                                             sell_price_comment: String::new(),
@@ -1684,6 +1701,7 @@ fn ShipManifestView(
                                                 manifest.update_trade_good(good);
                                             });
                                         manual_qty_input.set(String::new());
+                                        manual_purchase_price_input.set(String::new());
                                         if let Some(d) = web_sys::window()
                                             .and_then(|w| w.document())
                                             && let Some(err) = d.get_element_by_id("tg-modal-error") {

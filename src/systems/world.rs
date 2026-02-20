@@ -15,7 +15,7 @@ use crate::systems::astro::AstroData;
 use crate::systems::has_satellites::HasSatellites;
 use crate::systems::name_tables::{gen_moon_name, gen_planet_name};
 use crate::systems::system::{Star, StarType};
-use crate::systems::system_tables::{get_zone, ZoneTable};
+use crate::systems::system_tables::{ZoneTable, get_zone};
 use crate::util::{arabic_to_roman, roll_1d6, roll_2d6};
 
 use crate::trade::PortCode;
@@ -486,9 +486,7 @@ impl World {
 
     /// Returns a formatted string of all trade classifications
     pub fn trade_classes_string(&self) -> String {
-        
-        self
-            .trade_classes
+        self.trade_classes
             .iter()
             .map(|x| x.to_string())
             .collect::<Vec<String>>()

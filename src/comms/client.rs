@@ -11,12 +11,12 @@ use log::{debug, error, info, warn};
 use wasm_bindgen::prelude::*;
 use web_sys::{CloseEvent, ErrorEvent, MessageEvent, WebSocket};
 
-use super::{TradeState, ServerMessage, ServerCommand};
+use super::{ServerCommand, ServerMessage, TradeState};
 use crate::systems::world::World;
+use crate::trade::ZoneClassification;
 use crate::trade::available_goods::AvailableGoodsTable;
 use crate::trade::available_passengers::AvailablePassengers;
 use crate::trade::ship_manifest::ShipManifest;
-use crate::trade::ZoneClassification;
 
 /// Holds the write signals for all trade state fields
 ///
@@ -69,7 +69,8 @@ impl Client {
     ///
     /// Returns an error string if the WebSocket connection fails
     pub fn new(server_url: &str) -> Result<Self, String> {
-        let ws = WebSocket::new(server_url).map_err(|e| format!("Failed to create WebSocket: {:?}", e))?;
+        let ws = WebSocket::new(server_url)
+            .map_err(|e| format!("Failed to create WebSocket: {:?}", e))?;
         ws.set_binary_type(web_sys::BinaryType::Arraybuffer);
 
         let signals: Rc<RefCell<Option<TradeSignals>>> = Rc::new(RefCell::new(None));
@@ -82,7 +83,12 @@ impl Client {
         let received_initial_clone = received_initial_state.clone();
         let onmessage_callback = Closure::<dyn FnMut(_)>::new(move |e: MessageEvent| {
             if let Some(text) = e.data().as_string() {
-                handle_message(&text, &signals_clone, &last_received_clone, &received_initial_clone);
+                handle_message(
+                    &text,
+                    &signals_clone,
+                    &last_received_clone,
+                    &received_initial_clone,
+                );
             }
         });
         ws.set_onmessage(Some(onmessage_callback.as_ref().unchecked_ref()));
@@ -104,12 +110,21 @@ impl Client {
 
         // Set up close handler
         let onclose_callback = Closure::<dyn FnMut(_)>::new(move |e: CloseEvent| {
-            info!("WebSocket connection closed: code={}, reason={}", e.code(), e.reason());
+            info!(
+                "WebSocket connection closed: code={}, reason={}",
+                e.code(),
+                e.reason()
+            );
         });
         ws.set_onclose(Some(onclose_callback.as_ref().unchecked_ref()));
         onclose_callback.forget();
 
-        Ok(Self { ws, signals, last_received_state, received_initial_state })
+        Ok(Self {
+            ws,
+            signals,
+            last_received_state,
+            received_initial_state,
+        })
     }
 
     /// Register signals with the client for receiving updates
@@ -267,4 +282,3 @@ fn handle_message(
 
     info!("Trade state updated from server");
 }
-
