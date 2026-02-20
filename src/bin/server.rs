@@ -24,8 +24,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .install_default()
         .expect("Failed to install rustls crypto provider");
 
-    // Initialize logging
-    env_logger::init();
+    // Initialize logging from RUST_LOG environment variable
+    env_logger::Builder::from_default_env()
+        .format_timestamp_millis()
+        .init();
 
     // Get server address from environment or use defaults
     let host = std::env::var("WS_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());

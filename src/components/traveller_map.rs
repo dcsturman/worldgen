@@ -153,7 +153,7 @@
 //!     let uwp = RwSignal::new("".to_string());
 //!     let coords = RwSignal::new(None);
 //!     let zone = RwSignal::new(ZoneClassification::Green);
-//!     
+//!
 //!     view! {
 //!         <WorldSearch
 //!             label="Origin World".to_string()
@@ -206,6 +206,7 @@ use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
+use web_sys::js_sys;
 
 use crate::trade::ZoneClassification;
 
@@ -614,7 +615,22 @@ pub fn WorldSearch(
     };
 
     let handle_name_keydown = move |ev: web_sys::KeyboardEvent| {
-        if ev.key() == "Enter" {
+        // Safely get the key using Reflect to avoid JavaScript exceptions
+        let key = match web_sys::js_sys::Reflect::get(&ev, &"key".into()) {
+            Ok(val) => {
+                if let Some(s) = val.as_string() {
+                    s
+                } else {
+                    String::new()
+                }
+            }
+            Err(_) => {
+                log::warn!("Failed to read KeyboardEvent.key property");
+                return;
+            }
+        };
+
+        if key == "Enter" {
             ev.prevent_default();
             let current_input = input_name.get();
             commit_name(current_input);
@@ -743,7 +759,7 @@ pub fn WorldSearch(
                 type="text"
                 bind:value=input_name
                 list=datalist_id.clone()
-                on:input=handle_selection
+                on:change=handle_selection
                 on:keydown=handle_name_keydown
             />
             <datalist class="world-suggestions" id=datalist_id>

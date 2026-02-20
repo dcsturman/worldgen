@@ -517,10 +517,9 @@ fn recalculate_trade_state(state: &mut TradeState, prev_state: Option<&TradeStat
             state.seller_broker_skill,
         );
 
-        // Price goods to sell at destination
-        let dest_trade_classes = dest_world.as_ref().map(|w| w.get_trade_classes());
+        // Price goods to sell at the current world.
         state.available_goods.price_goods_to_sell(
-            dest_trade_classes,
+            Some(world.get_trade_classes()),
             state.seller_broker_skill,
             state.buyer_broker_skill,
         );

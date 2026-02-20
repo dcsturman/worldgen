@@ -25,8 +25,8 @@ ENV RUSTFLAGS='--cfg getrandom_backend="wasm_js"'
 # Copy the source code
 COPY src ./src/
 
-# Build the actual project
-RUN trunk build --release
+# Build with debug symbols for better error messages (not minified)
+RUN trunk build
 
 FROM base AS build-server
 
