@@ -1,8 +1,14 @@
 FROM rust:latest AS base
 RUN rustup update
 RUN curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash && \
-    cargo binstall -y trunk
+    cargo binstall -y trunk cargo-chef
 RUN rustup target add wasm32-unknown-unknown
+
+FROM base AS planner
+WORKDIR /app
+COPY Cargo.toml Cargo.lock ./
+RUN cargo install cargo-chef
+RUN cargo chef prepare --recipe-path recipe.json
 
 FROM base AS build-wasm
 
@@ -11,12 +17,15 @@ RUN mkdir /web
 WORKDIR /web
 
 COPY Cargo.toml Cargo.lock index.html Trunk.toml /web/
-COPY src ./src/
 COPY public ./public/
 COPY style.css ./
 
 ENV RUSTFLAGS='--cfg getrandom_backend="wasm_js"'
 
+# Copy the source code
+COPY src ./src/
+
+# Build the actual project
 RUN trunk build --release
 
 FROM base AS build-server
@@ -29,17 +38,35 @@ RUN mkdir /server
 WORKDIR /server
 
 COPY Cargo.toml Cargo.lock /server/
-COPY src ./src/
 
-# Detect architecture and build for appropriate musl target
+# Copy the recipe from planner
+COPY --from=planner /app/recipe.json recipe.json
+
+# Determine target architecture and build dependencies
 ARG TARGETARCH
-RUN if [ "$TARGETARCH" = "arm64" ]; then \
+RUN set -e; \
+    if [ "$TARGETARCH" = "arm64" ]; then \
       MUSL_TARGET="aarch64-unknown-linux-musl"; \
     else \
       MUSL_TARGET="x86_64-unknown-linux-musl"; \
-    fi && \
-    cargo build --release --bin server --features backend --target $MUSL_TARGET && \
-    cp /server/target/$MUSL_TARGET/release/server /server/target/release/server
+    fi; \
+    echo "Building for target: $MUSL_TARGET"; \
+    cargo chef cook --release --recipe-path recipe.json --target "$MUSL_TARGET"
+
+# Now copy the actual source code
+COPY src ./src/
+
+# Build the server binary
+ARG TARGETARCH
+RUN set -e; \
+    if [ "$TARGETARCH" = "arm64" ]; then \
+      MUSL_TARGET="aarch64-unknown-linux-musl"; \
+    else \
+      MUSL_TARGET="x86_64-unknown-linux-musl"; \
+    fi; \
+    echo "Building server for target: $MUSL_TARGET"; \
+    cargo build --release --bin server --features backend --target "$MUSL_TARGET" && \
+    cp "/server/target/$MUSL_TARGET/release/server" /server/target/release/server
 
 FROM nginx:1.27-alpine
 

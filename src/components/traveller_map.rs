@@ -583,10 +583,19 @@ pub fn WorldSearch(
         signal::<Vec<(String, String, String, i32, i32)>>(vec![]);
     let (is_loading, set_is_loading) = signal(false);
 
-    // Separate signal for the UWP input field
+    // Separate input signals that don't trigger server updates
+    // These are only committed to the external signals on Enter or dropdown selection
+    let input_name = RwSignal::new(name.get_untracked());
     let input_uwp = RwSignal::new(uwp.get_untracked());
 
-    // Sync input_uwp when uwp changes from outside
+    // Sync input signals when external signals change from outside (e.g., from server)
+    Effect::new(move |_| {
+        let external_name = name.get();
+        if external_name != input_name.get_untracked() {
+            input_name.set(external_name);
+        }
+    });
+
     Effect::new(move |_| {
         let external_uwp = uwp.get();
         if external_uwp != input_uwp.get_untracked() {
@@ -594,22 +603,41 @@ pub fn WorldSearch(
         }
     });
 
+    // Commit the input name to the external signal
+    let commit_name = move |new_name: String| {
+        name.set(new_name);
+    };
+
+    // Commit the input UWP to the external signal
+    let commit_uwp = move |new_uwp: String| {
+        uwp.set(new_uwp);
+    };
+
+    let handle_name_keydown = move |ev: web_sys::KeyboardEvent| {
+        if ev.key() == "Enter" {
+            ev.prevent_default();
+            let current_input = input_name.get();
+            commit_name(current_input);
+        }
+    };
+
     let handle_uwp_input = move |ev| {
         let new_uwp = event_target_value(&ev);
         input_uwp.set(new_uwp.clone());
+        // Auto-commit when UWP is complete (9 characters)
         if new_uwp.len() == 9 {
-            uwp.set(new_uwp);
+            commit_uwp(new_uwp);
         }
     };
 
     // Handle selection from datalist
     let handle_selection = move |_| {
-        let current_name = name.get();
+        let current_input = input_name.get();
         // Parse the format: "WorldName (Sector) UWP"
-        let (world_name, sector_name) = if let Some(paren_start) = current_name.find(" (") {
-            if let Some(paren_end) = current_name.find(") ") {
-                let world_name = &current_name[..paren_start];
-                let sector_name = &current_name[paren_start + 2..paren_end];
+        let (world_name, sector_name) = if let Some(paren_start) = current_input.find(" (") {
+            if let Some(paren_end) = current_input.find(") ") {
+                let world_name = &current_input[..paren_start];
+                let sector_name = &current_input[paren_start + 2..paren_end];
                 (world_name, sector_name)
             } else {
                 return; // Invalid format
@@ -623,8 +651,8 @@ pub fn WorldSearch(
             if world_name == search_name && sector_name == sector {
                 let hex_string = format!("{:02}{:02}", hex_x, hex_y);
 
-                // Set the name to just the world name
-                name.set(world_name.to_string());
+                // Commit the name to just the world name
+                commit_name(world_name.to_string());
 
                 wasm_bindgen_futures::spawn_local(async move {
                     match fetch_data_world(&sector, &hex_string).await {
@@ -638,12 +666,12 @@ pub fn WorldSearch(
                                 None => ZoneClassification::Green,
                             };
                             zone.set(world_zone);
-                            uwp.set(world_data.uwp);
+                            commit_uwp(world_data.uwp);
                         }
                         Err(err) => {
                             log::error!("Error fetching world data: {err:?}");
                             // Fallback to the UWP from search results
-                            uwp.set(world_uwp);
+                            commit_uwp(world_uwp);
                         }
                     }
                 });
@@ -657,8 +685,8 @@ pub fn WorldSearch(
         }
     };
 
-    // Debounced search function
-    let search_query = Memo::new(move |_| name.get());
+    // Debounced search function - watch the input_name signal for changes
+    let search_query = Memo::new(move |_| input_name.get());
 
     Effect::new(move |_| {
         let query = search_query.get();
@@ -713,9 +741,10 @@ pub fn WorldSearch(
             <input
                 id=world_name_id
                 type="text"
-                bind:value=name
+                bind:value=input_name
                 list=datalist_id.clone()
                 on:input=handle_selection
+                on:keydown=handle_name_keydown
             />
             <datalist class="world-suggestions" id=datalist_id>
                 {move || {

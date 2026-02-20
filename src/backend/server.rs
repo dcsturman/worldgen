@@ -21,6 +21,7 @@ use crate::backend::TradeState;
 use crate::backend::firestore::{
     FirestoreError, get_trade_state, initialize_firestore, save_trade_state,
 };
+use crate::comms::{ServerCommand, ServerMessage};
 use crate::systems::world::World;
 use crate::trade::available_goods::AvailableGoodsTable;
 use crate::trade::table::TradeTable;
@@ -252,18 +253,24 @@ async fn handle_connection(
     // Process incoming messages
     while let Some(msg) = ws_receiver.next().await {
         match msg {
-            Ok(Message::Text(text)) => match serde_json::from_str::<TradeState>(&text) {
-                Ok(trade_state) => {
-                    handle_trade_state_update(trade_state, &db, &clients, &current_state).await;
+            Ok(Message::Text(text)) => {
+                // Try to parse as a ServerMessage (which can be either a state update or a command)
+                match serde_json::from_str::<ServerMessage>(&text) {
+                    Ok(ServerMessage::StateUpdate(trade_state)) => {
+                        handle_trade_state_update(trade_state, &db, &clients, &current_state).await;
+                    }
+                    Ok(ServerMessage::Command(ServerCommand::Regenerate)) => {
+                        handle_regenerate_command(&db, &clients, &current_state).await;
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "Failed to deserialize message from client {}: {}",
+                            client_id,
+                            e
+                        );
+                    }
                 }
-                Err(e) => {
-                    log::warn!(
-                        "Failed to deserialize TradeState from client {}: {}",
-                        client_id,
-                        e
-                    );
-                }
-            },
+            }
             Ok(Message::Close(_)) => {
                 log::info!("Client {} requested close", client_id);
                 break;
@@ -500,44 +507,179 @@ fn recalculate_trade_state(state: &mut TradeState, prev_state: Option<&TradeStat
     }
 
     // Reprice goods if origin changed, dest changed, or skills changed
-    if origin_changed || dest_changed || skills_changed {
-        if let Some(ref world) = origin_world {
-            // Price goods to buy at origin
-            state.available_goods.price_goods_to_buy(
-                &world.get_trade_classes(),
-                state.buyer_broker_skill,
-                state.seller_broker_skill,
-            );
+    if (origin_changed || dest_changed || skills_changed)
+        && let Some(world) = origin_world.as_ref()
+    {
+        // Price goods to buy at origin
+        state.available_goods.price_goods_to_buy(
+            &world.get_trade_classes(),
+            state.buyer_broker_skill,
+            state.seller_broker_skill,
+        );
 
-            // Price goods to sell at destination
-            let dest_trade_classes = dest_world.as_ref().map(|w| w.get_trade_classes());
-            state.available_goods.price_goods_to_sell(
-                dest_trade_classes,
-                state.seller_broker_skill,
-                state.buyer_broker_skill,
-            );
+        // Price goods to sell at destination
+        let dest_trade_classes = dest_world.as_ref().map(|w| w.get_trade_classes());
+        state.available_goods.price_goods_to_sell(
+            dest_trade_classes,
+            state.seller_broker_skill,
+            state.buyer_broker_skill,
+        );
 
-            state.available_goods.sort_by_discount();
-            log::info!("Repriced available goods");
-        }
+        state.available_goods.sort_by_discount();
+        log::info!("Repriced available goods");
 
         // Reprice ship manifest goods
         state.ship_manifest.price_goods(
-            &dest_world,
+            &origin_world,
             state.buyer_broker_skill,
             state.seller_broker_skill,
         );
         recalculated = true;
         log::info!("Repriced ship manifest");
+
+        // Regenerate passengers if worlds or skills changed and we have both worlds
+        if let Some(dest) = &dest_world {
+            let mut passengers = state.available_passengers.take().unwrap_or_default();
+            // Reset die rolls so we get fresh random values
+            passengers.reset_die_rolls();
+
+            passengers.generate(
+                world.get_population(),
+                world.port,
+                world.travel_zone,
+                world.tech_level,
+                dest.get_population(),
+                dest.port,
+                dest.travel_zone,
+                dest.tech_level,
+                distance,
+                state.steward_skill as i32,
+                state.buyer_broker_skill as i32,
+            );
+
+            state.available_passengers = Some(passengers);
+            recalculated = true;
+            log::info!(
+                "Regenerated passengers for route {} -> {} (distance: {} parsecs)",
+                state.origin_world_name,
+                state.dest_world_name,
+                distance
+            );
+        }
     }
 
-    // Regenerate passengers if worlds or skills changed and we have both worlds
-    if (origin_changed || dest_changed || skills_changed)
-        && let Some(origin) = origin_world
-        && let Some(dest) = dest_world
-    {
+    // Store the generated world objects in the state so they're sent back to clients
+    // This ensures the client and server always have the same World objects
+    state.origin_world = origin_world;
+    state.dest_world = dest_world;
+
+    recalculated
+}
+
+/// Handles a regenerate command from a client
+///
+/// This re-rolls all random values (prices, passengers) without changing the state.
+/// It's used when the user clicks the "Generate" button to get different random values.
+async fn handle_regenerate_command(db: &SharedDb, clients: &Clients, current_state: &SharedState) {
+    let mut state = match current_state.write().await.take() {
+        Some(s) => s,
+        None => {
+            log::warn!("Received regenerate command but no state available");
+            return;
+        }
+    };
+
+    // Parse origin world
+    let origin_world = if !state.origin_world_name.is_empty() && state.origin_uwp.len() == 9 {
+        match World::from_upp(&state.origin_world_name, &state.origin_uwp, false, false) {
+            Ok(mut world) => {
+                world.gen_trade_classes();
+                world.coordinates = state.origin_coords;
+                world.travel_zone = state.origin_zone;
+                Some(world)
+            }
+            Err(e) => {
+                log::error!("Failed to parse origin UWP '{}': {}", state.origin_uwp, e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // Parse destination world
+    let dest_world = if !state.dest_world_name.is_empty() && state.dest_uwp.len() == 9 {
+        match World::from_upp(&state.dest_world_name, &state.dest_uwp, false, false) {
+            Ok(mut world) => {
+                world.gen_trade_classes();
+                world.coordinates = state.dest_coords;
+                world.travel_zone = state.dest_zone;
+                Some(world)
+            }
+            Err(e) => {
+                log::error!("Failed to parse dest UWP '{}': {}", state.dest_uwp, e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // Calculate distance
+    let distance = match (state.origin_coords, state.dest_coords) {
+        (Some((ox, oy)), Some((dx, dy))) => calculate_hex_distance(ox, oy, dx, dy),
+        _ => 0,
+    };
+
+    // Regenerate trade table with fresh die rolls
+    if let Some(ref world) = origin_world {
+        match AvailableGoodsTable::for_world(
+            TradeTable::global(),
+            &world.get_trade_classes(),
+            world.get_population(),
+            state.illegal_goods,
+        ) {
+            Ok(mut new_table) => {
+                // Reset die rolls to get fresh random values
+                new_table.reset_die_rolls();
+                new_table.price_goods_to_buy(
+                    &world.get_trade_classes(),
+                    state.buyer_broker_skill,
+                    state.seller_broker_skill,
+                );
+                let dest_trade_classes = dest_world.as_ref().map(|w| w.get_trade_classes());
+                new_table.price_goods_to_sell(
+                    dest_trade_classes,
+                    state.seller_broker_skill,
+                    state.buyer_broker_skill,
+                );
+                new_table.sort_by_discount();
+                state.available_goods = new_table;
+                log::info!("Regenerated trade table prices");
+            }
+            Err(e) => {
+                log::error!("Failed to regenerate trade table: {}", e);
+            }
+        }
+    }
+
+    // Regenerate manifest with fresh die rolls
+    if origin_world.is_some() {
+        state.ship_manifest.reset_die_rolls();
+        state.ship_manifest.price_goods(
+            &dest_world,
+            state.buyer_broker_skill,
+            state.seller_broker_skill,
+        );
+        log::info!("Regenerated manifest prices");
+    }
+
+    // Regenerate passengers with fresh die rolls
+    if origin_world.is_some() && dest_world.is_some() {
+        let origin = origin_world.as_ref().unwrap();
+        let dest = dest_world.as_ref().unwrap();
+
         let mut passengers = state.available_passengers.take().unwrap_or_default();
-        // Reset die rolls so we get fresh random values
         passengers.reset_die_rolls();
 
         passengers.generate(
@@ -555,14 +697,19 @@ fn recalculate_trade_state(state: &mut TradeState, prev_state: Option<&TradeStat
         );
 
         state.available_passengers = Some(passengers);
-        recalculated = true;
-        log::info!(
-            "Regenerated passengers for route {} -> {} (distance: {} parsecs)",
-            state.origin_world_name,
-            state.dest_world_name,
-            distance
-        );
+        log::info!("Regenerated passengers with fresh die rolls");
     }
 
-    recalculated
+    // Store the world objects in the state so they're sent back to clients
+    state.origin_world = origin_world;
+    state.dest_world = dest_world;
+
+    // Save updated state to Firestore
+    if let Err(e) = save_trade_state(db, DEFAULT_SESSION, &state).await {
+        log::error!("Failed to save regenerated state to Firestore: {}", e);
+    }
+
+    // Update shared state and broadcast to all clients
+    *current_state.write().await = Some(state.clone());
+    broadcast_to_clients(clients, &state, None).await;
 }
