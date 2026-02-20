@@ -197,3 +197,60 @@ pub fn roll_10() -> i32 {
     let mut rng = rand::rng();
     rng.random_range(0..=9)
 }
+
+/// Calculate the distance in parsecs between two hex coordinates
+///
+/// Uses cube coordinate conversion for accurate hex grid distance calculation.
+/// This is the standard method for calculating jump distances in Traveller.
+///
+/// # Arguments
+///
+/// * `hex_x1` - Column coordinate of first hex
+/// * `hex_y1` - Row coordinate of first hex
+/// * `hex_x2` - Column coordinate of second hex
+/// * `hex_y2` - Row coordinate of second hex
+///
+/// # Returns
+///
+/// Distance in parsecs (hex units) between the two coordinates
+///
+/// # Examples
+///
+/// ```
+/// use worldgen::util::calculate_hex_distance;
+///
+/// let distance = calculate_hex_distance(10, 15, 11, 15); // Adjacent hexes = 1
+/// assert_eq!(distance, 1);
+///
+/// let distance = calculate_hex_distance(10, 10, 10, 10); // Same hex = 0
+/// assert_eq!(distance, 0);
+/// ```
+pub fn calculate_hex_distance(hex_x1: i32, hex_y1: i32, hex_x2: i32, hex_y2: i32) -> i32 {
+    // Convert offset coordinates to cube coordinates
+    let (x1, y1, z1) = offset_to_cube(hex_x1, hex_y1);
+    let (x2, y2, z2) = offset_to_cube(hex_x2, hex_y2);
+
+    // Calculate distance using cube coordinates
+    ((x1 - x2).abs() + (y1 - y2).abs() + (z1 - z2).abs()) / 2
+}
+
+/// Convert offset hex coordinates to cube coordinates
+///
+/// Transforms Traveller's standard offset coordinate system into cube coordinates
+/// for efficient distance calculations. Uses the odd-q offset system which is
+/// standard for Traveller maps.
+///
+/// # Arguments
+///
+/// * `col` - Column coordinate (X in offset system)
+/// * `row` - Row coordinate (Y in offset system)
+///
+/// # Returns
+///
+/// Tuple of (x, y, z) cube coordinates where x + y + z = 0
+pub fn offset_to_cube(col: i32, row: i32) -> (i32, i32, i32) {
+    let x = col;
+    let z = row - (col + (col & 1)) / 2;
+    let y = -x - z;
+    (x, y, z)
+}

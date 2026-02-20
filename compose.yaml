@@ -1,0 +1,19 @@
+services:
+  app:
+    image: worldgen-app:latest
+    container_name: worldgen-app
+    pull_policy: build
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:80"
+    environment:
+      - GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json
+      - GCP_PROJECT=callisto-1731280702227
+      - FIRESTORE_DATABASE_ID=worldgen
+      - RUST_BACKTRACE=1
+      - RUST_LOG=info
+
+    volumes:
+      - ~/.config/gcloud:/root/.config/gcloud:ro

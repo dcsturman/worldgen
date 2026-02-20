@@ -153,7 +153,7 @@
 //!     let uwp = RwSignal::new("".to_string());
 //!     let coords = RwSignal::new(None);
 //!     let zone = RwSignal::new(ZoneClassification::Green);
-//!     
+//!
 //!     view! {
 //!         <WorldSearch
 //!             label="Origin World".to_string()
@@ -206,6 +206,7 @@ use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
+use web_sys::js_sys;
 
 use crate::trade::ZoneClassification;
 
@@ -583,10 +584,19 @@ pub fn WorldSearch(
         signal::<Vec<(String, String, String, i32, i32)>>(vec![]);
     let (is_loading, set_is_loading) = signal(false);
 
-    // Separate signal for the UWP input field
+    // Separate input signals that don't trigger server updates
+    // These are only committed to the external signals on Enter or dropdown selection
+    let input_name = RwSignal::new(name.get_untracked());
     let input_uwp = RwSignal::new(uwp.get_untracked());
 
-    // Sync input_uwp when uwp changes from outside
+    // Sync input signals when external signals change from outside (e.g., from server)
+    Effect::new(move |_| {
+        let external_name = name.get();
+        if external_name != input_name.get_untracked() {
+            input_name.set(external_name);
+        }
+    });
+
     Effect::new(move |_| {
         let external_uwp = uwp.get();
         if external_uwp != input_uwp.get_untracked() {
@@ -594,22 +604,56 @@ pub fn WorldSearch(
         }
     });
 
+    // Commit the input name to the external signal
+    let commit_name = move |new_name: String| {
+        name.set(new_name);
+    };
+
+    // Commit the input UWP to the external signal
+    let commit_uwp = move |new_uwp: String| {
+        uwp.set(new_uwp);
+    };
+
+    let handle_name_keydown = move |ev: web_sys::KeyboardEvent| {
+        // Safely get the key using Reflect to avoid JavaScript exceptions
+        let key = match web_sys::js_sys::Reflect::get(&ev, &"key".into()) {
+            Ok(val) => {
+                if let Some(s) = val.as_string() {
+                    s
+                } else {
+                    String::new()
+                }
+            }
+            Err(_) => {
+                log::warn!("Failed to read KeyboardEvent.key property");
+                return;
+            }
+        };
+
+        if key == "Enter" {
+            ev.prevent_default();
+            let current_input = input_name.get();
+            commit_name(current_input);
+        }
+    };
+
     let handle_uwp_input = move |ev| {
         let new_uwp = event_target_value(&ev);
         input_uwp.set(new_uwp.clone());
+        // Auto-commit when UWP is complete (9 characters)
         if new_uwp.len() == 9 {
-            uwp.set(new_uwp);
+            commit_uwp(new_uwp);
         }
     };
 
     // Handle selection from datalist
     let handle_selection = move |_| {
-        let current_name = name.get();
+        let current_input = input_name.get();
         // Parse the format: "WorldName (Sector) UWP"
-        let (world_name, sector_name) = if let Some(paren_start) = current_name.find(" (") {
-            if let Some(paren_end) = current_name.find(") ") {
-                let world_name = &current_name[..paren_start];
-                let sector_name = &current_name[paren_start + 2..paren_end];
+        let (world_name, sector_name) = if let Some(paren_start) = current_input.find(" (") {
+            if let Some(paren_end) = current_input.find(") ") {
+                let world_name = &current_input[..paren_start];
+                let sector_name = &current_input[paren_start + 2..paren_end];
                 (world_name, sector_name)
             } else {
                 return; // Invalid format
@@ -623,8 +667,8 @@ pub fn WorldSearch(
             if world_name == search_name && sector_name == sector {
                 let hex_string = format!("{:02}{:02}", hex_x, hex_y);
 
-                // Set the name to just the world name
-                name.set(world_name.to_string());
+                // Commit the name to just the world name
+                commit_name(world_name.to_string());
 
                 wasm_bindgen_futures::spawn_local(async move {
                     match fetch_data_world(&sector, &hex_string).await {
@@ -638,12 +682,12 @@ pub fn WorldSearch(
                                 None => ZoneClassification::Green,
                             };
                             zone.set(world_zone);
-                            uwp.set(world_data.uwp);
+                            commit_uwp(world_data.uwp);
                         }
                         Err(err) => {
                             log::error!("Error fetching world data: {err:?}");
                             // Fallback to the UWP from search results
-                            uwp.set(world_uwp);
+                            commit_uwp(world_uwp);
                         }
                     }
                 });
@@ -657,8 +701,8 @@ pub fn WorldSearch(
         }
     };
 
-    // Debounced search function
-    let search_query = Memo::new(move |_| name.get());
+    // Debounced search function - watch the input_name signal for changes
+    let search_query = Memo::new(move |_| input_name.get());
 
     Effect::new(move |_| {
         let query = search_query.get();
@@ -713,9 +757,10 @@ pub fn WorldSearch(
             <input
                 id=world_name_id
                 type="text"
-                bind:value=name
+                bind:value=input_name
                 list=datalist_id.clone()
-                on:input=handle_selection
+                on:change=handle_selection
+                on:keydown=handle_name_keydown
             />
             <datalist class="world-suggestions" id=datalist_id>
                 {move || {
@@ -742,131 +787,5 @@ pub fn WorldSearch(
     }
 }
 
-/// Calculate distance between two hex coordinates on a Traveller map
-///
-/// Uses the cube coordinate system for efficient and accurate hex distance
-/// calculation. This is the standard method for calculating distances in
-/// hex-based game systems and provides the shortest path between two hexes.
-///
-/// ## Algorithm
-///
-/// 1. **Coordinate Conversion**: Converts offset coordinates to cube coordinates
-/// 2. **Distance Calculation**: Uses Manhattan distance in cube space
-/// 3. **Result Scaling**: Divides by 2 to get actual hex distance
-///
-/// ## Coordinate Systems
-///
-/// ### Offset Coordinates (Input)
-/// - **Column (X)**: Hex column within sector (1-32)
-/// - **Row (Y)**: Hex row within sector (1-40)
-/// - Uses odd-q offset system (Traveller standard)
-///
-/// ### Cube Coordinates (Internal)
-/// - **X, Y, Z**: Three-axis coordinate system where X + Y + Z = 0
-/// - Enables efficient distance calculation using Manhattan distance
-/// - Automatically converted from offset coordinates
-///
-/// ## Parameters
-///
-/// * `hex_x1` - Column coordinate of first hex
-/// * `hex_y1` - Row coordinate of first hex
-/// * `hex_x2` - Column coordinate of second hex
-/// * `hex_y2` - Row coordinate of second hex
-///
-/// ## Returns
-///
-/// Distance between the two hexes in parsecs (1 hex = 1 parsec in Traveller)
-///
-/// ## Examples
-///
-/// ```rust
-/// # use worldgen::components::traveller_map::calculate_hex_distance;
-/// let distance = calculate_hex_distance(10, 15, 11, 15); // Returns 1
-///
-/// // Calculate distance between two distant worlds
-/// let distance = calculate_hex_distance(1, 1, 5, 8); // Returns actual distance
-///
-/// // Same hex returns 0 distance
-/// let distance = calculate_hex_distance(10, 10, 10, 10);
-/// assert_eq!(distance, 0);
-/// ```
-///
-/// ## Use Cases
-///
-/// - **Trade Route Planning**: Calculate jump distances between worlds
-/// - **Travel Time**: Determine time required for interstellar travel
-/// - **Fuel Calculations**: Estimate fuel requirements for journeys
-/// - **Communication Delays**: Calculate message transmission times
-pub fn calculate_hex_distance(hex_x1: i32, hex_y1: i32, hex_x2: i32, hex_y2: i32) -> i32 {
-    // Convert offset coordinates to cube coordinates
-    let (x1, y1, z1) = offset_to_cube(hex_x1, hex_y1);
-    let (x2, y2, z2) = offset_to_cube(hex_x2, hex_y2);
-
-    // Calculate distance using cube coordinates
-    ((x1 - x2).abs() + (y1 - y2).abs() + (z1 - z2).abs()) / 2
-}
-
-/// Convert offset hex coordinates to cube coordinates
-///
-/// Transforms Traveller's standard offset coordinate system into cube coordinates
-/// for efficient distance calculations and geometric operations. Uses the odd-q
-/// offset system which is standard for Traveller maps.
-///
-/// ## Coordinate System Details
-///
-/// ### Traveller Hex Layout
-/// - **Orientation**: Flat top/bottom, pointy left/right
-/// - **Offset Type**: Odd-q (odd columns offset upward)
-/// - **Column Range**: 1-32 within sector
-/// - **Row Range**: 1-40 within sector
-///
-/// ### Cube Coordinate Properties
-/// - **Constraint**: X + Y + Z = 0 (always satisfied)
-/// - **Axes**: Three axes at 120-degree angles
-/// - **Distance**: Manhattan distance / 2 = hex distance
-///
-/// ## Algorithm
-///
-/// For odd-q offset coordinates:
-/// 1. **X Axis**: Directly maps to column coordinate
-/// 2. **Z Axis**: Calculated as row - (column + column_parity) / 2
-/// 3. **Y Axis**: Derived as -X - Z to satisfy constraint
-///
-/// ## Parameters
-///
-/// * `col` - Column coordinate (X in offset system)
-/// * `row` - Row coordinate (Y in offset system)
-///
-/// ## Returns
-///
-/// Tuple of (x, y, z) cube coordinates where x + y + z = 0
-///
-/// ## Mathematical Background
-///
-/// The conversion handles the offset nature of hex grids where alternate
-/// columns are shifted vertically. This is necessary because hex grids
-/// don't align perfectly with rectangular coordinate systems.
-///
-/// ## Examples
-///
-/// ```rust
-/// # use worldgen::components::traveller_map::offset_to_cube;
-/// let (x, y, z) = offset_to_cube(1, 1); // Returns cube coordinates
-///
-/// // Convert sector center coordinates
-/// let (x, y, z) = offset_to_cube(16, 20); // Sector center
-/// assert_eq!(x + y + z, 0); // Cube coordinates sum to zero
-/// ```
-///
-/// ## Use Cases
-///
-/// - **Distance Calculation**: Primary use in `calculate_hex_distance`
-/// - **Pathfinding**: Enables efficient hex-based pathfinding algorithms
-/// - **Geometric Operations**: Supports rotation, reflection, and other operations
-/// - **Neighbor Finding**: Simplifies finding adjacent hexes
-pub fn offset_to_cube(col: i32, row: i32) -> (i32, i32, i32) {
-    let x = col;
-    let z = row - (col + (col & 1)) / 2;
-    let y = -x - z;
-    (x, y, z)
-}
+// Re-export hex distance functions from util module for backwards compatibility
+pub use crate::util::{calculate_hex_distance, offset_to_cube};

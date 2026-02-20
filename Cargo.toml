@@ -1,8 +1,13 @@
 [package]
 name = "worldgen"
-version = "1.3.0"
-edition = "2021"
+version = "2.0.0"
+edition = "2024"
 license = "MIT"
+
+[features]
+default = []
+# Backend feature enables native-only server code (tokio, firestore, etc.)
+backend = ["dep:tokio", "dep:tokio-tungstenite", "dep:futures-util", "dep:firestore", "dep:env_logger", "dep:rustls"]
 
 [dependencies]
 console_error_panic_hook = "0.1.7"
@@ -20,12 +25,21 @@ serde_json = "1.0"
 wasm-bindgen = { version = "0.2", features = ["serde-serialize"] }
 wasm-bindgen-futures = "0.4"
 serde-wasm-bindgen = "0.6"
-web-sys = { version = "0.3", features = ["Request", "RequestInit", "RequestMode", "Response", "Window", "Headers", "Storage"] }
+web-sys = { version = "0.3", features = ["Request", "RequestInit", "RequestMode", "Response", "Window", "Headers", "Storage", "WebSocket", "MessageEvent", "CloseEvent", "ErrorEvent", "BinaryType"] }
 wasm-logger = "0.2"
 leptos-use = { version = "0.16.2", features = ["storage"] }
 codee = "0.3.2"
 backtrace = "0.3.75"
 reactive_graph = "0.2.6"
+thiserror = "2.0.18"
+
+# Backend-only dependencies (native server)
+tokio = { version = "1.49.0", features = ["full"], optional = true }
+tokio-tungstenite = { version = "0.28.0", optional = true }
+futures-util = { version = "0.3.32", optional = true }
+firestore = { version = "0.47.1", optional = true }
+env_logger = { version = "0.11.9", optional = true }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
 
 [[bin]]
 name = "main"
@@ -38,3 +52,8 @@ path = "src/bin/trade.rs"
 [[bin]]
 name = "world"
 path = "src/bin/world.rs"
+
+[[bin]]
+name = "server"
+path = "src/bin/server.rs"
+required-features = ["backend"]

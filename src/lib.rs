@@ -15,6 +15,11 @@
 //!
 //! The entire system is written in Rust using Leptos as a reactive front-end framework.
 
+// Backend module is only available when the "backend" feature is enabled (native builds only)
+#[cfg(feature = "backend")]
+pub mod backend;
+
+pub mod comms;
 pub mod components;
 pub mod logging;
 pub mod systems;

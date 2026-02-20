@@ -39,3 +39,4 @@ yarn-error.log*
 /debug
 /trade/target
 /trade/target
+*.json
