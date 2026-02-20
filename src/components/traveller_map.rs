@@ -617,13 +617,7 @@ pub fn WorldSearch(
     let handle_name_keydown = move |ev: web_sys::KeyboardEvent| {
         // Safely get the key using Reflect to avoid JavaScript exceptions
         let key = match web_sys::js_sys::Reflect::get(&ev, &"key".into()) {
-            Ok(val) => {
-                if let Some(s) = val.as_string() {
-                    s
-                } else {
-                    String::new()
-                }
-            }
+            Ok(val) => val.as_string().unwrap_or_default(),
             Err(_) => {
                 log::warn!("Failed to read KeyboardEvent.key property");
                 return;
