@@ -564,6 +564,13 @@ fn recalculate_trade_state(state: &mut TradeState, prev_state: Option<&TradeStat
                 state.dest_world_name,
                 distance
             );
+        } else {
+            // Clear passengers if there's no destination
+            if state.available_passengers.is_some() {
+                state.available_passengers = None;
+                recalculated = true;
+                log::info!("Cleared passengers - no destination set");
+            }
         }
     }
 
