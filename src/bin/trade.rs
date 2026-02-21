@@ -16,29 +16,31 @@ use worldgen::logging;
 /// Get the WebSocket URL for trade state synchronization
 ///
 /// Uses the current page's host to construct a WebSocket URL.
-/// In production, this will be proxied through nginx to the backend server.
+/// - With --local-dev: Connects directly to backend on 8081
+/// - Without --local-dev: Uses same host (nginx proxies /ws/* to backend)
 fn get_ws_url() -> String {
-    let window = match web_sys::window() {
-        Some(w) => w,
-        None => return "ws://localhost:8081/ws/trade".to_string(),
-    };
+    if let Some(window) = web_sys::window()
+        && let Ok(location) = window.location().host()
+    {
+        let protocol = if window.location().protocol().unwrap_or_default() == "https:" {
+            "wss"
+        } else {
+            "ws"
+        };
 
-    let location = match window.location().host() {
-        Ok(loc) => loc,
-        Err(_) => return "ws://localhost:8081/ws/trade".to_string(),
-    };
+        // Local development mode: connect directly to backend on 8081
+        #[cfg(feature = "local-dev")]
+        {
+            if location.starts_with("localhost") {
+                return "ws://localhost:8081/ws/trade".to_string();
+            }
+        }
 
-    let protocol = match window.location().protocol() {
-        Ok(proto) if proto == "https:" => "wss",
-        _ => "ws",
-    };
-
-    // Local development: trunk serves on 8080, backend on 8081
-    if location == "localhost:8080" {
-        "ws://localhost:8081/ws/trade".to_string()
-    } else {
-        format!("{}://{}/ws/trade", protocol, location)
+        // Docker/Production: connect to same host (nginx proxies /ws/* to backend)
+        return format!("{}://{}/ws/trade", protocol, location);
     }
+    // Fallback
+    "ws://localhost:8081/ws/trade".to_string()
 }
 
 /// Trade application entry point

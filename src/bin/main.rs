@@ -20,7 +20,8 @@ const GA_MEASUREMENT_ID: &str = "G-L26P5SCYR2";
 /// Get the WebSocket URL for trade state synchronization
 ///
 /// Uses the current page's host to construct a WebSocket URL.
-/// In production, this will be proxied through nginx to the backend server.
+/// - With --local-dev: Connects directly to backend on 8081
+/// - Without --local-dev: Uses same host (nginx proxies /ws/* to backend)
 fn get_ws_url() -> String {
     if let Some(window) = web_sys::window()
         && let Ok(location) = window.location().host()
@@ -31,14 +32,18 @@ fn get_ws_url() -> String {
             "ws"
         };
 
-        // Local development: trunk serves on 8080, backend on 8081
-        if location == "localhost:8080" {
-            return "ws://localhost:8081/ws/trade".to_string();
+        // Local development mode: connect directly to backend on 8081
+        #[cfg(feature = "local-dev")]
+        {
+            if location.starts_with("localhost") {
+                return "ws://localhost:8081/ws/trade".to_string();
+            }
         }
 
+        // Docker/Production: connect to same host (nginx proxies /ws/* to backend)
         return format!("{}://{}/ws/trade", protocol, location);
     }
-    // Fallback for local development
+    // Fallback
     "ws://localhost:8081/ws/trade".to_string()
 }
 
