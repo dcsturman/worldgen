@@ -8,6 +8,8 @@ license = "MIT"
 default = []
 # Backend feature enables native-only server code (tokio, firestore, etc.)
 backend = ["dep:tokio", "dep:tokio-tungstenite", "dep:futures-util", "dep:firestore", "dep:env_logger", "dep:rustls"]
+# Local development mode: connect directly to backend on 8081 instead of through nginx
+local-dev = []
 
 [dependencies]
 console_error_panic_hook = "0.1.7"
