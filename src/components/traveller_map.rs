@@ -206,7 +206,6 @@ use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
-use web_sys::js_sys;
 
 use crate::trade::ZoneClassification;
 
@@ -606,12 +605,30 @@ pub fn WorldSearch(
 
     // Commit the input name to the external signal
     let commit_name = move |new_name: String| {
-        name.set(new_name);
+        name.set(new_name.clone());
+        // Clear coords and zone if name is empty
+        if new_name.is_empty() {
+            coords.set(None);
+            zone.set(ZoneClassification::Green);
+        }
     };
 
     // Commit the input UWP to the external signal
     let commit_uwp = move |new_uwp: String| {
-        uwp.set(new_uwp);
+        uwp.set(new_uwp.clone());
+        // Clear coords and zone if UWP is empty
+        if new_uwp.is_empty() {
+            coords.set(None);
+            zone.set(ZoneClassification::Green);
+        }
+    };
+
+    let handle_name_input = move |_| {
+        let current_input = input_name.get();
+        // If the field is empty, commit it to clear the destination
+        if current_input.is_empty() {
+            commit_name(current_input);
+        }
     };
 
     let handle_name_keydown = move |ev: web_sys::KeyboardEvent| {
@@ -634,8 +651,8 @@ pub fn WorldSearch(
     let handle_uwp_input = move |ev| {
         let new_uwp = event_target_value(&ev);
         input_uwp.set(new_uwp.clone());
-        // Auto-commit when UWP is complete (9 characters)
-        if new_uwp.len() == 9 {
+        // Auto-commit when UWP is complete (9 characters) or empty
+        if new_uwp.len() == 9 || new_uwp.is_empty() {
             commit_uwp(new_uwp);
         }
     };
@@ -754,6 +771,7 @@ pub fn WorldSearch(
                 bind:value=input_name
                 list=datalist_id.clone()
                 on:change=handle_selection
+                on:input=handle_name_input
                 on:keydown=handle_name_keydown
             />
             <datalist class="world-suggestions" id=datalist_id>

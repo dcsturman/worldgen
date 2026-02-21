@@ -5,3 +5,13 @@ rustflags = [
   '--cfg',
   'getrandom_backend="wasm_js"',
 ]
+
+[serve]
+# Proxy WebSocket connections to the backend server
+# In development: trunk serves frontend on 8080, backend on 8081
+address = "127.0.0.1"
+port = 8080
+
+[[serve.ws_proxies]]
+backend = "ws://127.0.0.1:8081"
+frontend = "/ws"

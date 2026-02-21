@@ -588,42 +588,8 @@ async fn handle_regenerate_command(db: &SharedDb, clients: &Clients, current_sta
         }
     };
 
-    // Parse origin world
-    let origin_world = if !state.origin_world_name.is_empty() && state.origin_uwp.len() == 9 {
-        match World::from_upp(&state.origin_world_name, &state.origin_uwp, false, false) {
-            Ok(mut world) => {
-                world.gen_trade_classes();
-                world.coordinates = state.origin_coords;
-                world.travel_zone = state.origin_zone;
-                Some(world)
-            }
-            Err(e) => {
-                log::error!("Failed to parse origin UWP '{}': {}", state.origin_uwp, e);
-                None
-            }
-        }
-    } else {
-        None
-    };
-
-    // Parse destination world
-    let dest_world = if !state.dest_world_name.is_empty() && state.dest_uwp.len() == 9 {
-        match World::from_upp(&state.dest_world_name, &state.dest_uwp, false, false) {
-            Ok(mut world) => {
-                world.gen_trade_classes();
-                world.coordinates = state.dest_coords;
-                world.travel_zone = state.dest_zone;
-                Some(world)
-            }
-            Err(e) => {
-                log::error!("Failed to parse dest UWP '{}': {}", state.dest_uwp, e);
-                None
-            }
-        }
-    } else {
-        None
-    };
-
+    let origin_world = state.origin_world.clone();
+    let dest_world = state.dest_world.clone();
     // Calculate distance
     let distance = match (state.origin_coords, state.dest_coords) {
         (Some((ox, oy)), Some((dx, dy))) => calculate_hex_distance(ox, oy, dx, dy),
@@ -666,7 +632,7 @@ async fn handle_regenerate_command(db: &SharedDb, clients: &Clients, current_sta
     if origin_world.is_some() {
         state.ship_manifest.reset_die_rolls();
         state.ship_manifest.price_goods(
-            &dest_world,
+            &origin_world,
             state.buyer_broker_skill,
             state.seller_broker_skill,
         );
@@ -698,10 +664,6 @@ async fn handle_regenerate_command(db: &SharedDb, clients: &Clients, current_sta
         state.available_passengers = Some(passengers);
         log::info!("Regenerated passengers with fresh die rolls");
     }
-
-    // Store the world objects in the state so they're sent back to clients
-    state.origin_world = origin_world;
-    state.dest_world = dest_world;
 
     // Save updated state to Firestore
     if let Err(e) = save_trade_state(db, DEFAULT_SESSION, &state).await {

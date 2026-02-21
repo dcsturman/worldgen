@@ -30,6 +30,12 @@ fn get_ws_url() -> String {
         } else {
             "ws"
         };
+
+        // Local development: trunk serves on 8080, backend on 8081
+        if location == "localhost:8080" {
+            return "ws://localhost:8081/ws/trade".to_string();
+        }
+
         return format!("{}://{}/ws/trade", protocol, location);
     }
     // Fallback for local development
