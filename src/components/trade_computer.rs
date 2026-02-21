@@ -566,6 +566,7 @@ pub fn Trade(
 
             <GoodsToSellView
                 origin_world=origin_world.into()
+                dest_world=dest_world.into()
                 ship_manifest=ship_manifest.into()
                 write_ship_manifest=write_ship_manifest
                 show_add_manual=show_add_manual
@@ -609,6 +610,7 @@ fn print() {
 #[component]
 fn GoodsToSellView(
     origin_world: Signal<Option<World>>,
+    dest_world: Signal<Option<World>>,
     ship_manifest: Signal<ShipManifest>,
     write_ship_manifest: WriteSignal<ShipManifest>,
     show_add_manual: RwSignal<bool>,
@@ -644,6 +646,9 @@ fn GoodsToSellView(
                         <th class="table-entry">"Sell Price"</th>
                         <th class="table-entry">"Profit"</th>
                         <th class="table-entry">"Sell"</th>
+                        <Show when=move || dest_world.get().is_some()>
+                            <th class="table-entry">"Dest Trade Mods"</th>
+                        </Show>
                     </tr>
                 </thead>
                 <tbody>
@@ -678,6 +683,7 @@ fn GoodsToSellView(
                                             view! {
                                                 <SellGoodRow
                                                     good_index=good.source_index
+                                                    dest_world=dest_world
                                                     ship_manifest=ship_manifest
                                                     write_ship_manifest=write_ship_manifest
                                                 />
@@ -697,6 +703,7 @@ fn GoodsToSellView(
 #[component]
 fn SellGoodRow(
     good_index: i16,
+    dest_world: Signal<Option<World>>,
     ship_manifest: Signal<ShipManifest>,
     write_ship_manifest: WriteSignal<ShipManifest>,
 ) -> impl IntoView {
@@ -708,6 +715,35 @@ fn SellGoodRow(
                 .cloned()
                 .unwrap_or_default()
         })
+    });
+
+    let trade_table = TradeTable::global();
+
+    // If there is a destination world, show the relevant trade class modifiers for this good based on the destination world's trade classes.
+    let trade_mods = Memo::new(move |_| {
+        if let Some(dest) = dest_world.get() {
+            let dest_classes = dest.get_trade_classes();
+            dest_classes
+                .iter()
+                .filter_map(|class| {
+                    let modifier = trade_table
+                        .get(good_index)
+                        .and_then(|entry|
+                            // Usually it will be the sale modifier for this trade class.
+                            // If there isn't one, take the negative of any relevant purchase_dm.
+                            entry.sale_dm.get(class).copied().or_else(|| entry.purchase_dm.get(class).map(|&v| -v)))
+                        .unwrap_or(0);
+                    if modifier != 0 {
+                        Some(format!("{}: {:+}", class, modifier))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        } else {
+            String::new()
+        }
     });
 
     let update_sold = move |ev| {
@@ -767,6 +803,9 @@ fn SellGoodRow(
                     }
                 />
             </td>
+            <Show when=move || dest_world.get().is_some()>
+                <td class="table-entry">{move || trade_mods.get()}</td>
+            </Show>
         </tr>
     }
 }
