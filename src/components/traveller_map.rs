@@ -578,6 +578,16 @@ pub fn WorldSearch(
     coords: RwSignal<Option<(i32, i32)>>,
     zone: RwSignal<ZoneClassification>,
     #[prop(default = Signal::derive(|| true))] search_enabled: Signal<bool>,
+    /// Optional: when present, the sector name of the selected world is
+    /// written here on selection (e.g., "Spinward Marches"). Cleared when
+    /// the name is cleared. The trade tool ignores this; the simulator
+    /// uses it to query TravellerMap for in-jump-range candidates.
+    #[prop(optional)] sector: Option<RwSignal<String>>,
+    /// Whether to render the editable UWP input. When `false`, the UWP is
+    /// still set via autocomplete (so the parent's `uwp` signal is filled),
+    /// but the user can't type into it. Useful when callers display the
+    /// UWP in a read-only summary elsewhere.
+    #[prop(default = true)] show_uwp: bool,
 ) -> impl IntoView {
     let (search_results, set_search_results) =
         signal::<Vec<(String, String, String, i32, i32)>>(vec![]);
@@ -606,10 +616,13 @@ pub fn WorldSearch(
     // Commit the input name to the external signal
     let commit_name = move |new_name: String| {
         name.set(new_name.clone());
-        // Clear coords and zone if name is empty
+        // Clear coords, zone, and sector if name is empty
         if new_name.is_empty() {
             coords.set(None);
             zone.set(ZoneClassification::Green);
+            if let Some(s) = sector {
+                s.set(String::new());
+            }
         }
     };
 
@@ -674,15 +687,19 @@ pub fn WorldSearch(
         };
 
         let mut found = false;
-        for (search_name, sector, world_uwp, hex_x, hex_y) in search_results.get() {
-            if world_name == search_name && sector_name == sector {
+        for (search_name, result_sector, world_uwp, hex_x, hex_y) in search_results.get() {
+            if world_name == search_name && sector_name == result_sector {
                 let hex_string = format!("{:02}{:02}", hex_x, hex_y);
 
                 // Commit the name to just the world name
                 commit_name(world_name.to_string());
 
+                if let Some(s) = sector {
+                    s.set(result_sector.clone());
+                }
+
                 wasm_bindgen_futures::spawn_local(async move {
-                    match fetch_data_world(&sector, &hex_string).await {
+                    match fetch_data_world(&result_sector, &hex_string).await {
                         Ok(world_data) => {
                             let world_zone = match world_data.zone {
                                 Some(zone) => match zone.as_str() {
@@ -709,6 +726,9 @@ pub fn WorldSearch(
         }
         if !found {
             coords.set(None);
+            if let Some(s) = sector {
+                s.set(String::new());
+            }
         }
     };
 
@@ -788,10 +808,12 @@ pub fn WorldSearch(
                 }}
             </datalist>
         </div>
-        <div>
-            <label for=uwp_id.clone()>{format!("{label} UPP:")}</label>
-            <input type="text" id=uwp_id bind:value=input_uwp on:input=handle_uwp_input />
-        </div>
+        <Show when=move || show_uwp>
+            <div>
+                <label for=uwp_id.clone()>{format!("{label} UPP:")}</label>
+                <input type="text" id=uwp_id.clone() bind:value=input_uwp on:input=handle_uwp_input />
+            </div>
+        </Show>
         <Show when=move || is_loading.get()>
             <span class="loading-indicator">"Loading..."</span>
         </Show>

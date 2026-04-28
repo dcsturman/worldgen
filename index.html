@@ -11,7 +11,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#000000" />
     <title>Worldgen</title>
-    
+
+    <!-- Sentry browser SDK -->
+    <script
+      src="https://browser.sentry-cdn.com/8.40.0/bundle.tracing.min.js"
+      crossorigin="anonymous"
+    ></script>
+    <script>
+      if (window.Sentry) {
+        Sentry.init({
+          dsn: "https://0668bbff856f8f9380f622eed0580634@o4511288095080448.ingest.us.sentry.io/4511299412492288",
+          tracesSampleRate: 0.1,
+          environment: window.location.hostname === "localhost" ? "dev" : "production",
+        });
+      }
+    </script>
+
     <!-- Google Analytics -->
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-L26P5SCYR2"></script>
     <script>

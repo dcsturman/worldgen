@@ -52,6 +52,10 @@ pub fn Selector() -> impl IntoView {
         let _ = web_sys::window().unwrap().location().set_href("/world");
     };
 
+    let navigate_to_simulator = move |_| {
+        let _ = web_sys::window().unwrap().location().set_href("/simulator");
+    };
+
     view! {
         <div class:App>
             <h1>"Callisto Traveller Tools"</h1>
@@ -68,6 +72,13 @@ pub fn Selector() -> impl IntoView {
                     <p>"Generate complete solar systems with detailed world data, orbital mechanics, and system composition. Perfect for referees creating new systems or players exploring uncharted space."</p>
                     <button class="blue-button" on:click=navigate_to_world>
                         "Launch System Generator"
+                    </button>
+                </div>
+                <div class="tool-card">
+                    <h2>"Ship Simulator"</h2>
+                    <p>"Simulate a trader plying multiple worlds for profit. Pick a home port, configure your ship and crew, and watch a greedy route planner make trade decisions across the stars."</p>
+                    <button class="blue-button" on:click=navigate_to_simulator>
+                        "Launch Ship Simulator"
                     </button>
                 </div>
             </div>

@@ -118,6 +118,7 @@
 //! - Scalable text and spacing
 
 pub mod selector;
+pub mod ship_simulator;
 pub mod system_generator;
 pub mod system_view;
 pub mod trade_computer;

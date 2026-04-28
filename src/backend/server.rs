@@ -15,6 +15,7 @@ use firestore::FirestoreDb;
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{RwLock, mpsc};
+use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::backend::TradeState;
@@ -132,6 +133,25 @@ impl TradeServer {
     pub async fn client_count(&self) -> usize {
         self.clients.read().await.len()
     }
+
+    /// Handle a single trade-tool WebSocket connection that has *already*
+    /// completed its handshake (used by the URL-dispatch loop in
+    /// `bin/server.rs`).
+    pub async fn handle_one_ws(
+        &self,
+        ws_stream: WebSocketStream<TcpStream>,
+        addr: SocketAddr,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        handle_post_handshake(
+            ws_stream,
+            addr,
+            self.clients.clone(),
+            self.next_client_id.clone(),
+            self.db.clone(),
+            self.current_state.clone(),
+        )
+        .await
+    }
 }
 
 /// Handles a single WebSocket connection
@@ -145,7 +165,18 @@ async fn handle_connection(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let ws_stream = tokio_tungstenite::accept_async(stream).await?;
     log::info!("WebSocket connection established: {}", addr);
+    handle_post_handshake(ws_stream, addr, clients, next_id, db, current_state).await
+}
 
+/// Handles a single WebSocket connection whose handshake is already done.
+async fn handle_post_handshake(
+    ws_stream: WebSocketStream<TcpStream>,
+    addr: SocketAddr,
+    clients: Clients,
+    next_id: Arc<RwLock<ClientId>>,
+    db: SharedDb,
+    current_state: SharedState,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 
     // Generate a unique client ID

@@ -7,7 +7,7 @@ license = "MIT"
 [features]
 default = []
 # Backend feature enables native-only server code (tokio, firestore, etc.)
-backend = ["dep:tokio", "dep:tokio-tungstenite", "dep:futures-util", "dep:firestore", "dep:env_logger", "dep:rustls"]
+backend = ["dep:tokio", "dep:tokio-tungstenite", "dep:futures-util", "dep:firestore", "dep:env_logger", "dep:rustls", "dep:reqwest", "dep:sentry"]
 # Local development mode: connect directly to backend on 8081 instead of through nginx
 local-dev = []
 
@@ -42,6 +42,13 @@ futures-util = { version = "0.3.32", optional = true }
 firestore = { version = "0.47.1", optional = true }
 env_logger = { version = "0.11.9", optional = true }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
+# reqwest is used by the simulator's world_fetch to talk to TravellerMap.
+# We use native-tls (not rustls-tls) because TravellerMap's edge resets
+# rustls connections — possibly fingerprint-blocking the rustls TLS hello.
+# Verified empirically: native-tls works, rustls-tls (any config) fails
+# with `Connection reset by peer` during the TLS handshake.
+reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls"], optional = true }
+sentry = { version = "0.34", default-features = false, features = ["backtrace", "contexts", "panic", "reqwest", "rustls"], optional = true }
 
 [[bin]]
 name = "main"

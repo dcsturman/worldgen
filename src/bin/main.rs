@@ -3,6 +3,8 @@
 //! This is the main entry point for the Worldgen web application.
 //! It sets up routing based on URL paths and renders the appropriate components.
 
+#![recursion_limit = "512"]
+
 use std::rc::Rc;
 
 use web_sys::js_sys::{Function, Object, Reflect};
@@ -11,6 +13,7 @@ use leptos::prelude::*;
 use log::{error, info};
 use worldgen::comms::Client;
 use worldgen::components::selector::Selector;
+use worldgen::components::ship_simulator::ShipSimulator;
 use worldgen::components::system_generator::World;
 use worldgen::components::trade_computer::Trade;
 use worldgen::logging;
@@ -73,7 +76,9 @@ fn App() -> impl IntoView {
     // Track the page view
     track_page_view(&path);
 
-    if path.contains("world") {
+    if path.contains("simulator") {
+        view! { <ShipSimulator /> }.into_any()
+    } else if path.contains("world") {
         view! { <World /> }.into_any()
     } else if path.contains("trade") {
         // Create WebSocket client for trade state synchronization

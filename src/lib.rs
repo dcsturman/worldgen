@@ -22,6 +22,7 @@ pub mod backend;
 pub mod comms;
 pub mod components;
 pub mod logging;
+pub mod simulator;
 pub mod systems;
 pub mod trade;
 pub mod util;
