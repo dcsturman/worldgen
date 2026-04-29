@@ -8,9 +8,6 @@
 //! 4. Server sends exactly one `ServerMessage::Done` or `ServerMessage::Error`.
 //! 5. Server closes the connection.
 
-use std::sync::Arc;
-
-use firestore::FirestoreDb;
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
@@ -18,9 +15,6 @@ use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::simulator::executor::run_simulation;
-use crate::simulator::firestore::{
-    SimulationRunRecord, new_run_id, now_iso_timestamp, save_simulation_run,
-};
 use crate::simulator::protocol::{ClientMessage, ServerMessage};
 use crate::simulator::types::{SimulationResult, SimulationStep};
 use crate::simulator::world_fetch::WorldCache;
@@ -31,11 +25,10 @@ use crate::simulator::world_fetch::WorldCache;
 /// it doesn't share clients, state, or the broadcast machinery.
 pub async fn handle_simulator_connection(
     stream: TcpStream,
-    db: Arc<Option<FirestoreDb>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let ws_stream = tokio_tungstenite::accept_async(stream).await?;
     log::info!("simulator: WebSocket connection established");
-    handle_ws(ws_stream, db).await
+    handle_ws(ws_stream).await
 }
 
 /// Handle a simulator WebSocket once the handshake is already done.
@@ -43,14 +36,12 @@ pub async fn handle_simulator_connection(
 /// HTTP path before deciding which handler to call.
 pub async fn handle_simulator_ws(
     ws_stream: WebSocketStream<TcpStream>,
-    db: Arc<Option<FirestoreDb>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    handle_ws(ws_stream, db).await
+    handle_ws(ws_stream).await
 }
 
 async fn handle_ws(
     ws_stream: WebSocketStream<TcpStream>,
-    db: Arc<Option<FirestoreDb>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 
@@ -105,10 +96,9 @@ async fn handle_ws(
     let (result_tx, result_rx) =
         tokio::sync::oneshot::channel::<Result<SimulationResult, String>>();
 
-    let exec_params = params.clone();
     tokio::spawn(async move {
         let mut cache = WorldCache::new();
-        let res = run_simulation(exec_params, &mut cache, |step| {
+        let res = run_simulation(params, &mut cache, |step| {
             // Drop steps if the writer is gone; the executor keeps going.
             let _ = step_tx.send(step);
         })
@@ -117,12 +107,9 @@ async fn handle_ws(
         let _ = result_tx.send(res);
     });
 
-    let mut steps_collected: Vec<SimulationStep> = Vec::new();
-
     // Pipe steps as they arrive.
     while let Some(step) = step_rx.recv().await {
-        let msg = ServerMessage::Step(step.clone());
-        steps_collected.push(step);
+        let msg = ServerMessage::Step(step);
         match serde_json::to_string(&msg) {
             Ok(json) => {
                 if ws_sender.send(Message::Text(json.into())).await.is_err() {
@@ -147,20 +134,6 @@ async fn handle_ws(
 
     match result {
         Ok(r) => {
-            // Persist before closing — clients only need the Done frame.
-            let record = SimulationRunRecord {
-                run_id: new_run_id(&params),
-                timestamp: now_iso_timestamp(),
-                params: params.clone(),
-                steps: steps_collected,
-                result: r.clone(),
-            };
-            if let Err(e) = save_simulation_run(&db, &record).await {
-                log::warn!("simulator: failed to persist run: {}", e);
-            } else {
-                log::info!("simulator: persisted run {}", record.run_id);
-            }
-
             let done = ServerMessage::Done(r);
             match serde_json::to_string(&done) {
                 Ok(json) => {

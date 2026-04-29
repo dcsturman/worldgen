@@ -47,7 +47,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 # rustls connections — possibly fingerprint-blocking the rustls TLS hello.
 # Verified empirically: native-tls works, rustls-tls (any config) fails
 # with `Connection reset by peer` during the TLS handshake.
-reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls"], optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls", "native-tls-vendored"], optional = true }
 sentry = { version = "0.34", default-features = false, features = ["backtrace", "contexts", "panic", "reqwest", "rustls"], optional = true }
 
 [[bin]]

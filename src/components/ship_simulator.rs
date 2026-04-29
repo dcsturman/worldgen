@@ -16,9 +16,7 @@ use web_sys::{CloseEvent, ErrorEvent, MessageEvent, WebSocket};
 
 use crate::components::traveller_map::WorldSearch;
 use crate::simulator::economy::WEAPONS_MAX;
-use crate::simulator::map_render::{
-    MapWaypoint, build_plain_link_url, build_route_map_data,
-};
+use crate::simulator::map_render::{MapWaypoint, build_plain_link_url, build_route_map_data};
 use crate::simulator::protocol::{ClientMessage, ServerMessage};
 use crate::simulator::types::{
     Action, Date, SimulationParams, SimulationResult, SimulationStep, WorldRef,
@@ -388,7 +386,7 @@ pub fn ShipSimulator() -> impl IntoView {
                 </span>
             </div>
 
-            <SimLog steps=steps />
+            <SimLog steps=steps home_name=home_name />
 
             <SimSummary run_state=run_state />
 
@@ -684,7 +682,7 @@ fn SimForm(
 /// Returns `None` for actions that should not appear in the log (e.g.
 /// `IncidentAvoided`). Callers must filter those out before rendering so
 /// the row count and indices reflect actual entries.
-fn describe_action(action: &Action) -> Option<(String, &'static str)> {
+fn describe_action(action: &Action, home_port: &str) -> Option<(String, &'static str)> {
     Some(match action {
         Action::Arrive {
             from,
@@ -800,7 +798,7 @@ fn describe_action(action: &Action) -> Option<(String, &'static str)> {
         } => (
             format!(
                 "Pirates! −{cargo_lost_tons}t cargo (−{buy_cost_sunk} Cr sunk), \
-                 −{credits_lost} Cr extorted, +{weeks_lost} weeks delay \
+                 −{credits_lost} Cr in repairs, +{weeks_lost} weeks delay \
                  (weapons {weapons}, avoid={avoidance_total}, table={table_total})"
             ),
             "sim-action sim-action-incident sim-action-piracy",
@@ -864,7 +862,7 @@ fn describe_action(action: &Action) -> Option<(String, &'static str)> {
             rescue_arrives_on,
         } => (
             format!(
-                "MAROONED — budget {budget} Cr; rescue arrives {} ({rescue_eta_days} days, {total_parsecs_jumped} pc travelled)",
+                "MAROONED — budget {budget} Cr; mayday arrives at {home_port} on {} ({rescue_eta_days} days, {total_parsecs_jumped} pc travelled)",
                 rescue_arrives_on.format()
             ),
             "sim-action sim-action-marooned",
@@ -874,7 +872,7 @@ fn describe_action(action: &Action) -> Option<(String, &'static str)> {
 
 /// Renders the streaming log of simulation steps.
 #[component]
-fn SimLog(steps: RwSignal<Vec<SimulationStep>>) -> impl IntoView {
+fn SimLog(steps: RwSignal<Vec<SimulationStep>>, home_name: RwSignal<String>) -> impl IntoView {
     view! {
         <div class="sim-log">
             <h2>"Simulation Log"</h2>
@@ -884,10 +882,11 @@ fn SimLog(steps: RwSignal<Vec<SimulationStep>>) -> impl IntoView {
             >
                 <div class="sim-step-list">
                     {move || {
+                        let home_port = home_name.read().clone();
                         steps.read()
                             .iter()
                             .filter_map(|step| {
-                                describe_action(&step.action).map(|(text, class)| (step, text, class))
+                                describe_action(&step.action, &home_port).map(|(text, class)| (step, text, class))
                             })
                             .enumerate()
                             .map(|(idx, (step, text, class))| {
@@ -928,7 +927,11 @@ fn extract_route(steps: &[SimulationStep]) -> (Vec<MapWaypoint>, Vec<String>) {
                 sector: loc.sector.clone(),
                 hex_x: loc.hex_x,
                 hex_y: loc.hex_y,
-                color: if waypoints.is_empty() { "green" } else { "blue" },
+                color: if waypoints.is_empty() {
+                    "green"
+                } else {
+                    "blue"
+                },
             });
             names.push(loc.name.clone());
             last = Some(key);
@@ -943,10 +946,7 @@ fn extract_route(steps: &[SimulationStep]) -> (Vec<MapWaypoint>, Vec<String>) {
 /// run is `Done`. The "Open on TravellerMap" link below the map goes
 /// to the interactive site centred on the home world.
 #[component]
-fn RouteMap(
-    run_state: RwSignal<RunState>,
-    steps: RwSignal<Vec<SimulationStep>>,
-) -> impl IntoView {
+fn RouteMap(run_state: RwSignal<RunState>, steps: RwSignal<Vec<SimulationStep>>) -> impl IntoView {
     view! {
         {move || {
             if !matches!(run_state.get(), RunState::Done(_)) {

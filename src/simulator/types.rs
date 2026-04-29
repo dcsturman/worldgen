@@ -272,7 +272,7 @@ pub enum Action {
         avoidance_total: i32,
     },
     /// Pirates struck. Three sub-effects: cargo destroyed/stolen, credits
-    /// extorted, weeks delayed.
+    /// for repairs, weeks delayed.
     IncidentPiracy {
         avoidance_roll: i32,
         leadership: i16,
@@ -288,7 +288,7 @@ pub enum Action {
         cargo_lost_breakdown: Vec<(String, i32)>,
         /// Sum of `buy_cost * tons_lost` — sunk; not refunded.
         buy_cost_sunk: i64,
-        /// Credits extorted from budget.
+        /// Credits for repair after attack
         credits_lost: i64,
         /// Weeks added to the schedule (1d6, no leadership reduction).
         weeks_lost: u32,

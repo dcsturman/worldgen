@@ -18,12 +18,10 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use firestore::FirestoreDb;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
 
-use worldgen::backend::firestore::initialize_firestore;
 use worldgen::backend::server::TradeServer;
 use worldgen::backend::simulator_server;
 
@@ -70,16 +68,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     log::info!("Starting Worldgen WebSocket server on {}", addr);
 
-    // Build the trade server (which owns its own Firestore handle for trade
-    // state) and grab a shared db handle for the simulator.
+    // The trade server owns its own Firestore handle for trade state.
+    // The simulator runs without persistence.
     let trade_server = TradeServer::new(addr).await?;
-    let db: Arc<Option<FirestoreDb>> = Arc::new(initialize_firestore().await.unwrap_or_else(|e| {
-        log::error!(
-            "simulator: Firestore init failed ({}); running without persistence",
-            e
-        );
-        None
-    }));
 
     // We have two listening modes: the existing TradeServer.run() owns
     // the listener, OR we own the listener and dispatch by URL path.
@@ -95,9 +86,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     while let Ok((stream, peer_addr)) = listener.accept().await {
         let trade_server = trade_server.clone();
-        let db = db.clone();
         tokio::spawn(async move {
-            if let Err(e) = dispatch(stream, peer_addr, trade_server, db).await {
+            if let Err(e) = dispatch(stream, peer_addr, trade_server).await {
                 log::error!("Connection from {} ended with error: {}", peer_addr, e);
                 sentry::capture_message(
                     &format!("connection error from {}: {}", peer_addr, e),
@@ -116,7 +106,6 @@ async fn dispatch(
     stream: tokio::net::TcpStream,
     peer_addr: SocketAddr,
     trade_server: Arc<TradeServer>,
-    sim_db: Arc<Option<FirestoreDb>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Capture the request URI during the handshake.
     let captured_path: Arc<RwLock<String>> = Arc::new(RwLock::new(String::new()));
@@ -135,7 +124,7 @@ async fn dispatch(
     log::info!("connection from {} requested path {}", peer_addr, path);
 
     if path.starts_with("/ws/simulator") {
-        simulator_server::handle_simulator_ws(ws_stream, sim_db).await?;
+        simulator_server::handle_simulator_ws(ws_stream).await?;
     } else {
         // Default to trade — preserves the legacy bare-`/` behaviour.
         trade_server.handle_one_ws(ws_stream, peer_addr).await?;
