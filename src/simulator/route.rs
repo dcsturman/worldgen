@@ -23,6 +23,10 @@ pub struct Candidate {
     pub world: World,
     /// Distance in parsecs from the current location to this candidate.
     pub distance: i32,
+    /// TravellerMap allegiance code (e.g. `"Im"`, `"ImAp"`, `"AsT4"`,
+    /// `"Zh"`). `None` when the data wasn't available. Used by the route
+    /// planner to apply a heavy penalty for foreign-empire space.
+    pub allegiance: Option<String>,
 }
 
 /// Read-only context for scoring.
@@ -69,6 +73,13 @@ pub const ROUTE_W_DIST: f64 = 5.0;
 /// Base history penalty. Decays as `ROUTE_W_HISTORY / recency` where
 /// `recency` is 1 for the most recent visit, 2 for the one before, etc.
 pub const ROUTE_W_HISTORY: f64 = 300_000.0;
+
+/// Penalty for picking a candidate in foreign-empire space. Sized to
+/// be a strong preference against — comparable in magnitude to a single
+/// high-value cargo lot's trade-value contribution (~30M for a 30-ton
+/// 400 kCr/ton good with a +3 sale DM) — but overcomable when the trade
+/// looks genuinely outsized.
+pub const ROUTE_W_FOREIGN_EMPIRE: f64 = 10_000_000.0;
 
 /// Strength of the "head home" pressure in the second half of the trip.
 /// Per parsec from home, scaled linearly by trip progress beyond 50%.
@@ -149,7 +160,38 @@ pub fn score_candidate(
         }
     }
 
+    // 7) Foreign-empire penalty. Imperial / Non-aligned / Client-state
+    //    space is fine; everything else (Aslan Hierate clans, Zhodani
+    //    Consulate, Solomani, Hivers, K'kree, etc.) gets a near-hard
+    //    block. Worlds with no allegiance data are treated as friendly.
+    if !is_allegiance_friendly(candidate.allegiance.as_deref()) {
+        score -= ROUTE_W_FOREIGN_EMPIRE;
+    }
+
     score
+}
+
+/// Whether a TravellerMap allegiance code represents space the simulator
+/// is willing to route through.
+///
+/// Friendly prefixes:
+/// - `Im*` — Third Imperium and all its sub-codes (`ImAp`, `ImDc`, etc.).
+/// - `Na*` — Non-aligned (humans or other).
+/// - `Cs*` — Client states (e.g. `CsIm`, `CsZh`).
+/// - missing data — assumed friendly to avoid over-blocking.
+///
+/// Anything else (`As`, `Zh`, `So`, `Hv`, `Kk`, `Va*`, etc.) is foreign.
+pub fn is_allegiance_friendly(allegiance: Option<&str>) -> bool {
+    match allegiance {
+        None => true,
+        Some(code) => {
+            let code = code.trim();
+            if code.is_empty() {
+                return true;
+            }
+            code.starts_with("Im") || code.starts_with("Na") || code.starts_with("Cs")
+        }
+    }
 }
 
 /// Pick the best destination from `candidates`. Returns `None` only if
@@ -353,10 +395,12 @@ mod tests {
         let great = Candidate {
             world: mk_world("Great", "A999999-F", 1, 1),
             distance: 1,
+            allegiance: None,
         };
         let home = Candidate {
             world: mk_world("Home", "A788899-A", 5, 5),
             distance: 4,
+            allegiance: None,
         };
 
         let market = AvailableGoodsTable::default();
@@ -376,10 +420,12 @@ mod tests {
         let near = Candidate {
             world: mk_world("Near", "C555555-7", 1, 0),
             distance: 1,
+            allegiance: None,
         };
         let far = Candidate {
             world: mk_world("Far", "C555555-7", 3, 0),
             distance: 3,
+            allegiance: None,
         };
         let market = AvailableGoodsTable::default();
         let c = ctx(&home_ref, &[]);
@@ -396,10 +442,12 @@ mod tests {
         let porta = Candidate {
             world: mk_world("PortA", "A555555-7", 1, 0),
             distance: 1,
+            allegiance: None,
         };
         let porte = Candidate {
             world: mk_world("PortE", "E555555-7", 0, 1),
             distance: 1,
+            allegiance: None,
         };
         let market = AvailableGoodsTable::default();
         let c = ctx(&home_ref, &[]);
@@ -418,10 +466,12 @@ mod tests {
         let visited_cand = Candidate {
             world: mk_world("Visited", "C555555-7", 1, 0),
             distance: 1,
+            allegiance: None,
         };
         let fresh_cand = Candidate {
             world: mk_world("Fresh", "C555555-7", 0, 1),
             distance: 1,
+            allegiance: None,
         };
 
         let market = AvailableGoodsTable::default();
@@ -450,10 +500,12 @@ mod tests {
         let near_home = Candidate {
             world: mk_world("Near", "C555555-7", 1, 0),
             distance: 1,
+            allegiance: None,
         };
         let far_with_a = Candidate {
             world: mk_world("FarA", "A555555-7", 8, 0),
             distance: 1, // distance from current location, not from home
+            allegiance: None,
         };
 
         let market = AvailableGoodsTable::default();
@@ -465,10 +517,12 @@ mod tests {
             Candidate {
                 world: near_home.world.clone(),
                 distance: 1,
+            allegiance: None,
             },
             Candidate {
                 world: far_with_a.world.clone(),
                 distance: 1,
+            allegiance: None,
             },
         ];
         let early = pick_next(&cands_early, &market, &c_early).unwrap();
@@ -485,10 +539,12 @@ mod tests {
             Candidate {
                 world: near_home.world.clone(),
                 distance: 1,
+            allegiance: None,
             },
             Candidate {
                 world: far_with_a.world.clone(),
                 distance: 1,
+            allegiance: None,
             },
         ];
         let late = pick_next(&cands_late, &market, &c_late).unwrap();
@@ -559,10 +615,12 @@ mod tests {
         let non_ag = Candidate {
             world: non_ag_world,
             distance: 1,
+            allegiance: None,
         };
         let neutral = Candidate {
             world: neutral_world,
             distance: 1,
+            allegiance: None,
         };
 
         let c = ctx(&home_ref, &[]);
@@ -592,10 +650,12 @@ mod tests {
         let home = Candidate {
             world: mk_world("Home", "A999999-F", 5, 5),
             distance: 1,
+            allegiance: None,
         };
         let other = Candidate {
             world: mk_world("Other", "C555555-7", 6, 5),
             distance: 1,
+            allegiance: None,
         };
         let market = AvailableGoodsTable::default();
         let mut c = ctx(&home_ref, &[]);
@@ -614,10 +674,12 @@ mod tests {
         let home = Candidate {
             world: mk_world("Home", "A999999-F", 5, 5),
             distance: 1,
+            allegiance: None,
         };
         let other = Candidate {
             world: mk_world("Other", "C555555-7", 6, 5),
             distance: 1,
+            allegiance: None,
         };
         let market = AvailableGoodsTable::default();
         let mut c = ctx(&home_ref, &[]);
@@ -638,10 +700,12 @@ mod tests {
         let great_far = Candidate {
             world: mk_world("Great", "A999999-F", 5, 0),
             distance: 2,
+            allegiance: None,
         };
         let mediocre_near = Candidate {
             world: mk_world("Near", "E555555-5", 1, 0),
             distance: 2,
+            allegiance: None,
         };
         let market = AvailableGoodsTable::default();
         let mut c = ctx(&home_ref, &[]);
@@ -650,5 +714,78 @@ mod tests {
         let cands = [great_far, mediocre_near];
         let chosen = pick_next(&cands, &market, &c).unwrap();
         assert_eq!(chosen.world.name, "Near");
+    }
+
+    #[test]
+    fn allegiance_friendliness() {
+        // Friendly: Imperial variants, Non-aligned, Client states, missing/empty.
+        assert!(is_allegiance_friendly(None));
+        assert!(is_allegiance_friendly(Some("")));
+        assert!(is_allegiance_friendly(Some("   ")));
+        assert!(is_allegiance_friendly(Some("Im")));
+        assert!(is_allegiance_friendly(Some("ImAp")));
+        assert!(is_allegiance_friendly(Some("ImDc")));
+        assert!(is_allegiance_friendly(Some("Na")));
+        assert!(is_allegiance_friendly(Some("NaHu")));
+        assert!(is_allegiance_friendly(Some("NaXX")));
+        assert!(is_allegiance_friendly(Some("CsIm")));
+        assert!(is_allegiance_friendly(Some("CsZh")));
+
+        // Foreign: Aslan clans, Zhodani, Solomani, Hivers, K'kree, Vargr.
+        assert!(!is_allegiance_friendly(Some("As")));
+        assert!(!is_allegiance_friendly(Some("AsT0")));
+        assert!(!is_allegiance_friendly(Some("AsT4")));
+        assert!(!is_allegiance_friendly(Some("AsXX")));
+        assert!(!is_allegiance_friendly(Some("Zh")));
+        assert!(!is_allegiance_friendly(Some("ZhCo")));
+        assert!(!is_allegiance_friendly(Some("So")));
+        assert!(!is_allegiance_friendly(Some("Hv")));
+        assert!(!is_allegiance_friendly(Some("Kk")));
+        assert!(!is_allegiance_friendly(Some("Va")));
+    }
+
+    #[test]
+    fn foreign_empire_loses_to_friendly() {
+        // A great-on-paper foreign world (A-port, high pop) should still
+        // lose to a mediocre Imperial world thanks to the heavy penalty.
+        let home_ref = mk_world_ref("Home", "A788899-A", 0, 0);
+        let foreign_great = Candidate {
+            world: mk_world("AslanA", "A999999-F", 1, 0),
+            distance: 1,
+            allegiance: Some("AsT4".to_string()),
+        };
+        let imperial_meh = Candidate {
+            world: mk_world("ImpC", "C555555-7", 2, 0),
+            distance: 2,
+            allegiance: Some("Im".to_string()),
+        };
+        let market = AvailableGoodsTable::default();
+        let c = ctx(&home_ref, &[]);
+
+        let cands = [foreign_great, imperial_meh];
+        let chosen = pick_next(&cands, &market, &c).unwrap();
+        assert_eq!(
+            chosen.world.name, "ImpC",
+            "Imperial world should beat foreign world even when stats favor foreign"
+        );
+    }
+
+    #[test]
+    fn foreign_empire_picked_as_last_resort() {
+        // If foreign space is the *only* option, the planner still
+        // returns it rather than `None` — the penalty is heavy but not
+        // a hard block.
+        let home_ref = mk_world_ref("Home", "A788899-A", 0, 0);
+        let only_foreign = Candidate {
+            world: mk_world("Zhodane", "C555555-7", 1, 0),
+            distance: 1,
+            allegiance: Some("Zh".to_string()),
+        };
+        let market = AvailableGoodsTable::default();
+        let c = ctx(&home_ref, &[]);
+
+        let cands = [only_foreign];
+        let chosen = pick_next(&cands, &market, &c).unwrap();
+        assert_eq!(chosen.world.name, "Zhodane");
     }
 }

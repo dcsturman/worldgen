@@ -139,6 +139,11 @@ impl World {
         self.population
     }
 
+    /// Returns the law level of the world
+    pub fn get_law_level(&self) -> i32 {
+        self.law_level
+    }
+
     /// Sets the starport code for the world
     ///
     /// # Arguments

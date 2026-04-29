@@ -34,6 +34,40 @@ pub const PERIOD_DAYS: u32 = 28;
 /// before it gives up trying to head home and just aborts the run.
 pub const ABORT_OVERFLOW_DAYS: i64 = 100;
 
+/// Days per (Imperial) week.
+pub const DAYS_PER_WEEK: u32 = 7;
+
+/// Constant skill assumed for the planet's broker on every transaction.
+/// Replaces the player's separate seller-broker skill that earlier versions
+/// of the simulator carried.
+pub const PLANETARY_BROKER_SKILL: i16 = 2;
+
+/// Sum-and-leadership threshold for avoiding an incident: a 2d6 roll plus
+/// the captain's leadership plus port/zone/law modifiers must reach this
+/// to dodge.
+pub const INCIDENT_AVOID_THRESHOLD: i32 = 8;
+
+/// A natural 2 on the avoidance 2d6 always triggers an incident, regardless
+/// of leadership and modifiers.
+pub const NATURAL_INCIDENT_ROLL: i32 = 2;
+
+/// Hard upper bound on the form's `weapons` input. Beyond this the input
+/// is rejected client-side; the runtime accepts any value.
+pub const WEAPONS_MAX: i16 = 24;
+
+/// Rescue ETA: weeks from marooning until a help message arrives equals
+/// `ceil(parsecs_jumped_from_home / RESCUE_PARSECS_PER_WEEK)`.
+pub const RESCUE_PARSECS_PER_WEEK: u32 = 4;
+
+/// Multiplier on the `(2d6 - broker)` clamp for a Trade Scam credit loss.
+pub const TRADE_SCAM_CR_PER_STEP: i64 = 100_000;
+
+/// Multiplier on a 1d6 roll for an Accident credit loss (per spec).
+pub const ACCIDENT_CR_PER_STEP: i64 = 100_000;
+
+/// Multiplier on a 1d6 roll for a Government Complication fine (per spec).
+pub const GOV_FINE_CR_PER_STEP: i64 = 100_000;
+
 /// Compute how many staterooms are needed to house `high` high-passage,
 /// `medium` medium-passage, and `basic` basic-passage passengers.
 ///

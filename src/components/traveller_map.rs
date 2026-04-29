@@ -582,12 +582,14 @@ pub fn WorldSearch(
     /// written here on selection (e.g., "Spinward Marches"). Cleared when
     /// the name is cleared. The trade tool ignores this; the simulator
     /// uses it to query TravellerMap for in-jump-range candidates.
-    #[prop(optional)] sector: Option<RwSignal<String>>,
+    #[prop(optional)]
+    sector: Option<RwSignal<String>>,
     /// Whether to render the editable UWP input. When `false`, the UWP is
     /// still set via autocomplete (so the parent's `uwp` signal is filled),
     /// but the user can't type into it. Useful when callers display the
     /// UWP in a read-only summary elsewhere.
-    #[prop(default = true)] show_uwp: bool,
+    #[prop(default = true)]
+    show_uwp: bool,
 ) -> impl IntoView {
     let (search_results, set_search_results) =
         signal::<Vec<(String, String, String, i32, i32)>>(vec![]);

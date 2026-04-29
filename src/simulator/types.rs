@@ -80,12 +80,19 @@ pub struct WorldRef {
 /// Inputs to the simulation, supplied by the client.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimulationParams {
-    /// Buyer's broker skill (used when buying speculative cargo).
-    pub buyer_broker_skill: i16,
-    /// Seller's broker skill (used when selling speculative cargo).
-    pub seller_broker_skill: i16,
+    /// Player-side broker skill, applied on both buy and sell sides. The
+    /// counterparty (the planet's broker) is treated as a constant
+    /// `economy::PLANETARY_BROKER_SKILL`.
+    pub broker_skill: i16,
     /// Steward skill (affects passenger recruitment).
     pub steward_skill: i16,
+    /// Captain's leadership skill. Reduces incident likelihood and
+    /// shortens crew-loss / trade-scam layovers. Form caps input at 5;
+    /// runtime accepts any non-negative value.
+    pub leadership_skill: i16,
+    /// Number of weapon turrets aboard, `0..=24`. Counterweights piracy
+    /// cargo loss.
+    pub weapons: i16,
 
     /// Cargo capacity in tons.
     pub cargo_capacity: i32,
@@ -248,6 +255,101 @@ pub enum Action {
         /// How many days past the target we are.
         days_past_target: i64,
     },
+
+    // ---- Incident variants -------------------------------------------------
+    // The five incident kinds plus a successful-avoidance variant. All
+    // share `avoidance_*` and `table_*` roll fields so the log can show
+    // the saving throw inline. The frontend's renderer skips
+    // `IncidentAvoided` rather than emit a row for it.
+    /// Avoidance roll passed; nothing happened. Carried for analytics.
+    IncidentAvoided {
+        avoidance_roll: i32,
+        leadership: i16,
+        port_mod: i32,
+        zone_mod: i32,
+        law_mod: i32,
+        modifier_total: i32,
+        avoidance_total: i32,
+    },
+    /// Pirates struck. Three sub-effects: cargo destroyed/stolen, credits
+    /// extorted, weeks delayed.
+    IncidentPiracy {
+        avoidance_roll: i32,
+        leadership: i16,
+        avoidance_modifier_total: i32,
+        avoidance_total: i32,
+        table_roll: i32,
+        table_modifier_total: i32,
+        table_total: i32,
+        weapons: i16,
+        /// Total tons removed from the manifest.
+        cargo_lost_tons: i32,
+        /// Per-good `(name, tons_lost)` for the log.
+        cargo_lost_breakdown: Vec<(String, i32)>,
+        /// Sum of `buy_cost * tons_lost` — sunk; not refunded.
+        buy_cost_sunk: i64,
+        /// Credits extorted from budget.
+        credits_lost: i64,
+        /// Weeks added to the schedule (1d6, no leadership reduction).
+        weeks_lost: u32,
+    },
+    /// A trade scam relieves the captain of credits and time.
+    IncidentTradeScam {
+        avoidance_roll: i32,
+        leadership: i16,
+        avoidance_modifier_total: i32,
+        avoidance_total: i32,
+        table_roll: i32,
+        table_modifier_total: i32,
+        table_total: i32,
+        broker: i16,
+        credits_lost: i64,
+        weeks_lost: u32,
+    },
+    /// Crew member lost; the layover for hiring and paperwork delays the
+    /// ship. No credit penalty.
+    IncidentCrewLoss {
+        avoidance_roll: i32,
+        leadership: i16,
+        avoidance_modifier_total: i32,
+        avoidance_total: i32,
+        table_roll: i32,
+        table_modifier_total: i32,
+        table_total: i32,
+        weeks_lost: u32,
+    },
+    /// Mechanical accident; pure credit cost.
+    IncidentAccident {
+        avoidance_roll: i32,
+        leadership: i16,
+        avoidance_modifier_total: i32,
+        avoidance_total: i32,
+        table_roll: i32,
+        table_modifier_total: i32,
+        table_total: i32,
+        repair_cost: i64,
+    },
+    /// Government complication: fines and weeks lost.
+    IncidentGovernment {
+        avoidance_roll: i32,
+        leadership: i16,
+        avoidance_modifier_total: i32,
+        avoidance_total: i32,
+        table_roll: i32,
+        table_modifier_total: i32,
+        table_total: i32,
+        fine_credits: i64,
+        weeks_lost: u32,
+    },
+
+    /// Terminal: the end-of-port-stay budget check failed. The run ends
+    /// here; a help message will reach the home port after `rescue_eta_days`.
+    Marooned {
+        budget: i64,
+        total_parsecs_jumped: u32,
+        rescue_eta_days: u32,
+        rescue_arrives_on: Date,
+    },
 }
 
 /// Final result delivered after the last step.
@@ -271,6 +373,16 @@ pub struct SimulationResult {
     pub returned_home: bool,
     /// True if the budget went negative at any point.
     pub went_negative: bool,
+    /// True if the run terminated because the ship couldn't pay to leave
+    /// a port. When true, the four `marooned_*` fields below are populated.
+    pub marooned: bool,
+    /// World where the ship was marooned.
+    pub marooned_at: Option<WorldRef>,
+    /// Date the ship was marooned.
+    pub marooned_on: Option<Date>,
+    /// Date a rescue is expected to arrive (one week per 4 parsecs of the
+    /// path actually travelled, rounded up).
+    pub rescue_arrives_on: Option<Date>,
 }
 
 #[cfg(test)]

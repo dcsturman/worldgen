@@ -1,6 +1,8 @@
 //! Ship simulator — automated trade-run simulation.
 
 pub mod economy;
+pub mod incidents;
+pub mod map_render;
 pub mod protocol;
 pub mod route;
 pub mod types;

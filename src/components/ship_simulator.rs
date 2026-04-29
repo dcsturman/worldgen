@@ -15,6 +15,10 @@ use wasm_bindgen::prelude::*;
 use web_sys::{CloseEvent, ErrorEvent, MessageEvent, WebSocket};
 
 use crate::components::traveller_map::WorldSearch;
+use crate::simulator::economy::WEAPONS_MAX;
+use crate::simulator::map_render::{
+    MapWaypoint, build_plain_link_url, build_route_map_data,
+};
 use crate::simulator::protocol::{ClientMessage, ServerMessage};
 use crate::simulator::types::{
     Action, Date, SimulationParams, SimulationResult, SimulationStep, WorldRef,
@@ -221,9 +225,10 @@ pub fn ShipSimulator() -> impl IntoView {
     let crew_profit_share = RwSignal::new(0.10f32);
 
     // Crew
-    let buyer_broker_skill = RwSignal::new(1i16);
-    let seller_broker_skill = RwSignal::new(1i16);
+    let broker_skill = RwSignal::new(1i16);
     let steward_skill = RwSignal::new(1i16);
+    let leadership_skill = RwSignal::new(1i16);
+    let weapons = RwSignal::new(2i16);
 
     // Voyage
     let starting_budget = RwSignal::new(500_000i64);
@@ -258,9 +263,10 @@ pub fn ShipSimulator() -> impl IntoView {
             && maintenance_per_period.get() >= 0
             && crew_salary_per_period.get() >= 0
             && (0.0..=1.0).contains(&crew_profit_share.get())
-            && (-3..=5).contains(&buyer_broker_skill.get())
-            && (-3..=5).contains(&seller_broker_skill.get())
+            && (-3..=5).contains(&broker_skill.get())
             && (-3..=5).contains(&steward_skill.get())
+            && (0..=5).contains(&leadership_skill.get())
+            && (0..=24).contains(&weapons.get())
             && {
                 match (
                     parse_ddd_yyyy(&start_date_text.read()),
@@ -287,9 +293,10 @@ pub fn ShipSimulator() -> impl IntoView {
         run_state.set(RunState::Connecting);
 
         let params = SimulationParams {
-            buyer_broker_skill: buyer_broker_skill.get_untracked(),
-            seller_broker_skill: seller_broker_skill.get_untracked(),
+            broker_skill: broker_skill.get_untracked(),
             steward_skill: steward_skill.get_untracked(),
+            leadership_skill: leadership_skill.get_untracked(),
+            weapons: weapons.get_untracked(),
             cargo_capacity: cargo_capacity.get_untracked(),
             staterooms: staterooms.get_untracked(),
             low_berths: low_berths.get_untracked(),
@@ -341,9 +348,10 @@ pub fn ShipSimulator() -> impl IntoView {
                 maintenance_per_period=maintenance_per_period
                 crew_salary_per_period=crew_salary_per_period
                 crew_profit_share=crew_profit_share
-                buyer_broker_skill=buyer_broker_skill
-                seller_broker_skill=seller_broker_skill
+                broker_skill=broker_skill
                 steward_skill=steward_skill
+                leadership_skill=leadership_skill
+                weapons=weapons
                 starting_budget=starting_budget
                 start_date_text=start_date_text
                 target_date_text=target_date_text
@@ -383,6 +391,8 @@ pub fn ShipSimulator() -> impl IntoView {
             <SimLog steps=steps />
 
             <SimSummary run_state=run_state />
+
+            <RouteMap run_state=run_state steps=steps />
         </div>
     }
 }
@@ -399,9 +409,10 @@ fn SimForm(
     maintenance_per_period: RwSignal<i64>,
     crew_salary_per_period: RwSignal<i64>,
     crew_profit_share: RwSignal<f32>,
-    buyer_broker_skill: RwSignal<i16>,
-    seller_broker_skill: RwSignal<i16>,
+    broker_skill: RwSignal<i16>,
     steward_skill: RwSignal<i16>,
+    leadership_skill: RwSignal<i16>,
+    weapons: RwSignal<i16>,
     starting_budget: RwSignal<i64>,
     start_date_text: RwSignal<String>,
     target_date_text: RwSignal<String>,
@@ -522,28 +533,15 @@ fn SimForm(
             <fieldset class="sim-fieldset">
                 <legend>"Crew"</legend>
                 <div class="sim-grid">
-                    <label>"Buyer broker skill"
+                    <label>"Broker"
                         <input
                             type="number"
                             min="-3"
                             max="5"
-                            prop:value=move || buyer_broker_skill.get()
+                            prop:value=move || broker_skill.get()
                             on:input=move |ev| {
                                 if let Ok(v) = event_target_value(&ev).parse::<i16>() {
-                                    buyer_broker_skill.set(v);
-                                }
-                            }
-                        />
-                    </label>
-                    <label>"Seller broker skill"
-                        <input
-                            type="number"
-                            min="-3"
-                            max="5"
-                            prop:value=move || seller_broker_skill.get()
-                            on:input=move |ev| {
-                                if let Ok(v) = event_target_value(&ev).parse::<i16>() {
-                                    seller_broker_skill.set(v);
+                                    broker_skill.set(v);
                                 }
                             }
                         />
@@ -557,6 +555,32 @@ fn SimForm(
                             on:input=move |ev| {
                                 if let Ok(v) = event_target_value(&ev).parse::<i16>() {
                                     steward_skill.set(v);
+                                }
+                            }
+                        />
+                    </label>
+                    <label>"Leadership"
+                        <input
+                            type="number"
+                            min="0"
+                            max="5"
+                            prop:value=move || leadership_skill.get()
+                            on:input=move |ev| {
+                                if let Ok(v) = event_target_value(&ev).parse::<i16>() {
+                                    leadership_skill.set(v);
+                                }
+                            }
+                        />
+                    </label>
+                    <label>"Weapons"
+                        <input
+                            type="number"
+                            min="0"
+                            max=WEAPONS_MAX
+                            prop:value=move || weapons.get()
+                            on:input=move |ev| {
+                                if let Ok(v) = event_target_value(&ev).parse::<i16>() {
+                                    weapons.set(v);
                                 }
                             }
                         />
@@ -656,8 +680,12 @@ fn SimForm(
 }
 
 /// Per-step description used by the log view.
-fn describe_action(action: &Action) -> (String, &'static str) {
-    match action {
+///
+/// Returns `None` for actions that should not appear in the log (e.g.
+/// `IncidentAvoided`). Callers must filter those out before rendering so
+/// the row count and indices reflect actual entries.
+fn describe_action(action: &Action) -> Option<(String, &'static str)> {
+    Some(match action {
         Action::Arrive {
             from,
             distance,
@@ -756,7 +784,92 @@ fn describe_action(action: &Action) -> (String, &'static str) {
             format!("Aborted: {days_past_target} days past target"),
             "sim-action sim-action-warning",
         ),
-    }
+
+        // Skip avoided-incident rows entirely; they're just analytics noise.
+        Action::IncidentAvoided { .. } => return None,
+
+        Action::IncidentPiracy {
+            cargo_lost_tons,
+            buy_cost_sunk,
+            credits_lost,
+            weeks_lost,
+            weapons,
+            avoidance_total,
+            table_total,
+            ..
+        } => (
+            format!(
+                "Pirates! −{cargo_lost_tons}t cargo (−{buy_cost_sunk} Cr sunk), \
+                 −{credits_lost} Cr extorted, +{weeks_lost} weeks delay \
+                 (weapons {weapons}, avoid={avoidance_total}, table={table_total})"
+            ),
+            "sim-action sim-action-incident sim-action-piracy",
+        ),
+        Action::IncidentTradeScam {
+            credits_lost,
+            weeks_lost,
+            broker,
+            avoidance_total,
+            table_total,
+            ..
+        } => (
+            format!(
+                "Trade scam: −{credits_lost} Cr, +{weeks_lost} weeks \
+                 (broker {broker}, avoid={avoidance_total}, table={table_total})"
+            ),
+            "sim-action sim-action-incident sim-action-scam",
+        ),
+        Action::IncidentCrewLoss {
+            weeks_lost,
+            leadership,
+            avoidance_total,
+            table_total,
+            ..
+        } => (
+            format!(
+                "Crew layover: +{weeks_lost} weeks \
+                 (leadership {leadership}, avoid={avoidance_total}, table={table_total})"
+            ),
+            "sim-action sim-action-incident sim-action-crew",
+        ),
+        Action::IncidentAccident {
+            repair_cost,
+            avoidance_total,
+            table_total,
+            ..
+        } => (
+            format!(
+                "Accident: −{repair_cost} Cr in repairs \
+                 (avoid={avoidance_total}, table={table_total})"
+            ),
+            "sim-action sim-action-incident sim-action-accident",
+        ),
+        Action::IncidentGovernment {
+            fine_credits,
+            weeks_lost,
+            avoidance_total,
+            table_total,
+            ..
+        } => (
+            format!(
+                "Government complication: −{fine_credits} Cr fine, +{weeks_lost} weeks \
+                 (avoid={avoidance_total}, table={table_total})"
+            ),
+            "sim-action sim-action-incident sim-action-government",
+        ),
+        Action::Marooned {
+            budget,
+            total_parsecs_jumped,
+            rescue_eta_days,
+            rescue_arrives_on,
+        } => (
+            format!(
+                "MAROONED — budget {budget} Cr; rescue arrives {} ({rescue_eta_days} days, {total_parsecs_jumped} pc travelled)",
+                rescue_arrives_on.format()
+            ),
+            "sim-action sim-action-marooned",
+        ),
+    })
 }
 
 /// Renders the streaming log of simulation steps.
@@ -773,12 +886,14 @@ fn SimLog(steps: RwSignal<Vec<SimulationStep>>) -> impl IntoView {
                     {move || {
                         steps.read()
                             .iter()
+                            .filter_map(|step| {
+                                describe_action(&step.action).map(|(text, class)| (step, text, class))
+                            })
                             .enumerate()
-                            .map(|(idx, step)| {
+                            .map(|(idx, (step, text, class))| {
                                 let date = step.date.format();
                                 let location = step.location.name.clone();
                                 let budget = step.budget_after;
-                                let (text, class) = describe_action(&step.action);
                                 view! {
                                     <div class=format!("sim-step {}", class) data-idx=idx>
                                         <span class="sim-step-date">{date}</span>
@@ -796,6 +911,134 @@ fn SimLog(steps: RwSignal<Vec<SimulationStep>>) -> impl IntoView {
     }
 }
 
+/// Walk the step list and pull out the visit order — one entry per
+/// distinct location, in the order they were first visited *within a
+/// run of consecutive steps*. Returns `(map_waypoints, display_names)`
+/// so we can render both the iframe overlay and the textual hop list
+/// from a single pass.
+fn extract_route(steps: &[SimulationStep]) -> (Vec<MapWaypoint>, Vec<String>) {
+    let mut waypoints: Vec<MapWaypoint> = Vec::new();
+    let mut names: Vec<String> = Vec::new();
+    let mut last: Option<(String, i32, i32)> = None;
+    for step in steps {
+        let loc = &step.location;
+        let key = (loc.sector.clone(), loc.hex_x, loc.hex_y);
+        if Some(&key) != last.as_ref() {
+            waypoints.push(MapWaypoint {
+                sector: loc.sector.clone(),
+                hex_x: loc.hex_x,
+                hex_y: loc.hex_y,
+                color: if waypoints.is_empty() { "green" } else { "blue" },
+            });
+            names.push(loc.name.clone());
+            last = Some(key);
+        }
+    }
+    (waypoints, names)
+}
+
+/// Renders a static TravellerMap image (Tile API) of the area the
+/// route covered, with an SVG overlay drawing the visited worlds as
+/// circles and the path between them as a polyline. Hidden until the
+/// run is `Done`. The "Open on TravellerMap" link below the map goes
+/// to the interactive site centred on the home world.
+#[component]
+fn RouteMap(
+    run_state: RwSignal<RunState>,
+    steps: RwSignal<Vec<SimulationStep>>,
+) -> impl IntoView {
+    view! {
+        {move || {
+            if !matches!(run_state.get(), RunState::Done(_)) {
+                return view! { <div></div> }.into_any();
+            }
+            let all_steps = steps.read();
+            if all_steps.is_empty() {
+                return view! { <div></div> }.into_any();
+            }
+            let (waypoints, names) = extract_route(&all_steps);
+            if waypoints.is_empty() {
+                return view! { <div></div> }.into_any();
+            }
+            let map_data = build_route_map_data(&waypoints);
+            let link_url = build_plain_link_url(&waypoints[0]);
+            let path_text = names.join(" → ");
+            view! {
+                <div class="sim-route-map">
+                    <h2>"Route Map"</h2>
+                    {match map_data {
+                        Some(data) => {
+                            let view_box = format!("0 0 {} {}", data.width, data.height);
+                            // Polyline through every waypoint that has a known pixel
+                            // position. Drawn first so the circles render on top.
+                            let polyline_points = data.waypoints_px.iter()
+                                .filter_map(|p| p.map(|(x, y)| format!("{:.1},{:.1}", x, y)))
+                                .collect::<Vec<_>>()
+                                .join(" ");
+                            // Circles per waypoint in input order — colour comes from
+                            // the MapWaypoint (home is green, rest blue).
+                            let circles = waypoints.iter().zip(data.waypoints_px.iter())
+                                .filter_map(|(wp, p)| p.map(|(x, y)| (wp.color, x, y)))
+                                .map(|(color, x, y)| view! {
+                                    <circle
+                                        cx=format!("{:.1}", x)
+                                        cy=format!("{:.1}", y)
+                                        r="7"
+                                        fill=color
+                                        stroke="black"
+                                        stroke-width="1.5"
+                                    />
+                                })
+                                .collect::<Vec<_>>();
+                            view! {
+                                // Layout-critical positioning is inlined so the overlay works
+                                // even if the page's CSS bundle is stale (which trunk has been
+                                // known to miss between hot-reloads).
+                                <div
+                                    class="sim-route-map-frame"
+                                    style="position: relative; line-height: 0;"
+                                >
+                                    <img
+                                        src=data.image_url
+                                        alt="Route map"
+                                        style="display: block; width: 100%; height: auto;"
+                                    />
+                                    <svg
+                                        class="sim-route-overlay"
+                                        viewBox=view_box
+                                        preserveAspectRatio="none"
+                                        style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none;"
+                                    >
+                                        <polyline
+                                            points=polyline_points
+                                            fill="none"
+                                            stroke="#FFB000"
+                                            stroke-width="3"
+                                            stroke-linecap="round"
+                                            stroke-linejoin="round"
+                                            opacity="0.9"
+                                        />
+                                        {circles}
+                                    </svg>
+                                </div>
+                            }.into_any()
+                        },
+                        None => view! {
+                            <div class="sim-route-map-empty">
+                                "Map preview unavailable for this sector — see link below."
+                            </div>
+                        }.into_any(),
+                    }}
+                    <div class="sim-route-path">{path_text}</div>
+                    <a class="sim-route-link no-print" href=link_url target="_blank" rel="noopener">
+                        "Open on TravellerMap"
+                    </a>
+                </div>
+            }.into_any()
+        }}
+    }
+}
+
 /// Renders the final summary card, including the Save-as-PDF print button.
 #[component]
 fn SimSummary(run_state: RwSignal<RunState>) -> impl IntoView {
@@ -809,7 +1052,23 @@ fn SimSummary(run_state: RwSignal<RunState>) -> impl IntoView {
         {move || match run_state.get() {
             RunState::Done(result) => {
                 let r = result;
+                let marooned_panel = if r.marooned {
+                    let loc = r.marooned_at.as_ref().map(|w| w.name.clone()).unwrap_or_default();
+                    let on_date = r.marooned_on.map(|d| d.format()).unwrap_or_default();
+                    let rescue_date = r.rescue_arrives_on.map(|d| d.format()).unwrap_or_default();
+                    view! {
+                        <div class="sim-summary sim-summary-marooned">
+                            <h2>"⚠ Marooned"</h2>
+                            <p>"Marooned at "<strong>{loc}</strong>" on "<strong>{on_date}</strong>"."</p>
+                            <p>"Rescue expected to arrive "<strong>{rescue_date}</strong>"."</p>
+                        </div>
+                    }.into_any()
+                } else {
+                    view! {<div></div>}.into_any()
+                };
+                let marooned = r.marooned;
                 view! {
+                    {marooned_panel}
                     <div class="sim-summary">
                         <h2>"Summary"</h2>
                         <div class="sim-summary-grid">
@@ -839,16 +1098,24 @@ fn SimSummary(run_state: RwSignal<RunState>) -> impl IntoView {
                                     {format!("{} Cr", r.owner_profit)}
                                 </span>
                             </div>
-                            <div class="sim-summary-row">
-                                <span class="sim-summary-label">"Returned home?"</span>
-                                <span class="sim-summary-value">
-                                    {if r.returned_home { "Yes" } else { "No" }}
-                                </span>
-                            </div>
+                            {(!marooned).then(|| view! {
+                                <div class="sim-summary-row">
+                                    <span class="sim-summary-label">"Returned home?"</span>
+                                    <span class="sim-summary-value">
+                                        {if r.returned_home { "Yes" } else { "No" }}
+                                    </span>
+                                </div>
+                            })}
                             <div class="sim-summary-row">
                                 <span class="sim-summary-label">"Went negative?"</span>
                                 <span class="sim-summary-value">
                                     {if r.went_negative { "Yes" } else { "No" }}
+                                </span>
+                            </div>
+                            <div class="sim-summary-row">
+                                <span class="sim-summary-label">"Marooned?"</span>
+                                <span class="sim-summary-value">
+                                    {if marooned { "Yes" } else { "No" }}
                                 </span>
                             </div>
                             <div class="sim-summary-row">

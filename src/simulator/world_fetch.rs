@@ -57,6 +57,8 @@ struct WorldEntry {
     uwp: String,
     #[serde(default)]
     zone: Option<String>,
+    #[serde(default)]
+    allegiance: Option<String>,
 }
 
 /// Wrapper for `/data/{sector}/{hex}` responses. The endpoint always
@@ -68,11 +70,17 @@ struct WorldsEnvelope {
     worlds: Vec<WorldEntry>,
 }
 
+/// One cached lookup result: a populated `World` plus its TravellerMap
+/// allegiance code (if any). The allegiance is carried alongside `World`
+/// rather than added to it so the systems-generation module stays free
+/// of simulator-specific concepts.
+type CachedWorld = (World, Option<String>);
+
 /// Cache of TravellerMap world data lookups, keyed by
 /// `(sector_name, hex_x, hex_y)`. `None` = empty hex (404 from
 /// TravellerMap), so subsequent fetches return immediately.
 pub struct WorldCache {
-    inner: HashMap<(String, i32, i32), Option<World>>,
+    inner: HashMap<(String, i32, i32), Option<CachedWorld>>,
     client: reqwest::Client,
 }
 
@@ -101,21 +109,22 @@ impl WorldCache {
     }
 
     /// Look up a single world. Returns `Ok(None)` for empty hexes (404).
-    /// Cached on the first lookup.
+    /// Cached on the first lookup. The returned tuple includes the
+    /// world's allegiance code (e.g. `"Im"`, `"AsT4"`).
     pub async fn fetch(
         &mut self,
         sector: &str,
         hex_x: i32,
         hex_y: i32,
-    ) -> Result<Option<World>, FetchError> {
+    ) -> Result<Option<CachedWorld>, FetchError> {
         let key = (sector.to_string(), hex_x, hex_y);
         if let Some(cached) = self.inner.get(&key) {
             return Ok(cached.clone());
         }
 
-        let world = fetch_one(&self.client, sector, hex_x, hex_y).await?;
-        self.inner.insert(key, world.clone());
-        Ok(world)
+        let entry = fetch_one(&self.client, sector, hex_x, hex_y).await?;
+        self.inner.insert(key, entry.clone());
+        Ok(entry)
     }
 
     /// Find every world within `jump` parsecs of the given hex (excluding
@@ -149,10 +158,11 @@ impl WorldCache {
         for (x, y, d) in targets {
             let key = (sector.to_string(), x, y);
             if let Some(cached) = self.inner.get(&key) {
-                if let Some(world) = cached {
+                if let Some((world, allegiance)) = cached {
                     candidates.push(Candidate {
                         world: world.clone(),
                         distance: d,
+                        allegiance: allegiance.clone(),
                     });
                 }
             } else {
@@ -182,11 +192,13 @@ impl WorldCache {
             debug_assert_eq!((*x, *y), (rx, ry));
             let key = (sector.to_string(), *x, *y);
             match res {
-                Ok(Some(world)) => {
-                    self.inner.insert(key, Some(world.clone()));
+                Ok(Some((world, allegiance))) => {
+                    self.inner
+                        .insert(key, Some((world.clone(), allegiance.clone())));
                     candidates.push(Candidate {
                         world,
                         distance: *d,
+                        allegiance,
                     });
                 }
                 Ok(None) => {
@@ -216,7 +228,7 @@ async fn fetch_one(
     sector: &str,
     hex_x: i32,
     hex_y: i32,
-) -> Result<Option<World>, FetchError> {
+) -> Result<Option<CachedWorld>, FetchError> {
     let hex = format!("{:02}{:02}", hex_x, hex_y);
     let encoded_sector = urlencode(sector);
     let url = format!("https://travellermap.com/data/{}/{}", encoded_sector, hex);
@@ -257,7 +269,7 @@ async fn fetch_one(
         _ => ZoneClassification::Green,
     };
 
-    Ok(Some(world))
+    Ok(Some((world, entry.allegiance)))
 }
 
 /// Minimal URL component encoder — enough to handle spaces and other
@@ -305,8 +317,15 @@ mod tests {
         let res = fetch_one(&client, "Spinward Marches", 19, 10).await;
         eprintln!("result: {:?}", res);
         assert!(res.is_ok());
-        let world = res.unwrap();
-        assert!(world.is_some(), "Regina hex 19,10 should be present");
-        eprintln!("world: {:?}", world);
+        let entry = res.unwrap();
+        assert!(entry.is_some(), "Regina hex 19,10 should be present");
+        let (_, allegiance) = entry.as_ref().unwrap();
+        eprintln!("allegiance: {:?}", allegiance);
+        assert!(
+            allegiance.as_deref().unwrap_or("").starts_with("Im"),
+            "Regina should be in Imperial space; got {:?}",
+            allegiance
+        );
+        eprintln!("entry: {:?}", entry);
     }
 }

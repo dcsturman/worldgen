@@ -7,10 +7,18 @@
 //! This file is async because [`WorldCache`] does network I/O. The
 //! route planner itself (`route::pick_next`) is sync.
 
-use crate::simulator::economy::{self, ABORT_OVERFLOW_DAYS, PERIOD_DAYS, TURN_DAYS};
+use crate::simulator::economy::{
+    self, ABORT_OVERFLOW_DAYS, ACCIDENT_CR_PER_STEP, DAYS_PER_WEEK, GOV_FINE_CR_PER_STEP,
+    INCIDENT_AVOID_THRESHOLD, NATURAL_INCIDENT_ROLL, PERIOD_DAYS, PLANETARY_BROKER_SKILL,
+    TRADE_SCAM_CR_PER_STEP, TURN_DAYS,
+};
+use crate::simulator::incidents::{
+    avoidance_modifier, incident_table_modifier, pirate_cargo, rescue_eta_days, roll_1d3, roll_1d6,
+    roll_2d6,
+};
 use crate::simulator::route::{self, RouteContext};
 use crate::simulator::types::{
-    Action, SimulationParams, SimulationResult, SimulationStep, WorldRef,
+    Action, Date, SimulationParams, SimulationResult, SimulationStep, WorldRef,
 };
 use crate::simulator::world_fetch::{FetchError, WorldCache};
 use crate::systems::world::World;
@@ -61,6 +69,17 @@ pub async fn run_simulation(
     current_world.coordinates = Some((params.home_world.hex_x, params.home_world.hex_y));
     current_world.travel_zone = params.home_world.zone;
     let mut current_ref = params.home_world.clone();
+    // Allegiance of the world we're currently at. The home world's
+    // allegiance isn't supplied on `SimulationParams.home_world`, so we
+    // start with `None` (treated as friendly). Each post-jump arrival
+    // updates this from the chosen `Candidate.allegiance`.
+    let mut current_allegiance: Option<String> = None;
+
+    // Incident/marooning state, threaded through the loop.
+    let mut total_parsecs_jumped: u32 = 0;
+    let mut marooned: bool = false;
+    let mut marooned_state: Option<(WorldRef, Date, Date)> = None;
+    let mut incident_eligible: bool = false;
 
     // Initial Arrive at the home world (distance 0).
     emit(
@@ -128,14 +147,49 @@ pub async fn run_simulation(
             break;
         }
 
-        // (3) End-of-trip detection. We're home and have actually travelled.
+        // (3) Incident roll. Skipped on the very first iteration so the
+        // initial Arrive at the home world doesn't trigger one. Any "weeks
+        // lost" from an incident pushes the date forward; the periodic and
+        // abort blocks above handle that on the *next* iteration.
+        if incident_eligible {
+            let is_foreign = !route::is_allegiance_friendly(current_allegiance.as_deref());
+            let weeks_lost = run_incident_roll(
+                &params,
+                &current_world,
+                &current_ref,
+                is_foreign,
+                &mut budget,
+                &mut manifest,
+                current_date,
+                &mut on_step,
+            );
+            if weeks_lost > 0 {
+                let added_days = weeks_lost * DAYS_PER_WEEK;
+                current_date = current_date.add_days(added_days);
+                days_since_payment += added_days;
+            }
+            if budget < 0 && !went_negative {
+                went_negative = true;
+                emit(
+                    &mut on_step,
+                    current_date,
+                    &current_ref,
+                    budget,
+                    Action::BudgetWarning {
+                        note: format!("Budget went negative ({}) after incident.", budget),
+                    },
+                );
+            }
+        }
+
+        // (4) End-of-trip detection. We're home and have actually travelled.
         // Price and sell whatever's still in the hold (anything we bought on
         // the last leg expecting to sell at home), then break out of the
         // loop. Without this, profitable cargo bought for the home leg sits
         // unrealized and the trip P&L is skewed by hundreds of kCr.
         let at_home = jumps_taken > 0 && worldref_same_hex(&current_ref, &params.home_world);
 
-        // (4) Generate this port's market and price to buy locally.
+        // (5) Generate this port's market and price to buy locally.
         let trade_table = TradeTable::global();
         let pop = current_world.get_population();
         let mut market = AvailableGoodsTable::for_world(
@@ -147,16 +201,16 @@ pub async fn run_simulation(
         .map_err(ExecutorError::Invariant)?;
         market.price_goods_to_buy(
             &current_world.get_trade_classes(),
-            params.buyer_broker_skill,
-            params.seller_broker_skill,
+            params.broker_skill,
+            PLANETARY_BROKER_SKILL,
         );
 
-        // (5) SELL phase: price what's already in the manifest at this
+        // (6) SELL phase: price what's already in the manifest at this
         // world; sell anything that beats its buy_cost, hold the rest.
         manifest.trade_goods.price_goods_to_sell(
             Some(current_world.get_trade_classes()),
-            params.seller_broker_skill,
-            params.buyer_broker_skill,
+            PLANETARY_BROKER_SKILL,
+            params.broker_skill,
         );
         for good in manifest.trade_goods.goods.iter_mut() {
             if good.quantity <= 0 {
@@ -275,8 +329,8 @@ pub async fn run_simulation(
         let next_classes = next.world.get_trade_classes();
         market.price_goods_to_sell(
             Some(next_classes.clone()),
-            params.seller_broker_skill,
-            params.buyer_broker_skill,
+            PLANETARY_BROKER_SKILL,
+            params.broker_skill,
         );
         let fuel_for_jump = (next.distance as i64) * params.fuel_cost_per_parsec;
         // Keep some headroom for upcoming life-support costs. The exact
@@ -317,7 +371,7 @@ pub async fn run_simulation(
             next.world.tech_level,
             next.distance,
             params.steward_skill as i32,
-            params.buyer_broker_skill as i32,
+            params.broker_skill as i32,
         );
 
         let total_buy_tons: i32 = buy_goods.iter().map(|g| g.transacted).sum();
@@ -389,6 +443,30 @@ pub async fn run_simulation(
             );
         }
 
+        // (9b) Marooning check. After life support and any incident
+        // penalties, if the budget is negative the ship can't pay to
+        // leave port. The run terminates here.
+        if budget < 0 {
+            marooned = true;
+            let eta = rescue_eta_days(total_parsecs_jumped);
+            let arrives = current_date.add_days(eta);
+            marooned_state = Some((current_ref.clone(), current_date, arrives));
+            emit(
+                &mut on_step,
+                current_date,
+                &current_ref,
+                budget,
+                Action::Marooned {
+                    budget,
+                    total_parsecs_jumped,
+                    rescue_eta_days: eta,
+                    rescue_arrives_on: arrives,
+                },
+            );
+            completed_normally = false;
+            break;
+        }
+
         // (10) Pay fuel.
         budget -= fuel_for_jump;
         let from_ref = current_ref.clone();
@@ -434,9 +512,11 @@ pub async fn run_simulation(
         }
         current_world = next.world.clone();
         current_ref = next_ref.clone();
+        current_allegiance = next.allegiance.clone();
         current_date = current_date.add_days(TURN_DAYS);
         days_since_payment += TURN_DAYS;
         jumps_taken += 1;
+        total_parsecs_jumped += next.distance.max(0) as u32;
 
         // (13) Emit the Arrive at the new world.
         emit(
@@ -450,6 +530,10 @@ pub async fn run_simulation(
                 fuel_cost: fuel_for_jump,
             },
         );
+
+        // After the first arrival a future port stay can roll an
+        // incident.
+        incident_eligible = true;
     }
 
     // === final tally =====================================================
@@ -468,13 +552,231 @@ pub async fn run_simulation(
         owner_profit: owner,
         end_date: current_date,
         jumps: jumps_taken,
-        completed_normally,
-        returned_home,
+        completed_normally: completed_normally && !marooned,
+        returned_home: returned_home && !marooned,
         went_negative,
+        marooned,
+        marooned_at: marooned_state.as_ref().map(|(w, _, _)| w.clone()),
+        marooned_on: marooned_state.as_ref().map(|(_, d, _)| *d),
+        rescue_arrives_on: marooned_state.as_ref().map(|(_, _, eta)| *eta),
     })
 }
 
 // ===== helpers ==========================================================
+
+/// Roll for an incident at the current port. Mutates `budget` and
+/// `manifest` to apply effects, emits one of the `Incident*` action
+/// variants, and returns the number of weeks lost so the caller can
+/// advance the simulation clock.
+fn run_incident_roll(
+    params: &SimulationParams,
+    current_world: &World,
+    current_ref: &WorldRef,
+    is_foreign: bool,
+    budget: &mut i64,
+    manifest: &mut ShipManifest,
+    current_date: Date,
+    on_step: &mut impl FnMut(SimulationStep),
+) -> u32 {
+    let port = current_world.port;
+    let zone = current_world.travel_zone;
+    let law = current_world.get_law_level();
+
+    let avoidance_roll = roll_2d6();
+    let port_mod_v = port_mod_value(port);
+    let zone_mod_v = zone_mod_value(zone);
+    let avoidance_law_mod_v = avoidance_law_mod_value(law);
+    let avoidance_modifier_total = avoidance_modifier(port, zone, law, is_foreign);
+    let leadership = params.leadership_skill;
+    let avoidance_total = avoidance_roll + leadership as i32 + avoidance_modifier_total;
+
+    let avoided =
+        avoidance_roll != NATURAL_INCIDENT_ROLL && avoidance_total >= INCIDENT_AVOID_THRESHOLD;
+    if avoided {
+        emit(
+            on_step,
+            current_date,
+            current_ref,
+            *budget,
+            Action::IncidentAvoided {
+                avoidance_roll,
+                leadership,
+                port_mod: port_mod_v,
+                zone_mod: zone_mod_v,
+                law_mod: avoidance_law_mod_v,
+                modifier_total: avoidance_modifier_total,
+                avoidance_total,
+            },
+        );
+        return 0;
+    }
+
+    // An incident occurred — roll on the table.
+    let table_roll = roll_2d6();
+    let table_modifier_total = incident_table_modifier(port, zone, law, is_foreign);
+    let table_total = table_roll + table_modifier_total;
+
+    if table_total <= 4 {
+        // Piracy.
+        let weapons = params.weapons;
+        let cargo_loss_pct = (roll_2d6() - weapons as i32).clamp(0, 10) * 10;
+        let total_tons: i32 = manifest.trade_goods.goods.iter().map(|g| g.quantity).sum();
+        let target_tons = total_tons * cargo_loss_pct / 100;
+        let mut rng = rand::rng();
+        let (cargo_lost_breakdown, buy_cost_sunk) =
+            pirate_cargo(&mut manifest.trade_goods, target_tons, &mut rng);
+        let cargo_lost_tons: i32 = cargo_lost_breakdown.iter().map(|(_, q)| q).sum();
+        let credits_lost = (roll_2d6() - params.leadership_skill as i32).max(0) as i64
+            * params.maintenance_per_period;
+        let weeks_lost = roll_1d6() as u32;
+        *budget -= credits_lost;
+        emit(
+            on_step,
+            current_date,
+            current_ref,
+            *budget,
+            Action::IncidentPiracy {
+                avoidance_roll,
+                leadership,
+                avoidance_modifier_total,
+                avoidance_total,
+                table_roll,
+                table_modifier_total,
+                table_total,
+                weapons,
+                cargo_lost_tons,
+                cargo_lost_breakdown,
+                buy_cost_sunk,
+                credits_lost,
+                weeks_lost,
+            },
+        );
+        weeks_lost
+    } else if table_total <= 6 {
+        // Trade Scam.
+        let credits_lost =
+            (roll_2d6() - params.broker_skill as i32).max(0) as i64 * TRADE_SCAM_CR_PER_STEP;
+        let weeks_lost = (roll_1d3() - params.leadership_skill as i32).max(0) as u32;
+        *budget -= credits_lost;
+        emit(
+            on_step,
+            current_date,
+            current_ref,
+            *budget,
+            Action::IncidentTradeScam {
+                avoidance_roll,
+                leadership,
+                avoidance_modifier_total,
+                avoidance_total,
+                table_roll,
+                table_modifier_total,
+                table_total,
+                broker: params.broker_skill,
+                credits_lost,
+                weeks_lost,
+            },
+        );
+        weeks_lost
+    } else if table_total == 7 {
+        // Crew loss.
+        let weeks_lost = ((roll_2d6() / 2) - params.leadership_skill as i32).max(0) as u32;
+        emit(
+            on_step,
+            current_date,
+            current_ref,
+            *budget,
+            Action::IncidentCrewLoss {
+                avoidance_roll,
+                leadership,
+                avoidance_modifier_total,
+                avoidance_total,
+                table_roll,
+                table_modifier_total,
+                table_total,
+                weeks_lost,
+            },
+        );
+        weeks_lost
+    } else if table_total <= 9 {
+        // Accident.
+        let repair_cost = roll_1d6() as i64 * ACCIDENT_CR_PER_STEP;
+        *budget -= repair_cost;
+        emit(
+            on_step,
+            current_date,
+            current_ref,
+            *budget,
+            Action::IncidentAccident {
+                avoidance_roll,
+                leadership,
+                avoidance_modifier_total,
+                avoidance_total,
+                table_roll,
+                table_modifier_total,
+                table_total,
+                repair_cost,
+            },
+        );
+        0
+    } else {
+        // Government Complication.
+        let fine_credits = roll_1d6() as i64 * GOV_FINE_CR_PER_STEP;
+        let weeks_lost = roll_2d6() as u32;
+        *budget -= fine_credits;
+        emit(
+            on_step,
+            current_date,
+            current_ref,
+            *budget,
+            Action::IncidentGovernment {
+                avoidance_roll,
+                leadership,
+                avoidance_modifier_total,
+                avoidance_total,
+                table_roll,
+                table_modifier_total,
+                table_total,
+                fine_credits,
+                weeks_lost,
+            },
+        );
+        weeks_lost
+    }
+}
+
+/// Decompose `avoidance_modifier` into its `(port, zone, law)` parts so
+/// the `IncidentAvoided` step can report each separately. Mirrors the
+/// `port_mod` helper inside `incidents.rs`.
+fn port_mod_value(port: crate::trade::PortCode) -> i32 {
+    use crate::trade::PortCode;
+    match port {
+        PortCode::A => 4,
+        PortCode::B => 2,
+        PortCode::C => 0,
+        PortCode::D => 0,
+        PortCode::E => -2,
+        PortCode::X => -4,
+        _ => 0,
+    }
+}
+
+fn zone_mod_value(zone: crate::trade::ZoneClassification) -> i32 {
+    use crate::trade::ZoneClassification;
+    match zone {
+        ZoneClassification::Green => 0,
+        ZoneClassification::Amber => -2,
+        ZoneClassification::Red => -4,
+    }
+}
+
+fn avoidance_law_mod_value(law: i32) -> i32 {
+    match law {
+        ..=0 => -4,
+        1..=4 => -2,
+        5..=9 => 0,
+        _ => -2,
+    }
+}
 
 /// Build a [`SimulationStep`] from the current loop state and call the
 /// callback. Inlined to avoid juggling closure types across awaits.
@@ -656,9 +958,10 @@ mod tests {
     #[test]
     fn pax_reserve_estimate_is_finite() {
         let params = SimulationParams {
-            buyer_broker_skill: 0,
-            seller_broker_skill: 0,
+            broker_skill: 0,
             steward_skill: 0,
+            leadership_skill: 0,
+            weapons: 0,
             cargo_capacity: 100,
             staterooms: 6,
             low_berths: 4,
@@ -730,9 +1033,10 @@ mod tests {
             .is_test(true)
             .try_init();
         let params = SimulationParams {
-            buyer_broker_skill: 2,
-            seller_broker_skill: 1,
+            broker_skill: 2,
             steward_skill: 1,
+            leadership_skill: 1,
+            weapons: 2,
             cargo_capacity: 80,
             staterooms: 6,
             low_berths: 4,
@@ -771,5 +1075,63 @@ mod tests {
         eprintln!("Steps: {}", step_count);
         eprintln!("Result: {:#?}", result);
         assert!(result.jumps > 0, "should have made at least one jump");
+    }
+
+    /// Marooning smoke: starve the ship of cash and confirm it terminates
+    /// with the marooned flag set. Ignored because it requires network.
+    #[tokio::test]
+    #[ignore]
+    async fn simulator_marooning_smoke() {
+        let _ = env_logger::Builder::from_default_env()
+            .is_test(true)
+            .try_init();
+        let params = SimulationParams {
+            broker_skill: 0,
+            steward_skill: 0,
+            leadership_skill: 0,
+            weapons: 0,
+            cargo_capacity: 20,
+            staterooms: 1,
+            low_berths: 0,
+            jump: 1,
+            maintenance_per_period: 30_000,
+            crew_salary_per_period: 12_000,
+            fuel_cost_per_parsec: 5_000,
+            crew_profit_share: 0.0,
+            starting_budget: 50_000,
+            home_world: WorldRef {
+                name: "Regina".to_string(),
+                uwp: "A788899-A".to_string(),
+                sector: "Spinward Marches".to_string(),
+                hex_x: 19,
+                hex_y: 10,
+                zone: ZoneClassification::Green,
+            },
+            start_date: crate::simulator::types::Date::new(1, 1105),
+            target_completion_date: crate::simulator::types::Date::new(31, 1105),
+            illegal_goods: false,
+        };
+        let mut cache = WorldCache::new();
+        let result = run_simulation(params, &mut cache, |s| {
+            eprintln!(
+                "[{}] {} budget={} {:?}",
+                s.date.format(),
+                s.location.name,
+                s.budget_after,
+                s.action
+            );
+        })
+        .await
+        .expect("simulation should run to a terminal state");
+        eprintln!("Result: {:#?}", result);
+        assert!(result.marooned, "ship should be marooned");
+        assert!(
+            result.rescue_arrives_on.is_some(),
+            "rescue ETA should be populated when marooned"
+        );
+        assert!(
+            !result.completed_normally,
+            "marooning should not be a normal completion"
+        );
     }
 }
