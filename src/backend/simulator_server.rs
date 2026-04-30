@@ -8,7 +8,10 @@
 //! 4. Server sends exactly one `ServerMessage::Done` or `ServerMessage::Error`.
 //! 5. Server closes the connection.
 
+use std::time::Duration;
+
 use futures_util::{SinkExt, StreamExt};
+use futures_util::stream::SplitStream;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio_tungstenite::WebSocketStream;
@@ -128,6 +131,7 @@ async fn handle_ws(
         Ok(r) => r,
         Err(_) => {
             send_error(&mut ws_sender, "executor task dropped").await;
+            drain_until_close(&mut ws_receiver, Duration::from_secs(2)).await;
             return Ok(());
         }
     };
@@ -149,9 +153,30 @@ async fn handle_ws(
         }
     }
 
+    // Drive a clean WebSocket close: send Close, then read until the client
+    // sends its Close back (or we time out). If we drop the receiver with
+    // unread data still in the kernel buffer, Linux turns the socket close
+    // into a TCP RST — which the browser reports as code 1006 even though
+    // the run finished cleanly.
     let _ = ws_sender.send(Message::Close(None)).await;
+    drain_until_close(&mut ws_receiver, Duration::from_secs(2)).await;
     log::info!("simulator: connection closed");
     Ok(())
+}
+
+async fn drain_until_close(
+    ws_receiver: &mut SplitStream<WebSocketStream<TcpStream>>,
+    timeout: Duration,
+) {
+    let _ = tokio::time::timeout(timeout, async {
+        while let Some(msg) = ws_receiver.next().await {
+            match msg {
+                Ok(Message::Close(_)) | Err(_) => break,
+                _ => continue,
+            }
+        }
+    })
+    .await;
 }
 
 async fn send_error<S>(sender: &mut S, message: &str)
