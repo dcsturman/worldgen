@@ -16,6 +16,7 @@ use worldgen::components::selector::Selector;
 use worldgen::components::ship_simulator::ShipSimulator;
 use worldgen::components::system_generator::World;
 use worldgen::components::trade_computer::Trade;
+use worldgen::components::worldmap::WorldMap;
 use worldgen::logging;
 
 const GA_MEASUREMENT_ID: &str = "G-L26P5SCYR2";
@@ -78,6 +79,8 @@ fn App() -> impl IntoView {
 
     if path.contains("simulator") {
         view! { <ShipSimulator /> }.into_any()
+    } else if path.contains("worldmap") {
+        view! { <WorldMap /> }.into_any()
     } else if path.contains("world") {
         view! { <World /> }.into_any()
     } else if path.contains("trade") {

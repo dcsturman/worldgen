@@ -56,6 +56,10 @@ pub fn Selector() -> impl IntoView {
         let _ = web_sys::window().unwrap().location().set_href("/simulator");
     };
 
+    let navigate_to_worldmap = move |_| {
+        let _ = web_sys::window().unwrap().location().set_href("/worldmap");
+    };
+
     view! {
         <div class:App>
             <h1>"Callisto Traveller Tools"</h1>
@@ -79,6 +83,13 @@ pub fn Selector() -> impl IntoView {
                     <p>"Simulate a trader plying multiple worlds for profit. Pick a home port, configure your ship and crew, and watch a greedy route planner make trade decisions across the stars."</p>
                     <button class="blue-button" on:click=navigate_to_simulator>
                         "Launch Ship Simulator"
+                    </button>
+                </div>
+                <div class="tool-card">
+                    <h2>"World Map Generator"</h2>
+                    <p>"Generate an icosahedral hex map of a single world from its UWP. Procedural terrain (continents, biomes, mountains, ice caps, cities) rendered as both an interactive SVG and a PNG you can upload to roll20."</p>
+                    <button class="blue-button" on:click=navigate_to_worldmap>
+                        "Launch World Map"
                     </button>
                 </div>
             </div>

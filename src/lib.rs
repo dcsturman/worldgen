@@ -26,6 +26,7 @@ pub mod simulator;
 pub mod systems;
 pub mod trade;
 pub mod util;
+pub mod worldmap;
 
 /// Default UWP (Universal World Profile) used for initial world generation
 pub const INITIAL_UPP: &str = "A788899-A";
