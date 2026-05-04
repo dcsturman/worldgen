@@ -16,8 +16,12 @@ COPY style.css ./
 
 ENV RUSTFLAGS='--cfg getrandom_backend="wasm_js"'
 
-# Copy the source code
+# Copy the source code. assets/ holds DejaVuSans.ttf which
+# src/worldmap/render/png.rs bakes in via include_bytes! at compile time;
+# the macro resolves paths relative to the source file, so the font has to
+# exist in the build context for the WASM crate to compile.
 COPY src ./src/
+COPY assets ./assets/
 
 # Build with debug symbols for better error messages (not minified)
 RUN trunk build
@@ -56,8 +60,11 @@ COPY --from=planner /app/recipe.json recipe.json
 RUN MUSL_TARGET=$(cat /tmp/musl_target) && \
     cargo chef cook --release --bin server --features backend --recipe-path recipe.json --target "$MUSL_TARGET"
 
-# Copy source code (invalidates cache)
+# Copy source code (invalidates cache). assets/ is included for the same
+# reason as the WASM stage: the lib's PNG renderer bakes in the bundled
+# DejaVu Sans via include_bytes! at compile time.
 COPY src ./src/
+COPY assets ./assets/
 
 # Build the server binary
 RUN MUSL_TARGET=$(cat /tmp/musl_target) && \
