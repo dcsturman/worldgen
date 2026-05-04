@@ -52,6 +52,12 @@ struct Sample {
 /// `map.sea_level`; everything tectonics has done is already baked into
 /// the elevation samples.
 pub fn compute_rivers(map: &WorldMap) -> Vec<RiverPath> {
+    // Hyd 0/1 worlds (Mars-like deserts) don't have flowing surface
+    // water. Whatever liquid exists is in scattered lakes; no rivers.
+    if map.uwp.hydrographics() < 2 {
+        return Vec::new();
+    }
+
     let samples = build_samples(map);
     if samples.is_empty() {
         return Vec::new();
@@ -601,6 +607,22 @@ mod tests {
                 assert!(s.len() >= 2);
             }
             assert!(r.mouth_drainage > 0.0);
+        }
+    }
+
+    #[test]
+    fn desert_world_has_no_rivers() {
+        // Hyd 0/1 worlds bail out of `compute_rivers` early; whatever dark
+        // wavy lines a user might see on a Mars-like map come from
+        // hillshade or tectonic shading, never from this module.
+        for seed in 1..=10u64 {
+            let map = generate("A780799-A", seed).unwrap();
+            assert_eq!(map.uwp.hydrographics(), 0);
+            assert!(
+                map.rivers.is_empty(),
+                "Hyd 0 desert at seed {seed} produced {} rivers",
+                map.rivers.len(),
+            );
         }
     }
 

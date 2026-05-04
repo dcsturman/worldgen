@@ -19,8 +19,12 @@ use super::colormap;
 use super::grid::{Face, SHEET_HEIGHT, SHEET_WIDTH, xy_to_sphere};
 use super::noise::ElevationField;
 
-/// Background "space" color matching the existing renderer.
-pub const SPACE_RGB: (u8, u8, u8) = (8, 10, 18);
+/// Background page color — a soft warm gray so the icosahedron silhouette
+/// reads as floating on a printed page rather than pasted on space.
+/// Was nearly-black (8, 10, 18) which made the map feel like a screenshot
+/// of a planetarium; the light page tone makes it look like a published
+/// map.
+pub const SPACE_RGB: (u8, u8, u8) = (231, 232, 230);
 
 /// 2D ring radius (sheet px) sampled around each land point to estimate
 /// continentality. ~3.5% of SHEET_WIDTH ≈ 13° lon ≈ 1400 km on Earth.
@@ -28,13 +32,14 @@ const CONT_OFFSET_PX: f64 = 35.0;
 /// Max humidity drop applied at full interior (all 6 ring samples land).
 const CONT_DRYING: f64 = 0.18;
 
-/// 6 cardinal+diagonal offsets — cheap and rotationally fair.
-const CONT_OFFSETS: [(f64, f64); 6] = [
-    (1.0, 0.0),
-    (-1.0, 0.0),
-    (0.0, 1.0),
-    (0.0, -1.0),
+/// 4 diagonal offsets — fewer than the original 6 to halve continentality
+/// compute (this is the dominant cost of PNG generation). The diagonal
+/// rotation still gives reasonable rotational symmetry without doubling
+/// up on cardinal directions.
+const CONT_OFFSETS: [(f64, f64); 4] = [
     (0.7, 0.7),
+    (-0.7, 0.7),
+    (0.7, -0.7),
     (-0.7, -0.7),
 ];
 
@@ -59,98 +64,281 @@ pub fn apply_continentality(h: f64, cont: f64) -> f64 {
     (h - CONT_DRYING * cont).clamp(0.0, 1.0)
 }
 
+/// CONT_OFFSETS expressed in raster-pixel coordinates for the current
+/// raster's scale. Computed once per render and reused per land pixel so
+/// the inner loop is just integer arithmetic.
+fn continentality_pixel_offsets(scale_x: f64, scale_y: f64) -> [(i32, i32); 4] {
+    let mut out = [(0, 0); 4];
+    for (i, (dx, dy)) in CONT_OFFSETS.iter().enumerate() {
+        let nx = (dx * CONT_OFFSET_PX / scale_x).round() as i32;
+        let ny = (dy * CONT_OFFSET_PX / scale_y).round() as i32;
+        out[i] = (nx, ny);
+    }
+    out
+}
+
+/// Continentality computed from the precomputed elev[] grid: the fraction
+/// of the four ring-offset samples that fall on land. Used in place of
+/// `continentality` when we have a populated elevation grid (i.e. inside
+/// `render_terrain`'s Pass 1B). Each lookup is O(1) — no noise sampling —
+/// which is a ~4× reduction in per-pixel noise work for land pixels.
+fn continentality_from_grid(
+    elev: &[f32],
+    width: i32,
+    height: i32,
+    px: i32,
+    py: i32,
+    offsets: &[(i32, i32); 4],
+) -> f64 {
+    let mut land = 0u32;
+    for (dx, dy) in offsets {
+        let nx = px + dx;
+        let ny = py + dy;
+        if nx < 0 || nx >= width || ny < 0 || ny >= height {
+            continue;
+        }
+        let ni = (ny * width + nx) as usize;
+        let e = elev[ni];
+        if e.is_finite() && e > 0.0 {
+            land += 1;
+        }
+    }
+    land as f64 / offsets.len() as f64
+}
+
+/// Resumable per-pixel rasterizer. Splits `render_terrain` into four
+/// callable steps so callers running on the WASM main thread can yield
+/// back to the browser between phases — without that, a single
+/// regenerate pegs the main thread for 1–2s on a fast machine and well
+/// past Chrome's 5s "Page Unresponsive" threshold on slow ones.
+///
+/// Phases (each can stand alone in a setTimeout(0) tick):
+///   1. `step_elevation` — populate `elev[i]` for every silhouette pixel.
+///   2. `step_color` — turn elevation + climate into a base color per pixel.
+///   3. `step_postprocess` — hillshade + coastline + drop shadow + paper.
+///   4. `into_rgba` — give back the RGBA8 buffer; consumes self.
+///
+/// The synchronous `render_terrain` helper still exists and just runs all
+/// four in a row, so existing callers (tests, native code) don't change.
+pub struct RasterJob {
+    width: u32,
+    height: u32,
+    bounded: Vec<BoundedTri>,
+    elev: Vec<f32>,
+    color: Vec<(u8, u8, u8)>,
+    rgba: Vec<u8>,
+    scale_x: f64,
+    scale_y: f64,
+    cont_offsets: [(i32, i32); 4],
+}
+
+impl RasterJob {
+    pub fn new(map: &WorldMap, width: u32, height: u32) -> Self {
+        let n = (width as usize) * (height as usize);
+        let scale_x = SHEET_WIDTH / width as f64;
+        let scale_y = SHEET_HEIGHT / height as f64;
+        Self {
+            width,
+            height,
+            bounded: collect_faces(&map.grid.faces),
+            elev: vec![f32::NAN; n],
+            color: vec![SPACE_RGB; n],
+            rgba: vec![0u8; n * 4],
+            scale_x,
+            scale_y,
+            cont_offsets: continentality_pixel_offsets(scale_x, scale_y),
+        }
+    }
+
+    /// Phase 1A: populate `elev[i]` with above-sea elevation for every
+    /// silhouette pixel; space pixels stay NaN. Doing the whole grid first
+    /// lets Phase 1B answer continentality with grid lookups instead of
+    /// four fresh `elev_field.sample` calls per land pixel — the dominant
+    /// cost in the original implementation.
+    pub fn step_elevation(&mut self, map: &WorldMap) {
+        for py in 0..self.height {
+            let sy = (py as f64 + 0.5) * self.scale_y;
+            for px in 0..self.width {
+                let sx = (px as f64 + 0.5) * self.scale_x;
+                if !point_in_silhouette(&self.bounded, sx, sy) {
+                    continue;
+                }
+                let sphere = xy_to_sphere(sx, sy);
+                let e = map.elev_field.sample(&sphere);
+                // Non-linear amplification of above-sea elevation: keeps
+                // coastal plains flat while exaggerating mountain ranges
+                // so they push past lapse/colormap thresholds into varied
+                // biomes.
+                let above = climate::amplify_elevation(e - map.sea_level, map.uwp.hydrographics());
+                let i = (py * self.width + px) as usize;
+                self.elev[i] = above as f32;
+            }
+        }
+    }
+
+    /// Phase 1B: per silhouette pixel, derive temperature + humidity (with
+    /// rain-shadow, altitude drying, and grid-driven continentality) and
+    /// fold them through the colormap into a base biome color.
+    pub fn step_color(&mut self, map: &WorldMap) {
+        let tectonics = map.elev_field.tectonics();
+        let w_i32 = self.width as i32;
+        let h_i32 = self.height as i32;
+        for py in 0..self.height {
+            let sy = (py as f64 + 0.5) * self.scale_y;
+            for px in 0..self.width {
+                let i = (py * self.width + px) as usize;
+                let above = self.elev[i];
+                if !above.is_finite() {
+                    continue;
+                }
+                let sx = (px as f64 + 0.5) * self.scale_x;
+                let sphere = xy_to_sphere(sx, sy);
+                let above = above as f64;
+
+                let raw_t = climate::temperature_at_wobbled(&sphere, &map.temp_field);
+                let t = climate::apply_lapse(climate::adjust_temperature(raw_t, &map.uwp), above, &map.uwp);
+
+                let mut h = map.humidity_field.sample(&sphere, &map.uwp);
+                if let Some(tec) = tectonics {
+                    h = colormap::rain_shadow_adjustment(h, tec.rain_shadow_at(&sphere));
+                }
+                h = climate::apply_altitude_drying(h, above);
+                if above > 0.0 {
+                    let cont = continentality_from_grid(
+                        &self.elev, w_i32, h_i32, px as i32, py as i32, &self.cont_offsets,
+                    );
+                    h = apply_continentality(h, cont);
+                }
+                self.color[i] = colormap::elevation_color(above, t, h);
+            }
+        }
+    }
+
+    /// Phase 2: hillshade + coastline tide + page-side drop shadow + paper
+    /// texture. All passes are whole-buffer per-pixel scans over the
+    /// already-populated `color`/`elev` grids — no noise sampling, so this
+    /// step is markedly cheaper than the two before it.
+    pub fn step_postprocess(&mut self) {
+        let w = self.width as usize;
+        let h = self.height as usize;
+
+        // Pass 2: hillshade land pixels + faint tide-line on ocean pixels
+        // adjacent to land.
+        for py in 0..h {
+            for px in 0..w {
+                let i = py * w + px;
+                let mut c = self.color[i];
+
+                if !self.elev[i].is_nan() {
+                    let il = if px > 0 { i - 1 } else { i };
+                    let ir = if px + 1 < w { i + 1 } else { i };
+                    let iu = if py > 0 { i - w } else { i };
+                    let id = if py + 1 < h { i + w } else { i };
+
+                    let el = nan_or(self.elev[il], self.elev[i]);
+                    let er = nan_or(self.elev[ir], self.elev[i]);
+                    let eu = nan_or(self.elev[iu], self.elev[i]);
+                    let ed = nan_or(self.elev[id], self.elev[i]);
+
+                    if self.elev[i] > 0.0 {
+                        const SHADE_GAIN: f64 = 30.0;
+                        let dx = (er - el) as f64 * SHADE_GAIN;
+                        let dy = (ed - eu) as f64 * SHADE_GAIN;
+                        const FLAT_LIMIT: f64 = 0.20;
+                        const FULL_LIMIT: f64 = 0.50;
+                        let slope = (dx * dx + dy * dy).sqrt();
+                        let tt = ((slope - FLAT_LIMIT) / (FULL_LIMIT - FLAT_LIMIT))
+                            .clamp(0.0, 1.0);
+                        let strength = tt * tt * (3.0 - 2.0 * tt);
+                        if strength > 0.0 {
+                            let lit = colormap::apply_hillshade(c, dx, dy);
+                            c = (
+                                lerp_byte(c.0, lit.0, strength),
+                                lerp_byte(c.1, lit.1, strength),
+                                lerp_byte(c.2, lit.2, strength),
+                            );
+                        }
+                    } else {
+                        let any_land = el > 0.0 || er > 0.0 || eu > 0.0 || ed > 0.0;
+                        if any_land {
+                            const TIDE: (u8, u8, u8) = (180, 198, 220);
+                            c = (
+                                lerp_byte(c.0, TIDE.0, 0.45),
+                                lerp_byte(c.1, TIDE.1, 0.45),
+                                lerp_byte(c.2, TIDE.2, 0.45),
+                            );
+                        }
+                    }
+                }
+
+                let pi = i * 4;
+                self.rgba[pi] = c.0;
+                self.rgba[pi + 1] = c.1;
+                self.rgba[pi + 2] = c.2;
+                self.rgba[pi + 3] = 255;
+            }
+        }
+
+        // Pass 3: drop shadow on page-side pixels offset (-3, -3) from a
+        // silhouette pixel.
+        const SHADOW_OFFSET: usize = 3;
+        const SHADOW_DARKEN: f64 = 0.10;
+        for py in SHADOW_OFFSET..h {
+            for px in SHADOW_OFFSET..w {
+                let i = py * w + px;
+                if !self.elev[i].is_nan() {
+                    continue;
+                }
+                let si = (py - SHADOW_OFFSET) * w + (px - SHADOW_OFFSET);
+                if self.elev[si].is_nan() {
+                    continue;
+                }
+                let pi = i * 4;
+                self.rgba[pi] = (self.rgba[pi] as f64 * (1.0 - SHADOW_DARKEN)) as u8;
+                self.rgba[pi + 1] = (self.rgba[pi + 1] as f64 * (1.0 - SHADOW_DARKEN)) as u8;
+                self.rgba[pi + 2] = (self.rgba[pi + 2] as f64 * (1.0 - SHADOW_DARKEN)) as u8;
+            }
+        }
+
+        // Pass 4: deterministic ±2 LSB paper jitter on page pixels.
+        for py in 0..h {
+            for px in 0..w {
+                let i = py * w + px;
+                if !self.elev[i].is_nan() {
+                    continue;
+                }
+                let hash = (px as u32)
+                    .wrapping_mul(0x9E37_79B9)
+                    ^ (py as u32).wrapping_mul(0xC2B2_AE35);
+                let n = ((hash % 5) as i32) - 2;
+                let pi = i * 4;
+                self.rgba[pi] = (self.rgba[pi] as i32 + n).clamp(0, 255) as u8;
+                self.rgba[pi + 1] = (self.rgba[pi + 1] as i32 + n).clamp(0, 255) as u8;
+                self.rgba[pi + 2] = (self.rgba[pi + 2] as i32 + n).clamp(0, 255) as u8;
+            }
+        }
+    }
+
+    /// Take ownership of the finished RGBA8 buffer.
+    pub fn into_rgba(self) -> Vec<u8> {
+        self.rgba
+    }
+}
+
 pub fn render_terrain(map: &WorldMap, width: u32, height: u32) -> Vec<u8> {
-    let n = (width as usize) * (height as usize);
-    let mut rgba = vec![0u8; n * 4];
-
-    let mut elev = vec![f32::NAN; n];
-    let mut color = vec![SPACE_RGB; n];
-
-    let bounded = collect_faces(&map.grid.faces);
-
-    let scale_x = SHEET_WIDTH / width as f64;
-    let scale_y = SHEET_HEIGHT / height as f64;
-
-    // Pass 1: classify each pixel via the global equirectangular mapping.
-    // Per-pixel pipeline (in order):
-    //   sphere ← xy_to_sphere(sx, sy)
-    //   elevation ← elev_field.sample (already includes tectonic uplift + warp)
-    //   temperature ← latitude-curve → atmosphere bias → lapse-rate cooling
-    //   humidity ← noise+UWP bias → tectonic rain-shadow → altitude drying
-    //   color ← colormap(elev, temp, humidity)
-    let tectonics = map.elev_field.tectonics();
-    for py in 0..height {
-        let sy = (py as f64 + 0.5) * scale_y;
-        for px in 0..width {
-            let sx = (px as f64 + 0.5) * scale_x;
-            if !point_in_silhouette(&bounded, sx, sy) {
-                continue;
-            }
-            let sphere = xy_to_sphere(sx, sy);
-            let e = map.elev_field.sample(&sphere);
-            // Non-linear amplification of above-sea elevation: keeps
-            // coastal plains flat while exaggerating mountain ranges so
-            // they push past lapse/colormap thresholds into varied biomes.
-            let above = climate::amplify_elevation(e - map.sea_level);
-
-            let raw_t = climate::temperature_at(&sphere, climate::TEMP_AMPLITUDE);
-            let t = climate::apply_lapse(climate::adjust_temperature(raw_t, &map.uwp), above);
-
-            let mut h = map.humidity_field.sample(&sphere, &map.uwp);
-            if let Some(tec) = tectonics {
-                h = colormap::rain_shadow_adjustment(h, tec.rain_shadow_at(&sphere));
-            }
-            h = climate::apply_altitude_drying(h, above);
-            // Continentality: deep interiors are drier than coasts. Land only.
-            if above > 0.0 {
-                let cont = continentality(&map.elev_field, map.sea_level, sx, sy);
-                h = apply_continentality(h, cont);
-            }
-
-            let i = (py * width + px) as usize;
-            elev[i] = above as f32;
-            color[i] = colormap::elevation_color(above, t, h);
-        }
-    }
-
-    // Pass 2: hillshade land pixels using neighbor elevation differences.
-    let w = width as usize;
-    let h = height as usize;
-    for py in 0..h {
-        for px in 0..w {
-            let i = py * w + px;
-            let mut c = color[i];
-
-            if !elev[i].is_nan() && elev[i] > 0.0 {
-                let il = if px > 0 { i - 1 } else { i };
-                let ir = if px + 1 < w { i + 1 } else { i };
-                let iu = if py > 0 { i - w } else { i };
-                let id = if py + 1 < h { i + w } else { i };
-
-                let el = nan_or(elev[il], elev[i]);
-                let er = nan_or(elev[ir], elev[i]);
-                let eu = nan_or(elev[iu], elev[i]);
-                let ed = nan_or(elev[id], elev[i]);
-
-                const SHADE_GAIN: f64 = 80.0;
-                let dx = (er - el) as f64 * SHADE_GAIN;
-                let dy = (ed - eu) as f64 * SHADE_GAIN;
-                c = colormap::apply_hillshade(c, dx, dy);
-            }
-
-            let pi = i * 4;
-            rgba[pi] = c.0;
-            rgba[pi + 1] = c.1;
-            rgba[pi + 2] = c.2;
-            rgba[pi + 3] = 255;
-        }
-    }
-
-    rgba
+    let mut job = RasterJob::new(map, width, height);
+    job.step_elevation(map);
+    job.step_color(map);
+    job.step_postprocess();
+    job.into_rgba()
 }
 
 fn nan_or(v: f32, fallback: f32) -> f32 {
     if v.is_nan() { fallback } else { v }
+}
+
+fn lerp_byte(a: u8, b: u8, t: f64) -> u8 {
+    (a as f64 + (b as f64 - a as f64) * t).clamp(0.0, 255.0) as u8
 }
 
 struct BoundedTri {

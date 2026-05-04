@@ -68,6 +68,29 @@ impl Uwp {
     pub fn tech_level(&self) -> u8 { self.0[7] }
 }
 
+impl std::fmt::Display for Uwp {
+    /// Re-emit canonical UWP string: 7 leading hex digits, dash, then TL.
+    /// Inverse of `parse` for the well-formed cases.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let glyph = |d: u8| -> char {
+            if d < 10 {
+                (b'0' + d) as char
+            } else if d < 16 {
+                (b'A' + d - 10) as char
+            } else {
+                '?'
+            }
+        };
+        for (i, d) in self.0.iter().enumerate() {
+            if i == 7 {
+                f.write_str("-")?;
+            }
+            f.write_fmt(format_args!("{}", glyph(*d)))?;
+        }
+        Ok(())
+    }
+}
+
 pub struct WorldMap {
     pub uwp: Uwp,
     pub seed: u64,
@@ -78,6 +101,7 @@ pub struct WorldMap {
     /// need to mix them manually.
     pub elev_field: noise::ElevationField,
     pub humidity_field: climate::HumidityField,
+    pub temp_field: climate::TempField,
     pub sea_level: f64,
     /// Major rivers as polylines in unfolded sheet coords. Computed after
     /// elevation is finalized so it sees tectonic-uplifted terrain.
@@ -98,6 +122,8 @@ pub fn generate(uwp: &str, seed: u64) -> Result<WorldMap, MapError> {
     let biome_seed: u64 = rng.random();
     let feature_seed: u64 = rng.random();
     let tectonic_seed: u64 = rng.random();
+    let temp_seed: u64 = rng.random();
+    let sea_level_seed: u64 = rng.random();
 
     // Tectonics first — its field is owned by the elevation field so every
     // downstream sample (per-hex, per-pixel raster, sub-samples) gets the
@@ -106,17 +132,20 @@ pub fn generate(uwp: &str, seed: u64) -> Result<WorldMap, MapError> {
     let elev_field = noise::ElevationField::from_uwp(&uwp, elev_seed)
         .with_tectonics(tectonic_field);
     let humidity_field = climate::HumidityField::from_uwp(&uwp, humidity_seed);
+    let temp_field = climate::TempField::from_uwp(&uwp, temp_seed);
 
     let mut grid = grid::Grid::build();
     noise::compute_elevation(&mut grid, &elev_field);
     climate::compute_climate(&mut grid, &uwp, &humidity_field);
 
-    let sea_level = biome::compute_sea_level(&grid, &uwp);
+    let mut sea_level_rng = ChaCha8Rng::seed_from_u64(sea_level_seed);
+    let sea_level = biome::compute_sea_level(&grid, &uwp, &mut sea_level_rng);
     biome::assign_biomes(
         &mut grid,
         &uwp,
         &elev_field,
         &humidity_field,
+        &temp_field,
         sea_level,
         biome_seed,
     );
@@ -132,6 +161,7 @@ pub fn generate(uwp: &str, seed: u64) -> Result<WorldMap, MapError> {
         grid,
         elev_field,
         humidity_field,
+        temp_field,
         sea_level,
         rivers: Vec::new(),
     };
@@ -147,6 +177,15 @@ pub fn render_svg(map: &WorldMap) -> String {
 pub fn render_png(map: &WorldMap) -> Result<Vec<u8>, String> {
     render::render_png(map)
 }
+
+/// Resumable per-pixel rasterizer for the SVG path. Re-exported so the
+/// Leptos component can drive the heavy passes (`step_elevation`,
+/// `step_color`, `step_postprocess`) one at a time and `await` a
+/// setTimeout(0) yield between them — that's what keeps the browser from
+/// painting the "Page Unresponsive" dialog while a regenerate is in
+/// flight.
+pub use raster::RasterJob;
+pub use render::{SVG_RASTER_H, SVG_RASTER_W, assemble_svg};
 
 #[cfg(test)]
 mod tests {
@@ -335,13 +374,13 @@ mod tests {
                 }
                 let sphere = xy_to_sphere(sx, sy);
                 let e = map.elev_field.sample(&sphere);
-                let above = climate::amplify_elevation(e - map.sea_level);
+                let above = climate::amplify_elevation(e - map.sea_level, map.uwp.hydrographics());
                 if above < 0.0 {
                     bump(&mut counts, "ocean");
                     continue;
                 }
                 let raw_t = climate::temperature_at(&sphere, climate::TEMP_AMPLITUDE);
-                let t = climate::apply_lapse(climate::adjust_temperature(raw_t, &map.uwp), above);
+                let t = climate::apply_lapse(climate::adjust_temperature(raw_t, &map.uwp), above, &map.uwp);
                 let mut hu = map.humidity_field.sample(&sphere, &map.uwp);
                 if let Some(tf) = tec {
                     hu = colormap::rain_shadow_adjustment(hu, tf.rain_shadow_at(&sphere));
@@ -352,7 +391,7 @@ mod tests {
                 hu = raster::apply_continentality(hu, cont);
 
                 // Mirror colormap::biome_color's decision tree.
-                let base = if t < 0.18 {
+                let base = if t < 0.10 {
                     "ice"
                 } else if t < 0.32 {
                     if hu < 0.32 { "tundra" } else { "taiga" }
@@ -405,6 +444,123 @@ mod tests {
             }
         }
         eprintln!();
+    }
+
+    /// Stricter audit: for each pixel, compute the biome it's *supposed*
+    /// to be from raw (temp, humidity), then measure how far the rendered
+    /// pixel drifted from that biome's exact legend swatch. This answers
+    /// "does the map match the key for what's drawn here?" rather than
+    /// the looser "is the pixel close to ANY palette entry?"
+    #[test]
+    #[ignore]
+    fn audit_render_pixels_against_intended_biome() {
+        use crate::worldmap::colormap;
+        use crate::worldmap::grid::{SHEET_HEIGHT, SHEET_WIDTH, xy_to_sphere};
+
+        let map = generate("C886977-8", 1).unwrap();
+        let tec = map.elev_field.tectonics();
+        let w = SHEET_WIDTH as u32;
+        let h = SHEET_HEIGHT as u32;
+        let rgba = raster::render_terrain(&map, w, h);
+
+        // Bucketed distance from intended-biome swatch.
+        let mut buckets = [0u64; 7];
+        let mut total = 0u64;
+        let scale_x = SHEET_WIDTH / w as f64;
+        let scale_y = SHEET_HEIGHT / h as f64;
+        for py in 0..h {
+            let sy = (py as f64 + 0.5) * scale_y;
+            for px in 0..w {
+                let sx = (px as f64 + 0.5) * scale_x;
+                let i = (py * w + px) as usize;
+                let r = rgba[i * 4];
+                let g = rgba[i * 4 + 1];
+                let b = rgba[i * 4 + 2];
+                if (r, g, b) == raster::SPACE_RGB {
+                    continue;
+                }
+                // Reproduce the colormap pipeline up to the BASE biome
+                // color (no overlay/shade), then compare the rendered
+                // pixel to that base.
+                let sphere = xy_to_sphere(sx, sy);
+                let e = map.elev_field.sample(&sphere);
+                let above = climate::amplify_elevation(e - map.sea_level, map.uwp.hydrographics());
+                if above < 0.0 {
+                    continue; // skip ocean — it's a depth ramp, no single swatch
+                }
+                let raw_t = climate::temperature_at(&sphere, climate::TEMP_AMPLITUDE);
+                let t = climate::apply_lapse(climate::adjust_temperature(raw_t, &map.uwp), above, &map.uwp);
+                let mut hu = map.humidity_field.sample(&sphere, &map.uwp);
+                if let Some(tf) = tec {
+                    hu = colormap::rain_shadow_adjustment(hu, tf.rain_shadow_at(&sphere));
+                }
+                hu = climate::apply_altitude_drying(hu, above);
+                // Continentality: same as raster.
+                if above > 0.0 {
+                    let cont = raster::continentality(&map.elev_field, map.sea_level, sx, sy);
+                    hu = raster::apply_continentality(hu, cont);
+                }
+                // Pick the legend swatch the user expects to see here.
+                let expected = expected_biome_color(t, hu, above);
+                total += 1;
+                let dist = (r as i32 - expected.0 as i32).abs()
+                    .max((g as i32 - expected.1 as i32).abs())
+                    .max((b as i32 - expected.2 as i32).abs());
+                let bucket = if dist == 0 { 0 }
+                    else if dist <= 5 { 1 }
+                    else if dist <= 10 { 2 }
+                    else if dist <= 20 { 3 }
+                    else if dist <= 40 { 4 }
+                    else if dist <= 80 { 5 }
+                    else { 6 };
+                buckets[bucket] += 1;
+            }
+        }
+
+        eprintln!("--- pixel-vs-INTENDED-biome audit, Earth, seed 1 ---");
+        eprintln!("total land pixels: {total}");
+        let labels = ["= legend  ", "≤5 LSB    ", "≤10 LSB   ", "≤20 LSB   ", "≤40 LSB   ", "≤80 LSB   ", ">80 LSB   "];
+        for (i, label) in labels.iter().enumerate() {
+            let c = buckets[i];
+            let pct = 100.0 * c as f64 / total as f64;
+            eprintln!("  {label} {c:8}  {pct:5.2}%");
+        }
+    }
+
+    /// Mirror of the full colormap decision tree (base biome + rocky/snow
+    /// overlays) so the audit measures drift from the swatch the user
+    /// expects to see at this pixel — including for elevation-overridden
+    /// pixels which render as Rocky/Sandy highland or Snow.
+    fn expected_biome_color(t: f64, h: f64, elev_above_sea: f64) -> (u8, u8, u8) {
+        use crate::worldmap::colormap::*;
+        // Snow overlay (cold + high + humid) takes precedence.
+        if t < 0.5 && elev_above_sea > 0.5 && h > 0.40 {
+            return C_SNOW;
+        }
+        // Rocky overlay above 0.32 elev replaces the base biome with one
+        // of the two highland swatches.
+        if elev_above_sea >= 0.32 {
+            return if t >= 0.6 && h < 0.35 {
+                C_SANDY_HIGHLAND
+            } else {
+                C_ROCKY_HIGHLAND
+            };
+        }
+        // Base biome.
+        if t < 0.10 { return C_ICE_CAP; }
+        if t < 0.32 {
+            return if h < 0.32 { C_TUNDRA } else { C_TAIGA };
+        }
+        if t < 0.6 {
+            return if h < 0.40 { C_STEPPE }
+                else if h < 0.60 { C_GRASSLAND }
+                else if h < 0.78 { C_TEMPERATE_FOREST }
+                else { C_TEMPERATE_RAINFOREST };
+        }
+        if h < 0.25 { C_DESERT_SAND }
+        else if h < 0.5 { C_SAVANNA }
+        else if h < 0.7 { C_TROP_SEASONAL_FOREST }
+        else { C_JUNGLE }
     }
 
     /// Honest audit: classify every rendered pixel by its distance to the
@@ -469,6 +625,58 @@ mod tests {
         }
         eprintln!("worst pixel: rgb({}, {}, {})  distance from nearest palette = {}",
                   worst.0, worst.1, worst.2, worst.3);
+    }
+
+    #[test]
+    fn waterworld_with_pop_has_cities() {
+        // A Hyd A world rolls 50%-of-the-time fully submerged (frac_water
+        // = 1.0 → sea_level above every hex → every hex is ocean). With
+        // city_weight = 0 for ocean we'd lose all cities; the floating-
+        // city fallback in `place_cities` keeps them. Sweep many seeds so
+        // we catch both the 100%-water and 95-100% branches.
+        for seed in 1..=20u64 {
+            let map = generate("A78A799-A", seed).unwrap();
+            assert_eq!(map.uwp.hydrographics(), 10);
+            assert_eq!(map.uwp.population(), 7);
+            let cities = map
+                .grid
+                .hexes
+                .iter()
+                .flat_map(|h| h.features.iter())
+                .filter(|f| matches!(f, features::Feature::City { .. }))
+                .count();
+            assert!(
+                cities > 0,
+                "Pop 7 waterworld at seed {seed} placed no cities",
+            );
+        }
+    }
+
+    #[test]
+    fn desert_world_with_pop_has_cities() {
+        // Regression: Hyd 0 + the 0%-water branch of compute_sea_level
+        // pushes sea_level below the lowest hex (so no pixel renders as
+        // ocean). With the old `classify` reading raw `elev - sea_level`,
+        // every land hex's `above` exceeded the Mountain threshold, every
+        // land hex became Biome::Mountain (city_weight = 0), and `place_
+        // cities` had no eligible hexes. Pop 7 worlds across many seeds
+        // must each place at least one city.
+        for seed in 1..=20u64 {
+            let map = generate("A780799-A", seed).unwrap();
+            assert_eq!(map.uwp.hydrographics(), 0);
+            assert_eq!(map.uwp.population(), 7);
+            let cities = map
+                .grid
+                .hexes
+                .iter()
+                .flat_map(|h| h.features.iter())
+                .filter(|f| matches!(f, features::Feature::City { .. }))
+                .count();
+            assert!(
+                cities > 0,
+                "Pop 7 desert at seed {seed} placed no cities",
+            );
+        }
     }
 
     #[test]

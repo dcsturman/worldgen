@@ -56,14 +56,20 @@ pub trait Renderer {
     fn fill_text(&mut self, x: f64, y: f64, size: f64, text: &str, color: Color);
 }
 
-/// Raster resolution for the live SVG. Matches sheet units 1:1, browser
-/// smooth-scales when displayed at a different on-screen size.
-const SVG_RASTER_W: u32 = SHEET_WIDTH as u32;
-const SVG_RASTER_H: u32 = SHEET_HEIGHT as u32;
+/// Raster resolution for the live SVG. Rendered at 1.5× sheet units so the
+/// browser's bilinear interpolation has more source pixels to work with —
+/// keeps biome boundaries crisp at any zoom without bringing back the
+/// gradient LERPs (which produced in-between colors throughout regions).
+const SVG_RASTER_SCALE: f64 = 1.5;
+pub const SVG_RASTER_W: u32 = (SHEET_WIDTH * SVG_RASTER_SCALE) as u32;
+pub const SVG_RASTER_H: u32 = (SHEET_HEIGHT * SVG_RASTER_SCALE) as u32;
 
-/// PNG export raster scale. 2× makes the exported file sharper for VTT use
-/// without making generation prohibitively slow (~4× more pixels).
-const PNG_RASTER_SCALE: f64 = 2.0;
+/// PNG export raster scale. 1× matches the SVG resolution and keeps PNG
+/// generation under the browser's "unresponsive page" threshold; 2× was
+/// nicer for VTT use but pushed the per-pixel pipeline (warp+Voronoi+
+/// continentality) into 60s+ territory and the browser would prompt the
+/// user to kill the tab.
+const PNG_RASTER_SCALE: f64 = 1.0;
 
 /// Height (sheet units) of the legend strip drawn below the map. Sits in
 /// the band [SHEET_HEIGHT, SHEET_HEIGHT + LEGEND_HEIGHT] for both SVG and
@@ -71,10 +77,20 @@ const PNG_RASTER_SCALE: f64 = 2.0;
 pub const LEGEND_HEIGHT: f64 = 135.0;
 
 pub fn render_svg(map: &WorldMap) -> String {
+    let raster = raster::render_terrain(map, SVG_RASTER_W, SVG_RASTER_H);
+    assemble_svg(map, &raster)
+}
+
+/// Wrap a precomputed RGBA8 raster (already at SVG_RASTER_W × SVG_RASTER_H)
+/// in the rest of the SVG: PNG-encode + embed, then draw the vector
+/// overlay (face outlines, hex grid, rivers, cities, title block) and the
+/// legend strip. Split out from `render_svg` so callers chunking the
+/// per-pixel raster across event-loop turns can run the heavy raster
+/// passes separately and call this last to assemble the final string.
+pub fn assemble_svg(map: &WorldMap, raster: &[u8]) -> String {
     let total_h = SHEET_HEIGHT + LEGEND_HEIGHT;
     let mut r = svg::SvgRenderer::new(SHEET_WIDTH, total_h);
-    let raster = raster::render_terrain(map, SVG_RASTER_W, SVG_RASTER_H);
-    match raster_to_png(&raster, SVG_RASTER_W, SVG_RASTER_H) {
+    match raster_to_png(raster, SVG_RASTER_W, SVG_RASTER_H) {
         Ok(png) => r.embed_png(&png, 0.0, 0.0, SHEET_WIDTH, SHEET_HEIGHT),
         Err(_) => {
             // Fall back to a flat space-color rect so the SVG isn't empty
@@ -154,7 +170,14 @@ fn draw_overlay<R: Renderer + ?Sized>(r: &mut R, map: &WorldMap) {
 
     // Face triangle outlines — the icosahedral fold lines. Heavier so they
     // read clearly against the hex grid.
-    let face_stroke = Color::rgba(0, 0, 0, 220);
+    // Match the legend's ink — softer than pure black, especially in PNG
+    // where 1.6-pixel-wide raw-black lines alias harshly.
+    let face_stroke = Color::rgba(
+        super::colormap::C_INK.0,
+        super::colormap::C_INK.1,
+        super::colormap::C_INK.2,
+        super::colormap::C_INK.3,
+    );
     for face in &grid.faces {
         for tri in &face.unfolded_positions {
             let pts = [tri[0], tri[1], tri[2], tri[0]];
@@ -185,6 +208,87 @@ fn draw_overlay<R: Renderer + ?Sized>(r: &mut R, map: &WorldMap) {
             }
         }
     }
+
+    // Title block — small UWP+seed card in upper-left corner. Floats over
+    // the page background, gives the output an "intentional publication"
+    // frame rather than reading as a raw render.
+    draw_title_block(r, map);
+}
+
+/// Decorative hex-shaped title card in the upper-left corner of the
+/// output. Three lines: UWP, seed, and a hex-scale value computed from
+/// the UWP's world-size digit so the user can translate hex distances to
+/// real km. Sized so it reads but doesn't crowd the polar caps.
+fn draw_title_block<R: Renderer + ?Sized>(r: &mut R, map: &WorldMap) {
+    let cx = 82.0;
+    let cy = 64.0;
+    let radius = 64.0; // hex circum-radius, ~128px wide
+    let card_fill = Color::rgba(248, 246, 232, 240); // warm cream against page
+    let ink = Color::rgba(
+        super::colormap::C_INK.0,
+        super::colormap::C_INK.1,
+        super::colormap::C_INK.2,
+        super::colormap::C_INK.3,
+    );
+
+    let hex = pointy_top_hex((cx, cy), radius * 1.732); // flat_to_flat = r*sqrt(3)
+    r.fill_polygon(&hex, card_fill);
+    let outline: Vec<(f64, f64)> = hex.iter().chain(std::iter::once(&hex[0])).copied().collect();
+    r.stroke_polyline(&outline, ink, 1.4);
+
+    let label_size = 9.0;
+    let value_size = 13.0;
+    let uwp_str = format!("{}", map.uwp);
+    // Display seed in decimal — matches the input field, so users can copy
+    // it back without converting hex.
+    let seed_str = format!("seed {}", map.seed);
+    let hex_km = hex_size_km(map.uwp.size());
+    let scale_str = format!("1 hex ≈ {} km", format_thousands(hex_km));
+    // Rough text-centering: subtract ~0.27 × char_count × size.
+    let center_x = |s: &str, size: f64| cx - (s.chars().count() as f64) * size * 0.27;
+    r.fill_text(center_x(&uwp_str, value_size), cy - 13.0, value_size, &uwp_str, ink);
+    r.fill_text(center_x(&seed_str, label_size), cy + 5.0, label_size, &seed_str, ink);
+    r.fill_text(center_x(&scale_str, label_size), cy + 21.0, label_size, &scale_str, ink);
+}
+
+/// Hex flat-to-flat in km, derived from the UWP's world-size digit and
+/// the icosahedral subdivision. Each face edge is HEXES_PER_EDGE hexes
+/// across; the icosahedron's edge subtends ~1.107 rad on the unit sphere,
+/// so a single hex spans `(1.107 / HEXES_PER_EDGE) × planet_radius` of
+/// surface arc. Rounded to a nice 50-km bucket for display.
+fn hex_size_km(size_digit: u8) -> u32 {
+    // Traveller convention: world diameter ≈ size × 1,600 km, with
+    // asteroid-belt-ish 800 km for size 0.
+    let diameter_km = if size_digit == 0 {
+        800.0
+    } else {
+        (size_digit as f64) * 1600.0
+    };
+    let radius_km = diameter_km * 0.5;
+    const HEX_ARC_RAD: f64 = 1.107_148_717_794_090_5 / (HEXES_PER_EDGE as f64);
+    let km = radius_km * HEX_ARC_RAD;
+    ((km / 50.0).round() * 50.0).max(50.0) as u32
+}
+
+/// Format an integer with thousands-separators (e.g. 12000 → "12,000").
+fn format_thousands(mut n: u32) -> String {
+    if n == 0 {
+        return "0".to_string();
+    }
+    let mut groups: Vec<String> = Vec::new();
+    while n > 0 {
+        groups.push(format!("{:03}", n % 1000));
+        n /= 1000;
+    }
+    let mut out = groups.pop().unwrap().trim_start_matches('0').to_string();
+    if out.is_empty() {
+        out.push('0');
+    }
+    while let Some(g) = groups.pop() {
+        out.push(',');
+        out.push_str(&g);
+    }
+    out
 }
 
 /// Whether `(x, y)` lies inside any face's unfolded triangle (i.e. on the
@@ -238,6 +342,17 @@ fn draw_feature<R: Renderer + ?Sized>(r: &mut R, c: (f64, f64), radius: f64, fea
         }
         Feature::City { tier, starport } => {
             let ink = if starport { starport_ink } else { normal_ink };
+            // Subtle pale halo behind the glyph so it reads against any
+            // biome (forest, desert, snow). Sized just larger than the
+            // outermost ring, with low alpha so it doesn't shout.
+            let halo = Color::rgba(248, 250, 246, 110);
+            let halo_r = match tier {
+                CityTier::Megacity => radius * 1.00,
+                CityTier::Major => radius * 0.90,
+                CityTier::Minor => radius * 0.70,
+                CityTier::Small => radius * 0.40,
+            };
+            r.fill_circle(cx, cy, halo_r, halo);
             match tier {
                 CityTier::Small => {
                     // Filled dot — only used when it's the sole settlement.
@@ -317,13 +432,41 @@ const LEGEND_SETTLEMENTS: &[(CityTier, bool, &str)] = &[
 /// renderer. Layout is a 5-column × 4-row grid: 15 terrain swatches in the
 /// first 3 rows, 5 settlement glyphs in the bottom row.
 fn draw_legend<R: Renderer + ?Sized>(r: &mut R, x: f64, y: f64, w: f64, h: f64) {
-    let bg = Color::rgba(245, 240, 225, 255);
+    // Match the page color so the legend reads as part of the same printed
+    // surface, not a separate cream card glued to the bottom.
+    let bg = Color::rgba(
+        raster::SPACE_RGB.0,
+        raster::SPACE_RGB.1,
+        raster::SPACE_RGB.2,
+        255,
+    );
     let ink = Color::rgba(20, 20, 20, 230);
     let border = Color::rgba(20, 20, 20, 200);
 
     r.fill_rect(x, y, w, h, bg);
-    // Top border between map and legend so they read as separate bands.
+    // Top border between map and legend, plus a thin frame on the other
+    // three sides so the legend reads as a discrete labelled panel rather
+    // than the bottom edge bleeding into nothing.
     r.stroke_line(x, y, x + w, y, border, 1.2);
+    let frame = Color::rgba(20, 20, 20, 90);
+    let inset = 4.0;
+    r.stroke_line(x + inset, y + inset, x + inset, y + h - inset, frame, 0.6);
+    r.stroke_line(
+        x + w - inset,
+        y + inset,
+        x + w - inset,
+        y + h - inset,
+        frame,
+        0.6,
+    );
+    r.stroke_line(
+        x + inset,
+        y + h - inset,
+        x + w - inset,
+        y + h - inset,
+        frame,
+        0.6,
+    );
 
     let cols = 5;
     let rows = 5;
