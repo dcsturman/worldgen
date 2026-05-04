@@ -5,11 +5,19 @@
 //! "Key" checkbox toggles whether the legend strip portion of the SVG is
 //! shown in the live UI; the bundled legend is always part of the
 //! downloaded PNG so saved maps carry their key with them.
+//!
+//! Regeneration is split into four async phases (generate → elevation
+//! raster → color raster → assemble SVG) with a setTimeout(0) yield
+//! between each so the browser gets event-loop turns mid-compute. Without
+//! the chunking the WASM main thread blocks for 1-2s on a fast machine
+//! and well past Chrome's 5s "Page Unresponsive" cutoff on slower ones.
 
 use leptos::prelude::*;
-use leptos_use::signal_debounced;
+use leptos::task::spawn_local;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::JsValue;
+use wasm_bindgen::closure::Closure;
+use wasm_bindgen_futures::JsFuture;
 use web_sys::{Blob, BlobPropertyBag, HtmlAnchorElement, Url};
 
 use crate::worldmap;
@@ -26,114 +34,102 @@ pub fn WorldMap() -> impl IntoView {
     // many users won't think to look for it.
     let show_key = RwSignal::new(true);
 
-    // Debounce UWP edits — generation is 100-500ms in WASM, so regenerate
-    // only after the user pauses typing. `seed` is *not* debounced: re-roll
-    // clicks should regenerate immediately.
-    let uwp_debounced: Signal<String> = signal_debounced(uwp, 400.0);
-
-    // "Generating…" indicator state. Two contributing signals:
-    //   1. raw `uwp` differs from `uwp_debounced` — i.e. the user is
-    //      mid-keystroke and the rendered map is stale.
-    //   2. `pending_render`: raised before scheduling the heavy WASM compute
-    //      and cleared after that compute returns. With the deferred-render
-    //      pattern below, the badge actually paints before the freeze.
+    // Manually-triggered regeneration. UWP and seed inputs no longer auto-
+    // regen on change (typing was painful — every keystroke kicked off a
+    // 1-2s WASM compute). The user edits both freely, then clicks the
+    // Regenerate button, which bumps this counter and triggers a single
+    // render with the current input values. Cold start fires once so the
+    // default UWP/seed shows up without requiring a click.
+    let regen = RwSignal::new(0u32);
     let pending_render = RwSignal::new(false);
 
-    // Manually-driven SVG signal. We previously used a Memo, but a Memo
-    // recomputes synchronously the first time it's read inside the view —
-    // which means setting `pending_render` in a sibling Effect never gets a
-    // paint cycle in before the main thread blocks on
-    // `worldmap::generate + render_svg` (often 500ms-2s). Instead we run the
-    // compute via a 0ms `setTimeout`, which lets the browser paint the
-    // "Generating…" badge first, then yield back into WASM for the work.
-    //
-    // KNOWN FOLLOW-UP: the synchronous compute still blocks the main thread
-    // for ~500ms-2s. Future improvement: offload `worldmap::generate +
-    // render_svg` to a Web Worker so the main thread stays responsive even
-    // for large maps. setTimeout(0) gives the browser regular event-loop
-    // turns (avoiding the "kill page?" prompt) but doesn't actually
-    // parallelise — a worker would.
     let svg_html = RwSignal::new(String::new());
 
-    let render_now = move |uwp_str: String, seed_v: u64| {
-        if uwp_str.chars().filter(|c| *c != '-').count() < 8 {
-            error.set(None);
-            svg_html.set(String::new());
-            return;
-        }
-        match worldmap::generate(&uwp_str, seed_v) {
-            Ok(map) => {
-                error.set(None);
-                svg_html.set(worldmap::render_svg(&map));
-            }
-            Err(e) => {
-                error.set(Some(e.to_string()));
-                svg_html.set(String::new());
-            }
-        }
-    };
-
-    // Watch the (debounced uwp, seed) pair. On the initial run (`prev` is
-    // None) we still need to fire so the default UWP/seed produces a map on
-    // cold start. On subsequent changes, raise the badge and defer the
-    // compute via setTimeout(0) so the badge paints first.
-    Effect::new(move |prev: Option<(String, u64)>| {
-        let cur = (uwp_debounced.get(), seed.get());
-        let changed = prev.is_none() || prev.as_ref().is_some_and(|p| p != &cur);
+    // Watch the regen counter. Fires once on cold start (prev=None), then
+    // every time the Regenerate button bumps it. Reads uwp/seed at fire
+    // time so editing the inputs doesn't trigger a render — only the
+    // button does.
+    Effect::new(move |prev: Option<u32>| {
+        let cur = regen.get();
+        let changed = prev.is_none() || prev != Some(cur);
         if changed {
-            pending_render.set(true);
-            let uwp_str = cur.0.clone();
-            let seed_v = cur.1;
-            let cb = wasm_bindgen::closure::Closure::once_into_js(move || {
-                render_now(uwp_str, seed_v);
+            let uwp_str = uwp.get_untracked();
+            let seed_v = seed.get_untracked();
+            spawn_local(async move {
+                pending_render.set(true);
+                if uwp_str.chars().filter(|c| *c != '-').count() < 8 {
+                    error.set(None);
+                    svg_html.set(String::new());
+                    pending_render.set(false);
+                    return;
+                }
+                yield_to_browser().await;
+                let map = match worldmap::generate(&uwp_str, seed_v) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        error.set(Some(e.to_string()));
+                        svg_html.set(String::new());
+                        pending_render.set(false);
+                        return;
+                    }
+                };
+                error.set(None);
+                yield_to_browser().await;
+                let mut job = worldmap::RasterJob::new(
+                    &map,
+                    worldmap::SVG_RASTER_W,
+                    worldmap::SVG_RASTER_H,
+                );
+                job.step_elevation(&map);
+                yield_to_browser().await;
+                job.step_color(&map);
+                yield_to_browser().await;
+                job.step_postprocess();
+                yield_to_browser().await;
+                let raster = job.into_rgba();
+                let svg = worldmap::assemble_svg(&map, &raster);
+                svg_html.set(svg);
                 pending_render.set(false);
             });
-            if let Some(win) = web_sys::window() {
-                let _ = win.set_timeout_with_callback_and_timeout_and_arguments_0(
-                    cb.as_ref().unchecked_ref(),
-                    0,
-                );
-            }
         }
         cur
     });
 
-    let pending = Signal::derive(move || uwp.get() != uwp_debounced.get() || pending_render.get());
+    let pending = Signal::derive(move || pending_render.get());
 
-    let reroll = move |_| {
-        seed.update(|s| *s = s.wrapping_add(1));
+    let regenerate = move |_| {
+        regen.update(|n| *n = n.wrapping_add(1));
     };
 
-    // PNG generation runs synchronously in WASM and can take 1–3s. Raise the
-    // badge before kicking it off, then defer the actual work via a 0ms
-    // timeout so the browser gets one paint cycle to actually show the
-    // indicator before the main thread blocks.
+    // PNG export uses the same chunked pipeline: yield between generate,
+    // each raster phase, and the final tiny_skia overlay/encode pass so
+    // the main thread never blocks long enough to trigger an unresponsive-
+    // page prompt. The PNG renderer redoes its own raster internally
+    // (different scale + extra height for the legend), so once we have a
+    // map we just call `worldmap::render_png` after a yield.
     let download_png = move |_| {
-        pending_render.set(true);
         let uwp_now = uwp.get();
         let seed_now = seed.get();
-        let error_handle = error;
-        let pending_handle = pending_render;
-        let cb = wasm_bindgen::closure::Closure::once_into_js(move || {
-            match worldmap::generate(&uwp_now, seed_now)
-                .map_err(|e| e.to_string())
-                .and_then(|m| worldmap::render_png(&m))
-            {
+        spawn_local(async move {
+            pending_render.set(true);
+            yield_to_browser().await;
+            let result = match worldmap::generate(&uwp_now, seed_now) {
+                Ok(map) => {
+                    yield_to_browser().await;
+                    worldmap::render_png(&map)
+                }
+                Err(e) => Err(e.to_string()),
+            };
+            match result {
                 Ok(bytes) => {
                     if let Err(e) = trigger_png_download(&bytes, "worldmap.png") {
-                        error_handle.set(Some(format!("PNG download failed: {e:?}")));
+                        error.set(Some(format!("PNG download failed: {e:?}")));
                     }
                 }
-                Err(e) => error_handle.set(Some(e)),
+                Err(e) => error.set(Some(e)),
             }
-            pending_handle.set(false);
+            pending_render.set(false);
         });
-        if let Some(win) = web_sys::window() {
-            let _ = win.set_timeout_with_callback_and_timeout_and_arguments_0(
-                cb.as_ref().unchecked_ref(),
-                0,
-            );
-        }
     };
 
     // SVG includes a legend strip in a band below the map (viewBox extends
@@ -175,8 +171,8 @@ pub fn WorldMap() -> impl IntoView {
                         style="width: 9rem;"
                     />
                 </label>
-                <button class="blue-button" on:click=reroll style="margin-left: 1rem;">
-                    "Re-roll"
+                <button class="blue-button" on:click=regenerate style="margin-left: 1rem;">
+                    "Regenerate"
                 </button>
                 <button class="blue-button" on:click=download_png style="margin-left: 0.5rem;">
                     "Download PNG"
@@ -238,6 +234,26 @@ fn GeneratingBadge() -> impl IntoView {
             <span>"Generating…"</span>
         </div>
     }
+}
+
+/// Yield the WASM main thread back to the browser for one event-loop
+/// turn. Returns a future that resolves on the next setTimeout(0) tick,
+/// which is enough for the browser to paint, run other event handlers,
+/// and reset its "page is unresponsive" timer. Used between phases of the
+/// regenerate pipeline.
+async fn yield_to_browser() {
+    let promise = js_sys::Promise::new(&mut |resolve, _reject| {
+        let cb = Closure::once_into_js(move || {
+            let _ = resolve.call0(&JsValue::NULL);
+        });
+        if let Some(win) = web_sys::window() {
+            let _ = win.set_timeout_with_callback_and_timeout_and_arguments_0(
+                cb.as_ref().unchecked_ref(),
+                0,
+            );
+        }
+    });
+    let _ = JsFuture::from(promise).await;
 }
 
 fn trigger_png_download(bytes: &[u8], filename: &str) -> Result<(), JsValue> {

@@ -50,7 +50,34 @@ fn place_polar_ice(grid: &mut Grid) {
 /// Generate Zipf-distributed city sizes for a given pop digit, then map each
 /// to a `CityTier`. Returns sizes in descending order; index 0 is the
 /// starport. Population 0 returns an empty Vec (no settlements at all).
-fn city_sizes_for_pop(pop: u8, rng: &mut ChaCha8Rng) -> Vec<(CityTier, u64)> {
+/// Urban fraction (0..1) by tech level — what share of the planet's
+/// population lives in cities ≥500K rather than dispersed countryside.
+/// Pre-industrial worlds can't sustain dense urbanization (most labour
+/// is needed for farming); industrial unlocks ~50%+; post-industrial
+/// settles near 90%.
+fn tl_urban_base(tl: u8) -> f64 {
+    match tl {
+        0 => 0.05,         // hunter-gatherer
+        1 => 0.08,         // bronze age
+        2 => 0.12,         // iron age / classical
+        3 => 0.18,         // medieval
+        4 => 0.30,         // early industrial / steam
+        5 => 0.45,         // mature industrial
+        6 => 0.55,         // mechanized
+        7 => 0.65,         // atomic / nuclear
+        8 => 0.75,         // information age (current Earth)
+        9 => 0.82,         // pre-stellar / fusion
+        10 => 0.87,        // early stellar (jump-1)
+        11 => 0.89,        // average stellar
+        12 => 0.90,        // imperial average
+        13 => 0.91,        // advanced
+        14 => 0.92,        // very advanced
+        15 => 0.93,        // maximum imperial
+        _ => 0.95,         // exceptional / Ancients
+    }
+}
+
+fn city_sizes_for_pop(pop: u8, tl: u8, rng: &mut ChaCha8Rng) -> Vec<(CityTier, u64)> {
     if pop == 0 {
         return Vec::new();
     }
@@ -59,8 +86,13 @@ fn city_sizes_for_pop(pop: u8, rng: &mut ChaCha8Rng) -> Vec<(CityTier, u64)> {
     // not pinned exactly at 10M.
     let mantissa = rng.random_range(1.0..10.0_f64);
     let total = mantissa * 10f64.powi(pop as i32);
-    // Urban fraction grows with pop digit: high-pop worlds clump harder.
-    let urban_frac = (0.5 + 0.04 * pop as f64 + rng.random_range(0.0..0.10)).min(0.9);
+    // Urban fraction now driven by Tech Level — pre-industrial societies
+    // can't sustain >20% urban (food production needs the rural labour),
+    // industrial unlocks rapid urbanization, post-industrial caps near
+    // 90%+. Real-world Earth was ~10% urban at TL 2 (classical), ~75% at
+    // TL 8 (current). Small ±4% jitter for variety.
+    let base = tl_urban_base(tl);
+    let urban_frac = (base + rng.random_range(-0.04..0.04)).clamp(0.03, 0.97);
     let urban = total * urban_frac;
     let alpha = 1.05_f64;
 
@@ -112,26 +144,16 @@ fn classify(size: u64) -> CityTier {
 
 fn place_cities(grid: &mut Grid, uwp: &Uwp, rng: &mut ChaCha8Rng) {
     let pop = uwp.population();
-    let sizes = city_sizes_for_pop(pop, rng);
+    let tl = uwp.tech_level();
+    let sizes = city_sizes_for_pop(pop, tl, rng);
     if sizes.is_empty() {
         return;
     }
 
-    let eligible: Vec<usize> = grid
-        .hexes
-        .iter()
-        .enumerate()
-        .filter(|(_, h)| city_weight(h.biome) > 0)
-        .map(|(i, _)| i)
-        .collect();
+    let (eligible, base_weights) = collect_eligible_hexes(grid);
     if eligible.is_empty() {
         return;
     }
-
-    let base_weights: Vec<u32> = eligible
-        .iter()
-        .map(|&i| city_weight(grid.hexes[i].biome))
-        .collect();
     let mut taken: Vec<bool> = vec![false; eligible.len()];
     // Big cities (Megacity/Major) repel each other to avoid clumping; smaller
     // tiers place freely. Chord distance on the unit sphere; ~2 hexes ≈ 0.32.
@@ -210,6 +232,38 @@ fn city_weight(b: Biome) -> u32 {
     }
 }
 
+/// Pick the hexes that are candidates to host a city, with an integer
+/// suitability weight per hex. The normal answer is the set of land hexes
+/// that `city_weight` likes; if a Hyd-A roll (or any pathological case)
+/// has driven sea level above the highest hex so there's no land at all,
+/// we fall back to ocean hexes — Traveller waterworlds are still
+/// inhabited, the cities just float, and the existing city glyphs render
+/// fine on top of the ocean color. Shallow ocean is preferred over deep
+/// so the glyph sits on a paler shelf tone rather than the dark abyss.
+fn collect_eligible_hexes(grid: &Grid) -> (Vec<usize>, Vec<u32>) {
+    let land: Vec<(usize, u32)> = grid
+        .hexes
+        .iter()
+        .enumerate()
+        .filter_map(|(i, h)| {
+            let w = city_weight(h.biome);
+            if w > 0 { Some((i, w)) } else { None }
+        })
+        .collect();
+    if !land.is_empty() {
+        return land.into_iter().unzip();
+    }
+    grid.hexes
+        .iter()
+        .enumerate()
+        .filter_map(|(i, h)| match h.biome {
+            Biome::ShallowOcean => Some((i, 4)),
+            Biome::DeepOcean => Some((i, 1)),
+            _ => None,
+        })
+        .unzip()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,7 +271,9 @@ mod tests {
 
     fn count_tiers(pop: u8) -> (usize, usize, usize, usize) {
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        let sizes = city_sizes_for_pop(pop, &mut rng);
+        // TL 8 (current Earth) — solid post-industrial urbanization for
+        // the count assertions below.
+        let sizes = city_sizes_for_pop(pop, 8, &mut rng);
         let mut mega = 0;
         let mut major = 0;
         let mut minor = 0;
@@ -236,7 +292,7 @@ mod tests {
     #[test]
     fn pop_zero_has_no_settlements() {
         let mut rng = ChaCha8Rng::seed_from_u64(0);
-        assert!(city_sizes_for_pop(0, &mut rng).is_empty());
+        assert!(city_sizes_for_pop(0, 8, &mut rng).is_empty());
     }
 
     #[test]
@@ -244,7 +300,7 @@ mod tests {
         // Pop 1-4: total 10s to 10K — should be just 1 settlement.
         for pop in 1..=4 {
             let mut rng = ChaCha8Rng::seed_from_u64(pop as u64);
-            let sizes = city_sizes_for_pop(pop, &mut rng);
+            let sizes = city_sizes_for_pop(pop, 8, &mut rng);
             assert_eq!(sizes.len(), 1, "pop {pop} should produce 1 settlement");
         }
     }
@@ -266,7 +322,7 @@ mod tests {
         // Pop 6 should produce a handful (≤10) of cities with at least one
         // Major or Megacity dominating.
         let mut rng = ChaCha8Rng::seed_from_u64(7);
-        let sizes = city_sizes_for_pop(6, &mut rng);
+        let sizes = city_sizes_for_pop(6, 8, &mut rng);
         assert!(!sizes.is_empty());
         assert!(sizes.len() <= 10, "pop 6 produced {} cities", sizes.len());
         assert!(matches!(sizes[0].0, CityTier::Major | CityTier::Megacity));

@@ -85,6 +85,17 @@ pub const LEGEND_PALETTE: &[(u8, u8, u8)] = &[
     C_SNOW,
 ];
 
+// ---- Stroke palette ------------------------------------------------------
+
+// Reused by render::draw_overlay so the legend's ink and the face
+// outlines / hex grid stay coordinated. Avoids the "harsh black line"
+// look in PNG output.
+//
+/// Standard ink color used for legend labels and face triangle outlines.
+/// Slightly off-black so AA-rasterized lines read as soft cartography
+/// rather than computer-drawn black.
+pub const C_INK: (u8, u8, u8, u8) = (20, 20, 20, 230);
+
 // ---- Color math ----------------------------------------------------------
 
 /// Map a per-pixel sample to an RGB triplet.
@@ -95,10 +106,9 @@ pub fn elevation_color(elev_above_sea: f64, temp: f64, humidity: f64) -> (u8, u8
     if elev_above_sea < 0.0 {
         return ocean_color(elev_above_sea, temp);
     }
-
     let base = biome_color(temp, humidity);
     let with_rock = apply_rocky_overlay(base, elev_above_sea, temp, humidity);
-    let with_snow = apply_snow_overlay(with_rock, elev_above_sea, temp);
+    let with_snow = apply_snow_overlay(with_rock, elev_above_sea, temp, humidity);
     clamp_rgb(with_snow)
 }
 
@@ -111,21 +121,25 @@ pub fn elevation_color(elev_above_sea: f64, temp: f64, humidity: f64) -> (u8, u8
 /// elevation range, tectonic underwater ridges show up as bright
 /// "shallow water" stripes. Saturating past the shelf hides that.
 fn ocean_color(elev_above_sea: f64, temp: f64) -> (u8, u8, u8) {
-    let depth = (-elev_above_sea).max(0.0);
-    const SHELF_DEPTH: f64 = 0.04;
-    let t = (depth / SHELF_DEPTH).min(1.0);
-    let c = lerp_rgb(to_f64(C_SHALLOW_OCEAN), to_f64(C_DEEP_OCEAN), t);
-    if temp < 0.18 {
-        let mix = ((0.18 - temp) / 0.18).clamp(0.0, 1.0);
-        return clamp_rgb(lerp_rgb(c, to_f64(C_SEA_ICE), mix * 0.85));
+    // Threshold-replace (was a LERP). Cold ocean → sea ice. Otherwise the
+    // depth band picks one of two legend swatches with no in-between.
+    if temp < ICE_TEMP {
+        return C_SEA_ICE;
     }
-    clamp_rgb(c)
+    let depth = (-elev_above_sea).max(0.0);
+    if depth < 0.04 { C_SHALLOW_OCEAN } else { C_DEEP_OCEAN }
 }
+
+/// Temperature threshold below which a pixel renders as ice. Lowered from
+/// 0.18 so dense-atmosphere worlds (which now retain more heat via the
+/// climate::temperature_bias hyd-greenhouse term) don't blanket-ice their
+/// mid-latitudes; ice remains restricted to genuinely freezing regions.
+pub const ICE_TEMP: f64 = 0.10;
 
 /// Pick a base biome color from temp + humidity.
 fn biome_color(temp: f64, humidity: f64) -> (f64, f64, f64) {
     // Polar ice cap — overrides any humidity.
-    if temp < 0.18 {
+    if temp < ICE_TEMP {
         return to_f64(C_ICE_CAP);
     }
     if temp < 0.32 {
@@ -159,10 +173,10 @@ fn biome_color(temp: f64, humidity: f64) -> (f64, f64, f64) {
     } else {
         // Hot.
         if humidity < 0.25 {
-            // Desert: sandy tan, slightly reddish at the very-hot extreme.
-            let red = ((temp - 0.6) / 0.4).clamp(0.0, 1.0) * 0.4;
-            let dry = ((0.25 - humidity) / 0.25).clamp(0.0, 1.0);
-            lerp_rgb(to_f64(C_DESERT_SAND), to_f64(C_DESERT_RED), red * dry)
+            // Desert: render as the legend swatch exactly. (Was a LERP toward
+            // a redder sand at hot+dry extremes — dropped so every desert
+            // pixel matches the key.)
+            to_f64(C_DESERT_SAND)
         } else if humidity < 0.5 {
             // Savanna: yellow-tan with a green tint.
             to_f64(C_SAVANNA)
@@ -176,9 +190,11 @@ fn biome_color(temp: f64, humidity: f64) -> (f64, f64, f64) {
     }
 }
 
-/// Above ~0.5 elevation, blend toward a rocky color whose hue depends on the
-/// underlying biome (sandy/red on hot+dry, gray on cold or wet). Above 0.75,
-/// blend further toward stone gray but keep some biome tint.
+/// Above the rocky threshold, replace the base biome color outright with
+/// the appropriate legend swatch (rocky or sandy highland). No blending —
+/// the user sees one of the two exact legend colors. Hot+dry → sandy;
+/// otherwise gray. (Previously a LERP from base→rocky, which produced
+/// many "in-between" pixels not represented in the legend.)
 fn apply_rocky_overlay(
     base: (f64, f64, f64),
     elev_above_sea: f64,
@@ -188,44 +204,30 @@ fn apply_rocky_overlay(
     if elev_above_sea < 0.32 {
         return base;
     }
-    // Pick a rocky hue: sandy/red on hot+dry worlds, gray otherwise.
-    // hot_dry score in [0,1]: 1 when temp>=0.6 and humidity<=0.25.
-    let hot = ((temp - 0.5) / 0.2).clamp(0.0, 1.0);
-    let dry = ((0.35 - humidity) / 0.25).clamp(0.0, 1.0);
-    let warm_rock_weight = hot * dry;
-    let rocky = lerp_rgb(
-        to_f64(C_ROCKY_HIGHLAND),
-        to_f64(C_SANDY_HIGHLAND),
-        warm_rock_weight,
-    );
-
-    if elev_above_sea < 0.55 {
-        // 0.32..0.55: blend up to 50% rocky.
-        let t = (elev_above_sea - 0.32) / 0.23;
-        lerp_rgb(base, rocky, t * 0.5)
+    if temp >= 0.6 && humidity < 0.35 {
+        to_f64(C_SANDY_HIGHLAND)
     } else {
-        // 0.55+: keep going toward stone gray, but cap so biome tint shows.
-        let mid = lerp_rgb(base, rocky, 0.5);
-        let t = ((elev_above_sea - 0.55) / 0.25).clamp(0.0, 1.0);
-        // Blend mid toward stone, but only up to ~0.6 to keep biome tint.
-        lerp_rgb(mid, to_f64(C_STONE), t * 0.6)
+        to_f64(C_ROCKY_HIGHLAND)
     }
 }
 
-/// Snow cap: only on cold-ish high terrain. More snow with higher elev and
-/// colder temp.
+/// Snow cap on cold high terrain — threshold replace. Snow physically
+/// requires moisture as well as cold + elevation; dry mountains stay
+/// rocky. Without the humidity gate, dense-atmo desert worlds (where the
+/// climate floor clamps lapse-cooled pixels into the cold band but humidity
+/// is heavily depressed by hyd-0 + continentality) would blanket the
+/// poles in white snow even though there's no moisture to fall.
 fn apply_snow_overlay(
     base: (f64, f64, f64),
     elev_above_sea: f64,
     temp: f64,
+    humidity: f64,
 ) -> (f64, f64, f64) {
-    if temp >= 0.5 || elev_above_sea <= 0.5 {
-        return base;
+    if temp < 0.5 && elev_above_sea > 0.5 && humidity > 0.40 {
+        to_f64(C_SNOW)
+    } else {
+        base
     }
-    let elev_t = ((elev_above_sea - 0.5) / 0.3).clamp(0.0, 1.0);
-    let cold_t = ((0.5 - temp) / 0.32).clamp(0.0, 1.0);
-    let amt = (elev_t * cold_t).clamp(0.0, 1.0);
-    lerp_rgb(base, to_f64(C_SNOW), amt)
 }
 
 /// Adjust humidity by a tectonic rain-shadow term in roughly [-1, 1]
@@ -259,8 +261,17 @@ pub fn apply_hillshade(rgb: (u8, u8, u8), dx: f64, dy: f64) -> (u8, u8, u8) {
     const LZ: f64 = 0.7154;
 
     let dot = (nx * LX + ny * LY + nz * LZ).max(0.0);
-    // Ambient + diffuse, kept gentle so the underlying color still reads.
-    let shade = (0.65 + 0.55 * dot).clamp(0.40, 1.20);
+    // Ambient + diffuse * dot. Calibrated so a perfectly flat pixel
+    // (normal = (0, 0, 1) → dot = LZ) lands EXACTLY at shade = 1.0,
+    // i.e. the legend swatch's color comes through unmodified on
+    // genuinely flat terrain. Steeper sun-facing slopes go up to
+    // ~AMBIENT + DIFFUSE = 1.146; sun-away slopes drop to AMBIENT.
+    //
+    //   AMBIENT + DIFFUSE * LZ == 1.0
+    //   → AMBIENT = 1.0 - DIFFUSE * LZ = 1.0 - 0.55 * 0.7154 ≈ 0.6065
+    const AMBIENT: f64 = 0.6065;
+    const DIFFUSE: f64 = 0.55;
+    let shade = (AMBIENT + DIFFUSE * dot).clamp(0.40, 1.20);
 
     let r = (rgb.0 as f64 * shade).clamp(0.0, 255.0) as u8;
     let g = (rgb.1 as f64 * shade).clamp(0.0, 255.0) as u8;
@@ -309,7 +320,7 @@ mod tests {
         // very small), sea ice (cold + sub-shelf -> blends; skip here).
         let samples: &[(f64, f64, f64, (u8, u8, u8), &str)] = &[
             // Land — flat (no rocky overlay), warm enough (no snow).
-            (0.10, 0.10, 0.10, C_ICE_CAP, "ice cap"),
+            (0.10, 0.05, 0.10, C_ICE_CAP, "ice cap"),
             (0.10, 0.25, 0.10, C_TUNDRA, "tundra"),
             (0.10, 0.25, 0.50, C_TAIGA, "taiga"),
             (0.10, 0.45, 0.10, C_STEPPE, "steppe"),
