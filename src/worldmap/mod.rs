@@ -349,7 +349,7 @@ mod tests {
             .grid
             .faces
             .iter()
-            .flat_map(|f| f.unfolded_positions.iter().cloned().collect::<Vec<_>>())
+            .flat_map(|f| f.unfolded_positions.to_vec())
             .collect();
 
         let in_silhouette = |x: f64, y: f64| -> bool {

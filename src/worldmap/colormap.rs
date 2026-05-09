@@ -65,7 +65,8 @@ pub const C_SNOW: (u8, u8, u8) = (240, 244, 248);
 /// The audit test (`palette_audit`) validates every "pure-input" sample
 /// reaching `elevation_color` lands on one of these (within rounding) or
 /// on a documented LERP target above.
-pub const LEGEND_PALETTE: &[(u8, u8, u8)] = &[
+pub type Palette = (u8, u8, u8);
+pub const LEGEND_PALETTE: &[Palette] = &[
     C_DEEP_OCEAN,
     C_SHALLOW_OCEAN,
     C_SEA_ICE,
@@ -314,7 +315,7 @@ mod tests {
     fn palette_audit_pure_inputs_hit_legend() {
         // Sub-sea-level: deep ocean (depth >= shelf), shallow ocean (depth
         // very small), sea ice (cold + sub-shelf -> blends; skip here).
-        let samples: &[(f64, f64, f64, (u8, u8, u8), &str)] = &[
+        let samples: &[(f64, f64, f64, Palette, &str)] = &[
             // Land — flat (no rocky overlay), warm enough (no snow).
             (0.10, 0.05, 0.10, C_ICE_CAP, "ice cap"),
             (0.10, 0.25, 0.10, C_TUNDRA, "tundra"),
@@ -395,7 +396,7 @@ mod tests {
         let allowed: Vec<(u8, u8, u8)> = LEGEND_PALETTE
             .iter()
             .copied()
-            .chain([C_DESERT_RED, C_STONE].into_iter())
+            .chain([C_DESERT_RED, C_STONE])
             .collect();
 
         let envelope_sq: i64 = 64 * 64 * 3;

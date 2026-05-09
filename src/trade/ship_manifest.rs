@@ -383,9 +383,11 @@ mod tests {
 
     #[test]
     fn total_cargo_used_includes_passenger_cargo() {
-        let mut m = ShipManifest::default();
-        m.high_passengers = 2;
-        m.medium_passengers = 5;
+        let m = ShipManifest {
+            high_passengers: 2,
+            medium_passengers: 5,
+            ..ShipManifest::default()
+        };
         // 2 + 0.5 = 2.5 tons of pax cargo, no goods, no freight.
         let avail = AvailablePassengers::default();
         assert!((m.total_cargo_used_tons(&avail) - 2.5).abs() < 1e-9);
