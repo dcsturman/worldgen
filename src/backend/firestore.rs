@@ -21,17 +21,20 @@
 //! Database: `worldgen`
 //!
 //! ```text
-//! {session_id}/                  # Collection (e.g., "default" for shared state)
+//! {session_id}/                  # Collection, keyed by ship name
 //!   └── state/                   # Document containing the trade state
 //!       ├── version: u32         # Schema version for migrations
+//!       ├── ship: Ship           # Unified ship config: name, capacity,
+//!       │                        # crew, hardware, periodic costs, and
+//!       │                        # the Ship Broker / steward / leadership
+//!       │                        # skills. `ship.name` mirrors the
+//!       │                        # collection key.
 //!       ├── origin_world: World  # Origin world data
 //!       ├── dest_world: World?   # Optional destination world
 //!       ├── available_goods: AvailableGoodsTable
 //!       ├── available_passengers: AvailablePassengers?
 //!       ├── ship_manifest: ShipManifest
-//!       ├── buyer_broker_skill: i16
-//!       ├── seller_broker_skill: i16
-//!       ├── steward_skill: i16
+//!       ├── system_broker_skill: i16  # Planet-side counterparty broker
 //!       └── illegal_goods: bool
 //! ```
 //!

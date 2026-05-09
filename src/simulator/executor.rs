@@ -55,6 +55,7 @@ pub async fn run_simulation(
     let mut current_date = params.start_date;
     let mut days_since_payment: u32 = 0;
     let mut periods_paid: u32 = 0;
+    let mut total_mortgage_paid: i64 = 0;
     let mut went_negative = false;
     let mut returned_home = false;
     let mut completed_normally = true;
@@ -98,9 +99,11 @@ pub async fn run_simulation(
     loop {
         // (1) Periodic costs.
         while days_since_payment >= PERIOD_DAYS {
-            let maintenance = params.maintenance_per_period;
-            let salary = params.crew_salary_per_period;
-            budget -= maintenance + salary;
+            let maintenance = params.ship.maintenance_per_period;
+            let salary = params.ship.salary_per_period;
+            let mortgage = params.ship.mortgage_per_period;
+            budget -= maintenance + salary + mortgage;
+            total_mortgage_paid += mortgage;
             emit(
                 &mut on_step,
                 current_date,
@@ -109,6 +112,7 @@ pub async fn run_simulation(
                 Action::PayPeriodic {
                     maintenance,
                     salary,
+                    mortgage,
                     period_index: periods_paid,
                 },
             );
@@ -201,7 +205,7 @@ pub async fn run_simulation(
         .map_err(ExecutorError::Invariant)?;
         market.price_goods_to_buy(
             &current_world.get_trade_classes(),
-            params.broker_skill,
+            params.ship.broker_skill,
             PLANETARY_BROKER_SKILL,
         );
 
@@ -210,7 +214,7 @@ pub async fn run_simulation(
         manifest.trade_goods.price_goods_to_sell(
             Some(current_world.get_trade_classes()),
             PLANETARY_BROKER_SKILL,
-            params.broker_skill,
+            params.ship.broker_skill,
         );
         for good in manifest.trade_goods.goods.iter_mut() {
             if good.quantity <= 0 {
@@ -280,7 +284,7 @@ pub async fn run_simulation(
             .candidates_within(
                 &current_ref.sector,
                 (current_ref.hex_x, current_ref.hex_y),
-                params.jump,
+                params.ship.jump_rating as i32,
             )
             .await?;
         if candidates.is_empty() {
@@ -302,7 +306,7 @@ pub async fn run_simulation(
             current_date,
             start_date: params.start_date,
             target_date: params.target_completion_date,
-            jump: params.jump,
+            jump: params.ship.jump_rating as i32,
             fuel_cost_per_parsec: params.fuel_cost_per_parsec,
             history: &history,
         };
@@ -324,21 +328,63 @@ pub async fn run_simulation(
         };
         let next_ref = world_ref_for(&next.world, &current_ref.sector);
 
-        // (7) BUY phase: re-price the market for the chosen destination
-        // and pick the most-profit-per-ton lots that fit in budget+hold.
+        // (7) PAX FIRST: each passenger reserves a personal-cargo
+        // allotment (1 ton high, 0.1 medium, 0.01 basic, 0 low), so we
+        // can't size the buy/freight loadout until we know the pax mix.
+        let mut available_pax = AvailablePassengers::default();
+        available_pax.generate(
+            current_world.get_population(),
+            current_world.port,
+            current_world.travel_zone,
+            current_world.tech_level,
+            next.world.get_population(),
+            next.world.port,
+            next.world.travel_zone,
+            next.world.tech_level,
+            next.distance,
+            params.ship.steward_skill as i32,
+            params.ship.broker_skill as i32,
+        );
+        let (h, m, b, l) = pick_passengers(
+            params.ship.passenger_staterooms,
+            params.ship.low_berths,
+            &available_pax,
+        );
+        manifest.high_passengers = h;
+        manifest.medium_passengers = m;
+        manifest.basic_passengers = b;
+        manifest.low_passengers = l;
+        // Reserve passenger personal-cargo space, rounding up to the
+        // ton — pick_to_buy/pick_freight work in integer tons and we'd
+        // rather under-fill than overload.
+        let pax_cargo_tons = manifest.passenger_cargo_tons().ceil() as i32;
+        let cargo_after_pax = (params.ship.cargo_capacity - pax_cargo_tons).max(0);
+
+        // (8) BUY phase: re-price the market for the chosen destination
+        // and pick the most-profit-per-ton lots that fit in budget+hold
+        // (after passenger cargo is reserved).
         let next_classes = next.world.get_trade_classes();
         market.price_goods_to_sell(
             Some(next_classes.clone()),
             PLANETARY_BROKER_SKILL,
-            params.broker_skill,
+            params.ship.broker_skill,
         );
         let fuel_for_jump = (next.distance as i64) * params.fuel_cost_per_parsec;
-        // Keep some headroom for upcoming life-support costs. The exact
-        // pax mix is unknown until step (8); reserve a generous slack
-        // (worst-case staterooms + LS for a fully-booked ship).
+        // Keep some headroom for upcoming life-support costs. We now
+        // know the exact pax mix, but the reserve still hedges against
+        // the next leg's worst case.
         let pax_reserve = pax_reserve_estimate(&params);
         let buy_budget = (budget - fuel_for_jump - pax_reserve).max(0);
-        let buy_goods = pick_to_buy(&market, params.cargo_capacity, buy_budget);
+        // Goods that won't beat the freight rate at this distance aren't
+        // worth the hold space — filling that ton with freight would pay
+        // more reliably. Use the freight Cr/ton as a per-ton profit floor.
+        let freight_floor = ShipManifest::freight_rate_per_ton(next.distance);
+        let buy_goods = pick_to_buy(
+            &market,
+            cargo_after_pax,
+            buy_budget,
+            freight_floor,
+        );
         for g in &buy_goods {
             // Apply purchase cost to budget *now* so each Buy step reflects
             // the cash outflow.
@@ -358,32 +404,12 @@ pub async fn run_simulation(
             );
         }
 
-        // (8) FREIGHT + PAX.
-        let mut available_pax = AvailablePassengers::default();
-        available_pax.generate(
-            current_world.get_population(),
-            current_world.port,
-            current_world.travel_zone,
-            current_world.tech_level,
-            next.world.get_population(),
-            next.world.port,
-            next.world.travel_zone,
-            next.world.tech_level,
-            next.distance,
-            params.steward_skill as i32,
-            params.broker_skill as i32,
-        );
-
+        // (9) FREIGHT: fill remaining hold (after pax cargo + bought goods).
         let total_buy_tons: i32 = buy_goods.iter().map(|g| g.transacted).sum();
-        let cargo_remaining = (params.cargo_capacity - total_buy_tons).max(0);
+        let cargo_remaining = (cargo_after_pax - total_buy_tons).max(0);
         let (chosen_lots, freight_tons) =
             pick_freight(&available_pax.freight_lots, cargo_remaining);
         manifest.freight_lot_indices = chosen_lots;
-        let (h, m, b, l) = pick_passengers(params.staterooms, params.low_berths, &available_pax);
-        manifest.high_passengers = h;
-        manifest.medium_passengers = m;
-        manifest.basic_passengers = b;
-        manifest.low_passengers = l;
         let pax_revenue_pending = manifest.passenger_revenue(next.distance) as i64;
         let freight_revenue_pending =
             manifest.freight_revenue(next.distance, &available_pax) as i64;
@@ -416,9 +442,10 @@ pub async fn run_simulation(
             );
         }
 
-        // (9) Pay life support.
+        // (10) Pay life support.
         let (sr_cost, ls_cost, low_cost) = economy::passenger_costs(h, m, b, l);
-        budget -= sr_cost + ls_cost + low_cost;
+        let crew_cost = params.ship.crew_life_support_per_jump();
+        budget -= sr_cost + ls_cost + low_cost + crew_cost;
         emit(
             &mut on_step,
             current_date,
@@ -428,6 +455,7 @@ pub async fn run_simulation(
                 stateroom_cost: sr_cost,
                 ls_cost,
                 low_cost,
+                crew_cost,
             },
         );
         if budget < 0 && !went_negative {
@@ -467,7 +495,7 @@ pub async fn run_simulation(
             break;
         }
 
-        // (10) Pay fuel.
+        // (11) Pay fuel.
         budget -= fuel_for_jump;
         let from_ref = current_ref.clone();
         emit(
@@ -482,7 +510,7 @@ pub async fn run_simulation(
             },
         );
 
-        // (11) process_trades — mutates the manifest (sells transacted
+        // (12) process_trades — mutates the manifest (sells transacted
         // goods, adds buy_goods, clears pax/freight) and accumulates a
         // settlement delta on `manifest.profit`. We *don't* use that delta
         // for the budget; the goods part is already applied via the per-
@@ -505,7 +533,7 @@ pub async fn run_simulation(
             );
         }
 
-        // (12) Advance state to the new world; bump time.
+        // (13) Advance state to the new world; bump time.
         history.insert(0, current_ref.clone());
         if history.len() > 8 {
             history.truncate(8);
@@ -518,7 +546,7 @@ pub async fn run_simulation(
         jumps_taken += 1;
         total_parsecs_jumped += next.distance.max(0) as u32;
 
-        // (13) Emit the Arrive at the new world.
+        // (14) Emit the Arrive at the new world.
         emit(
             &mut on_step,
             current_date,
@@ -537,9 +565,15 @@ pub async fn run_simulation(
     }
 
     // === final tally =====================================================
+    // Crew profit share is computed on the gross *before* mortgage. We
+    // add the mortgage back in to get the pre-mortgage gross, take the
+    // crew's cut, and then leave the owner bearing the mortgage cost
+    // alone. (Equivalent to: temporarily refund the mortgage, split,
+    // then re-deduct it from the owner.)
     let gross = budget - params.starting_budget;
-    let crew = if gross > 0 {
-        (gross as f64 * params.crew_profit_share as f64).round() as i64
+    let gross_excl_mortgage = gross + total_mortgage_paid;
+    let crew = if gross_excl_mortgage > 0 {
+        (gross_excl_mortgage as f64 * params.crew_profit_share as f64).round() as i64
     } else {
         0
     };
@@ -587,7 +621,7 @@ fn run_incident_roll(
     let zone_mod_v = zone_mod_value(zone);
     let avoidance_law_mod_v = avoidance_law_mod_value(law);
     let avoidance_modifier_total = avoidance_modifier(port, zone, law, is_foreign);
-    let leadership = params.leadership_skill;
+    let leadership = params.ship.leadership_skill;
     let avoidance_total = avoidance_roll + leadership as i32 + avoidance_modifier_total;
 
     let avoided =
@@ -618,7 +652,7 @@ fn run_incident_roll(
 
     if table_total <= 4 {
         // Piracy.
-        let weapons = params.weapons;
+        let weapons = params.ship.weapons;
         let cargo_loss_pct = (roll_2d6() - weapons as i32).clamp(0, 10) * 10;
         let total_tons: i32 = manifest.trade_goods.goods.iter().map(|g| g.quantity).sum();
         let target_tons = total_tons * cargo_loss_pct / 100;
@@ -626,8 +660,8 @@ fn run_incident_roll(
         let (cargo_lost_breakdown, buy_cost_sunk) =
             pirate_cargo(&mut manifest.trade_goods, target_tons, &mut rng);
         let cargo_lost_tons: i32 = cargo_lost_breakdown.iter().map(|(_, q)| q).sum();
-        let credits_lost = (roll_2d6() - params.leadership_skill as i32).max(0) as i64
-            * params.maintenance_per_period;
+        let credits_lost = (roll_2d6() - params.ship.leadership_skill as i32).max(0) as i64
+            * params.ship.maintenance_per_period;
         let weeks_lost = roll_1d6() as u32;
         *budget -= credits_lost;
         emit(
@@ -655,8 +689,8 @@ fn run_incident_roll(
     } else if table_total <= 6 {
         // Trade Scam.
         let credits_lost =
-            (roll_2d6() - params.broker_skill as i32).max(0) as i64 * TRADE_SCAM_CR_PER_STEP;
-        let weeks_lost = (roll_1d3() - params.leadership_skill as i32).max(0) as u32;
+            (roll_2d6() - params.ship.broker_skill as i32).max(0) as i64 * TRADE_SCAM_CR_PER_STEP;
+        let weeks_lost = (roll_1d3() - params.ship.leadership_skill as i32).max(0) as u32;
         *budget -= credits_lost;
         emit(
             on_step,
@@ -671,7 +705,7 @@ fn run_incident_roll(
                 table_roll,
                 table_modifier_total,
                 table_total,
-                broker: params.broker_skill,
+                broker: params.ship.broker_skill,
                 credits_lost,
                 weeks_lost,
             },
@@ -679,7 +713,7 @@ fn run_incident_roll(
         weeks_lost
     } else if table_total == 7 {
         // Crew loss.
-        let weeks_lost = ((roll_2d6() / 2) - params.leadership_skill as i32).max(0) as u32;
+        let weeks_lost = ((roll_2d6() / 2) - params.ship.leadership_skill as i32).max(0) as u32;
         emit(
             on_step,
             current_date,
@@ -821,22 +855,30 @@ fn worldref_same_hex(a: &WorldRef, b: &WorldRef) -> bool {
 /// might owe this turn, used to reserve budget headroom while picking
 /// goods to buy. Conservative: assumes a fully-booked ship.
 fn pax_reserve_estimate(params: &SimulationParams) -> i64 {
-    // Worst case: every stateroom is high passage, every low berth is full.
-    let high = params.staterooms.max(0);
-    let low = params.low_berths.max(0);
+    // Worst case: every passenger stateroom is high passage, every low berth is full.
+    let high = params.ship.passenger_staterooms.max(0);
+    let low = params.ship.low_berths.max(0);
     let (sr, ls, low_cost) = economy::passenger_costs(high, 0, 0, low);
-    sr + ls + low_cost
+    let crew = params.ship.crew_life_support_per_jump();
+    sr + ls + low_cost + crew
 }
 
 /// Greedy buy planner. Eligible goods are those with a positive
-/// `sell_price` and a profit per ton (`sell_price - buy_cost`). We sort
-/// by profit-per-ton descending and consume the lots in order while we
-/// have hold capacity and credits to spend.
+/// `sell_price` and a profit per ton (`sell_price - buy_cost`) that
+/// beats the per-ton freight rate at the upcoming jump distance — if a
+/// good would earn less than freight per ton we'd rather fill that
+/// space with freight. We sort by profit-per-ton descending and consume
+/// the lots in order while we have hold capacity and credits to spend.
 ///
 /// The returned vector contains *clones* of the chosen market entries
 /// with `transacted` set to the tons we want to buy and ready to be
 /// passed to `ShipManifest::process_trades` as the buy list.
-fn pick_to_buy(market: &AvailableGoodsTable, cargo_capacity: i32, buy_budget: i64) -> Vec<Good> {
+fn pick_to_buy(
+    market: &AvailableGoodsTable,
+    cargo_capacity: i32,
+    buy_budget: i64,
+    freight_floor: i32,
+) -> Vec<Good> {
     if cargo_capacity <= 0 || buy_budget <= 0 {
         return Vec::new();
     }
@@ -849,8 +891,11 @@ fn pick_to_buy(market: &AvailableGoodsTable, cargo_capacity: i32, buy_budget: i6
             if sell <= g.buy_cost || g.quantity <= 0 || g.buy_cost <= 0 {
                 return None;
             }
-            let profit_per_ton = (sell - g.buy_cost) as f64;
-            Some((profit_per_ton, g))
+            let profit_per_ton = sell - g.buy_cost;
+            if profit_per_ton <= freight_floor {
+                return None;
+            }
+            Some((profit_per_ton as f64, g))
         })
         .collect();
     scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
@@ -931,6 +976,7 @@ fn pick_passengers(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::trade::Ship;
     use crate::trade::ZoneClassification;
 
     fn dummy_home() -> WorldRef {
@@ -958,16 +1004,22 @@ mod tests {
     #[test]
     fn pax_reserve_estimate_is_finite() {
         let params = SimulationParams {
-            broker_skill: 0,
-            steward_skill: 0,
-            leadership_skill: 0,
-            weapons: 0,
-            cargo_capacity: 100,
-            staterooms: 6,
-            low_berths: 4,
-            jump: 2,
-            maintenance_per_period: 0,
-            crew_salary_per_period: 0,
+            ship: Ship {
+                name: "Test".into(),
+                broker_skill: 0,
+                steward_skill: 0,
+                leadership_skill: 0,
+                weapons: 0,
+                cargo_capacity: 100,
+                crew_staterooms: 4,
+                passenger_staterooms: 6,
+                low_berths: 4,
+                crew_size: 4,
+                jump_rating: 2,
+                mortgage_per_period: 0,
+                maintenance_per_period: 0,
+                salary_per_period: 0,
+            },
             fuel_cost_per_parsec: 0,
             crew_profit_share: 0.0,
             starting_budget: 0,
@@ -1033,16 +1085,22 @@ mod tests {
             .is_test(true)
             .try_init();
         let params = SimulationParams {
-            broker_skill: 2,
-            steward_skill: 1,
-            leadership_skill: 1,
-            weapons: 2,
-            cargo_capacity: 80,
-            staterooms: 6,
-            low_berths: 4,
-            jump: 2,
-            maintenance_per_period: 30_000,
-            crew_salary_per_period: 12_000,
+            ship: Ship {
+                name: "Test".into(),
+                broker_skill: 2,
+                steward_skill: 1,
+                leadership_skill: 1,
+                weapons: 2,
+                cargo_capacity: 80,
+                crew_staterooms: 4,
+                passenger_staterooms: 6,
+                low_berths: 4,
+                crew_size: 4,
+                jump_rating: 2,
+                mortgage_per_period: 0,
+                maintenance_per_period: 30_000,
+                salary_per_period: 12_000,
+            },
             fuel_cost_per_parsec: 5_000,
             crew_profit_share: 0.1,
             starting_budget: 1_000_000,
@@ -1086,16 +1144,22 @@ mod tests {
             .is_test(true)
             .try_init();
         let params = SimulationParams {
-            broker_skill: 0,
-            steward_skill: 0,
-            leadership_skill: 0,
-            weapons: 0,
-            cargo_capacity: 20,
-            staterooms: 1,
-            low_berths: 0,
-            jump: 1,
-            maintenance_per_period: 30_000,
-            crew_salary_per_period: 12_000,
+            ship: Ship {
+                name: "Test".into(),
+                broker_skill: 0,
+                steward_skill: 0,
+                leadership_skill: 0,
+                weapons: 0,
+                cargo_capacity: 20,
+                crew_staterooms: 1,
+                passenger_staterooms: 1,
+                low_berths: 0,
+                crew_size: 1,
+                jump_rating: 1,
+                mortgage_per_period: 0,
+                maintenance_per_period: 30_000,
+                salary_per_period: 12_000,
+            },
             fuel_cost_per_parsec: 5_000,
             crew_profit_share: 0.0,
             starting_budget: 50_000,

@@ -88,8 +88,8 @@ async fn handle_ws(
         params.home_world.name,
         params.home_world.sector,
         params.home_world.uwp,
-        params.jump,
-        params.cargo_capacity
+        params.ship.jump_rating,
+        params.ship.cargo_capacity
     );
 
     // Bridge: executor task pushes steps over an mpsc channel; this

@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::trade::Ship;
 use crate::trade::ZoneClassification;
 
 /// Imperial date: day in `0..=364` plus year. Day `365` wraps to
@@ -78,35 +79,21 @@ pub struct WorldRef {
 }
 
 /// Inputs to the simulation, supplied by the client.
+///
+/// Ship-shaped configuration (capacity, crew, hardware, periodic costs) is
+/// carried inside the embedded [`Ship`] — the same record the trade
+/// computer uses. Per-voyage state (budget, dates, home world,
+/// fuel-per-parsec, etc.) lives directly on this struct.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimulationParams {
-    /// Player-side broker skill, applied on both buy and sell sides. The
-    /// counterparty (the planet's broker) is treated as a constant
-    /// `economy::PLANETARY_BROKER_SKILL`.
-    pub broker_skill: i16,
-    /// Steward skill (affects passenger recruitment).
-    pub steward_skill: i16,
-    /// Captain's leadership skill. Reduces incident likelihood and
-    /// shortens crew-loss / trade-scam layovers. Form caps input at 5;
-    /// runtime accepts any non-negative value.
-    pub leadership_skill: i16,
-    /// Number of weapon turrets aboard, `0..=24`. Counterweights piracy
-    /// cargo loss.
-    pub weapons: i16,
+    /// The ship configuration: capacity, crew skills, hardware, and
+    /// periodic costs. Mortgage from this `Ship` is paid alongside
+    /// maintenance and salary but excluded from the crew profit-share
+    /// calculation at the end of the voyage (the crew share is computed
+    /// on the gross *before* mortgage, then mortgage is subtracted from
+    /// the owner's take).
+    pub ship: Ship,
 
-    /// Cargo capacity in tons.
-    pub cargo_capacity: i32,
-    /// Number of staterooms (passenger + crew accommodations).
-    pub staterooms: i32,
-    /// Number of low berths.
-    pub low_berths: i32,
-    /// Ship's jump capability in parsecs.
-    pub jump: i32,
-
-    /// Maintenance cost in credits per 28-day period.
-    pub maintenance_per_period: i64,
-    /// Crew salary cost in credits per 28-day period.
-    pub crew_salary_per_period: i64,
     /// Fuel cost in credits per parsec jumped.
     pub fuel_cost_per_parsec: i64,
     /// Fraction of profit shared with the crew, in `0.0..=1.0`.
@@ -221,6 +208,8 @@ pub enum Action {
         ls_cost: i64,
         /// Low-berth life-support cost.
         low_cost: i64,
+        /// Crew stateroom + per-crewmember life support.
+        crew_cost: i64,
     },
     /// Jumped to the next world.
     Jump {
@@ -231,12 +220,14 @@ pub enum Action {
         /// Fuel cost paid for the jump.
         fuel_cost: i64,
     },
-    /// Paid the periodic maintenance + crew salary tick.
+    /// Paid the periodic maintenance + crew salary + mortgage tick.
     PayPeriodic {
         /// Maintenance paid this tick.
         maintenance: i64,
         /// Crew salary paid this tick.
         salary: i64,
+        /// Mortgage paid this tick.
+        mortgage: i64,
         /// 0-based index of which 28-day period this is.
         period_index: u32,
     },

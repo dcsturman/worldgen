@@ -34,17 +34,25 @@ type ClientId = u64;
 /// Sender half of a channel for sending messages to a specific client
 type ClientSender = mpsc::UnboundedSender<Message>;
 
+/// Per-connection bookkeeping. The ship name is None until the client
+/// sends a SelectShip command — until that happens we don't know which
+/// session their state-updates apply to and we drop them.
+struct ClientInfo {
+    sender: ClientSender,
+    ship: Option<String>,
+}
+
 /// Shared state containing all connected clients
-type Clients = Arc<RwLock<HashMap<ClientId, ClientSender>>>;
+type Clients = Arc<RwLock<HashMap<ClientId, ClientInfo>>>;
 
 /// Database wrapped in Arc for sharing across tasks
 type SharedDb = Arc<Option<FirestoreDb>>;
 
-/// Current trade state wrapped in Arc for sharing across tasks
-type SharedState = Arc<RwLock<Option<TradeState>>>;
-
-/// Default session ID for shared state (all users see the same state)
-pub const DEFAULT_SESSION: &str = "default";
+/// In-memory cache of the latest trade state per ship name. Keyed by the
+/// ship name the client sends with SelectShip — same key used in
+/// Firestore. Lets the recalculate logic compare against the previous
+/// value to detect what changed without round-tripping to Firestore.
+type SharedStates = Arc<RwLock<HashMap<String, TradeState>>>;
 
 /// The trade state server that manages WebSocket connections and state broadcasting
 pub struct TradeServer {
@@ -56,8 +64,9 @@ pub struct TradeServer {
     next_client_id: Arc<RwLock<ClientId>>,
     /// Firestore database connection (None if running in debug mode without Firestore)
     db: SharedDb,
-    /// Current trade state (used to detect changes and recalculate)
-    current_state: SharedState,
+    /// Per-ship cached trade state (used to detect changes and recalculate).
+    /// Each entry corresponds to a `ship_name` selected by some client.
+    states: SharedStates,
 }
 
 impl TradeServer {
@@ -81,7 +90,7 @@ impl TradeServer {
             clients: Arc::new(RwLock::new(HashMap::new())),
             next_client_id: Arc::new(RwLock::new(0)),
             db: Arc::new(db),
-            current_state: Arc::new(RwLock::new(None)),
+            states: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -102,11 +111,11 @@ impl TradeServer {
             let clients = self.clients.clone();
             let next_id = self.next_client_id.clone();
             let db = self.db.clone();
-            let current_state = self.current_state.clone();
+            let states = self.states.clone();
 
             tokio::spawn(async move {
                 if let Err(e) =
-                    handle_connection(stream, addr, clients, next_id, db, current_state).await
+                    handle_connection(stream, addr, clients, next_id, db, states).await
                 {
                     log::error!("Error handling connection from {}: {}", addr, e);
                 }
@@ -116,17 +125,18 @@ impl TradeServer {
         Ok(())
     }
 
-    /// Broadcasts a TradeState update to all connected clients
+    /// Broadcasts a TradeState update to clients viewing the named ship.
     ///
     /// # Arguments
     ///
-    /// * `state` - The TradeState to broadcast to all clients
+    /// * `ship` - Ship name whose viewers should receive this update
+    /// * `state` - The TradeState to broadcast
     ///
     /// # Returns
     ///
     /// The number of clients the message was successfully queued for
-    pub async fn update_clients(&self, state: &TradeState) -> usize {
-        broadcast_to_clients(&self.clients, state, None).await
+    pub async fn update_clients(&self, ship: &str, state: &TradeState) -> usize {
+        broadcast_to_ship(&self.clients, ship, state).await
     }
 
     /// Returns the number of currently connected clients
@@ -148,7 +158,7 @@ impl TradeServer {
             self.clients.clone(),
             self.next_client_id.clone(),
             self.db.clone(),
-            self.current_state.clone(),
+            self.states.clone(),
         )
         .await
     }
@@ -161,21 +171,27 @@ async fn handle_connection(
     clients: Clients,
     next_id: Arc<RwLock<ClientId>>,
     db: SharedDb,
-    current_state: SharedState,
+    states: SharedStates,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let ws_stream = tokio_tungstenite::accept_async(stream).await?;
     log::info!("WebSocket connection established: {}", addr);
-    handle_post_handshake(ws_stream, addr, clients, next_id, db, current_state).await
+    handle_post_handshake(ws_stream, addr, clients, next_id, db, states).await
 }
 
 /// Handles a single WebSocket connection whose handshake is already done.
+///
+/// On connect we don't send any state — the client must first send a
+/// SelectShip command naming the ship session it wants to sync. This is
+/// the multi-tenant entry point: each ship name maps to its own
+/// Firestore document, and broadcasts only reach clients viewing the
+/// same ship.
 async fn handle_post_handshake(
     ws_stream: WebSocketStream<TcpStream>,
     addr: SocketAddr,
     clients: Clients,
     next_id: Arc<RwLock<ClientId>>,
     db: SharedDb,
-    current_state: SharedState,
+    states: SharedStates,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 
@@ -190,87 +206,19 @@ async fn handle_post_handshake(
     // Create a channel for sending messages to this client
     let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
 
-    // Register the client
+    // Register the client with no ship selected yet.
     {
         let mut clients_guard = clients.write().await;
-        clients_guard.insert(client_id, tx.clone());
+        clients_guard.insert(
+            client_id,
+            ClientInfo {
+                sender: tx.clone(),
+                ship: None,
+            },
+        );
     }
 
     log::info!("Client {} connected from {}", client_id, addr);
-
-    // Load the current state from Firestore and send it to the new client
-    // Also update the shared current_state if we loaded from Firestore
-    match get_trade_state(&db, DEFAULT_SESSION).await {
-        Ok(state) => {
-            // Update the shared current state
-            {
-                let mut state_guard = current_state.write().await;
-                *state_guard = Some(state.clone());
-            }
-            match serde_json::to_string(&state) {
-                Ok(json) => {
-                    if tx.send(Message::Text(json.into())).is_ok() {
-                        log::info!("Sent initial state to client {}", client_id);
-                    } else {
-                        log::warn!("Failed to queue initial state for client {}", client_id);
-                    }
-                }
-                Err(e) => {
-                    log::error!(
-                        "Failed to serialize initial state for client {}: {}",
-                        client_id,
-                        e
-                    );
-                }
-            }
-        }
-        Err(FirestoreError::SchemaError(e)) => {
-            // Schema mismatch - use default state and overwrite the old document
-            log::warn!(
-                "Schema mismatch detected: {}. Using default state and overwriting old document.",
-                e
-            );
-            let default_state = TradeState::default();
-            if let Err(save_err) = save_trade_state(&db, DEFAULT_SESSION, &default_state).await {
-                log::error!(
-                    "Failed to save default state after schema error: {}",
-                    save_err
-                );
-            }
-            // Update the shared current state
-            {
-                let mut state_guard = current_state.write().await;
-                *state_guard = Some(default_state.clone());
-            }
-            // Send the default state to the client
-            match serde_json::to_string(&default_state) {
-                Ok(json) => {
-                    if tx.send(Message::Text(json.into())).is_ok() {
-                        log::info!(
-                            "Sent default state to client {} after schema migration",
-                            client_id
-                        );
-                    } else {
-                        log::warn!("Failed to queue default state for client {}", client_id);
-                    }
-                }
-                Err(e) => {
-                    log::error!(
-                        "Failed to serialize default state for client {}: {}",
-                        client_id,
-                        e
-                    );
-                }
-            }
-        }
-        Err(e) => {
-            log::error!(
-                "Failed to load initial state for client {}: {}",
-                client_id,
-                e
-            );
-        }
-    }
 
     // Spawn a task to forward messages from the channel to the WebSocket
     let send_task = tokio::spawn(async move {
@@ -288,10 +236,23 @@ async fn handle_post_handshake(
                 // Try to parse as a ServerMessage (which can be either a state update or a command)
                 match serde_json::from_str::<ServerMessage>(&text) {
                     Ok(ServerMessage::StateUpdate(trade_state)) => {
-                        handle_trade_state_update(trade_state, &db, &clients, &current_state).await;
+                        handle_trade_state_update(
+                            client_id,
+                            trade_state,
+                            &db,
+                            &clients,
+                            &states,
+                        )
+                        .await;
                     }
                     Ok(ServerMessage::Command(ServerCommand::Regenerate)) => {
-                        handle_regenerate_command(&db, &clients, &current_state).await;
+                        handle_regenerate_command(client_id, &db, &clients, &states).await;
+                    }
+                    Ok(ServerMessage::Command(ServerCommand::SelectShip { ship_name })) => {
+                        handle_select_ship(client_id, ship_name, &db, &clients, &states).await;
+                    }
+                    Ok(ServerMessage::Command(ServerCommand::ApplyMonthlyExpenses)) => {
+                        handle_apply_monthly_expenses(client_id, &db, &clients, &states).await;
                     }
                     Err(e) => {
                         log::warn!(
@@ -336,22 +297,10 @@ async fn handle_post_handshake(
     Ok(())
 }
 
-/// Broadcasts a TradeState to all connected clients, optionally excluding one client
-///
-/// # Arguments
-///
-/// * `clients` - The shared clients map
-/// * `state` - The TradeState to broadcast
-/// * `exclude_client` - Optional client ID to exclude from the broadcast
-///
-/// # Returns
-///
-/// The number of clients the message was successfully queued for
-async fn broadcast_to_clients(
-    clients: &Clients,
-    state: &TradeState,
-    exclude_client: Option<ClientId>,
-) -> usize {
+/// Broadcasts a TradeState to every client currently viewing `ship`.
+/// Clients on other ships (or with no ship selected) are not notified —
+/// each ship's session is isolated.
+async fn broadcast_to_ship(clients: &Clients, ship: &str, state: &TradeState) -> usize {
     let json = match serde_json::to_string(state) {
         Ok(j) => j,
         Err(e) => {
@@ -364,21 +313,130 @@ async fn broadcast_to_clients(
     let clients_guard = clients.read().await;
     let mut sent_count = 0;
 
-    for (client_id, sender) in clients_guard.iter() {
-        // Skip the excluded client (the one who sent the update)
-        if exclude_client == Some(*client_id) {
+    for (client_id, info) in clients_guard.iter() {
+        if info.ship.as_deref() != Some(ship) {
             continue;
         }
-
-        if sender.send(message.clone()).is_ok() {
+        if info.sender.send(message.clone()).is_ok() {
             sent_count += 1;
         } else {
             log::warn!("Failed to queue message for client {}", client_id);
         }
     }
 
-    log::debug!("Broadcast TradeState to {} clients", sent_count);
+    log::debug!("Broadcast TradeState to {} clients on ship {}", sent_count, ship);
     sent_count
+}
+
+/// Look up the ship name a given client has selected. Returns None if
+/// the client hasn't sent SelectShip yet.
+async fn current_ship_of(clients: &Clients, client_id: ClientId) -> Option<String> {
+    clients
+        .read()
+        .await
+        .get(&client_id)
+        .and_then(|info| info.ship.clone())
+}
+
+/// Handle a client's SelectShip command. Switches this client's session
+/// to `ship_name`, loads that ship's persisted state from the in-memory
+/// cache (or Firestore on first use), and sends it back to just this
+/// client.
+async fn handle_select_ship(
+    client_id: ClientId,
+    ship_name: String,
+    db: &SharedDb,
+    clients: &Clients,
+    states: &SharedStates,
+) {
+    let ship_name = ship_name.trim().to_string();
+    if ship_name.is_empty() {
+        log::warn!("Client {} sent SelectShip with empty name", client_id);
+        return;
+    }
+
+    // Update this client's ship
+    {
+        let mut clients_guard = clients.write().await;
+        if let Some(info) = clients_guard.get_mut(&client_id) {
+            info.ship = Some(ship_name.clone());
+        } else {
+            log::warn!(
+                "Client {} sent SelectShip but is no longer registered",
+                client_id
+            );
+            return;
+        }
+    }
+
+    // Try the cache first. On miss, load from Firestore (which itself
+    // creates a default document if none exists).
+    let cached = {
+        let states_guard = states.read().await;
+        states_guard.get(&ship_name).cloned()
+    };
+
+    let mut state = match cached {
+        Some(s) => s,
+        None => match get_trade_state(db, &ship_name).await {
+            Ok(s) => s,
+            Err(FirestoreError::SchemaError(e)) => {
+                // Document exists but in an old/incompatible shape. Reset
+                // it to a default so this ship can move forward.
+                log::warn!(
+                    "Schema mismatch for ship {}: {}. Resetting to default.",
+                    ship_name,
+                    e
+                );
+                let mut default_state = TradeState::default();
+                default_state.ship.name = ship_name.clone();
+                if let Err(save_err) = save_trade_state(db, &ship_name, &default_state).await {
+                    log::error!(
+                        "Failed to save default state for ship {} after schema error: {}",
+                        ship_name,
+                        save_err
+                    );
+                }
+                default_state
+            }
+            Err(e) => {
+                log::error!("Failed to load state for ship {}: {}", ship_name, e);
+                return;
+            }
+        },
+    };
+
+    // Make `state.ship.name` the canonical record of the session key.
+    // Newly-created states pick it up here; legacy documents that were
+    // persisted before `Ship` carried a name field also get backfilled
+    // (best-effort: we don't try to preserve other legacy fields).
+    if state.ship.name != ship_name {
+        state.ship.name = ship_name.clone();
+    }
+    states.write().await.insert(ship_name.clone(), state.clone());
+
+    // Send the state to just this client.
+    let clients_guard = clients.read().await;
+    if let Some(info) = clients_guard.get(&client_id) {
+        match serde_json::to_string(&state) {
+            Ok(json) => {
+                if info.sender.send(Message::Text(json.into())).is_ok() {
+                    log::info!(
+                        "Sent state for ship {} to client {}",
+                        ship_name,
+                        client_id
+                    );
+                } else {
+                    log::warn!(
+                        "Failed to queue state for ship {} to client {}",
+                        ship_name,
+                        client_id
+                    );
+                }
+            }
+            Err(e) => log::error!("Failed to serialize state for ship {}: {}", ship_name, e),
+        }
+    }
 }
 
 /// Handler for processing received TradeState updates
@@ -390,49 +448,64 @@ async fn broadcast_to_clients(
 /// - Ship manifest prices when destination or skills change
 /// - Available passengers when worlds, distance, or skills change
 ///
-/// After recalculation, the updated state is broadcast to ALL clients (including sender).
-///
-/// # Arguments
-///
-/// * `state` - The received TradeState from a client
-/// * `db` - The Firestore database connection
-/// * `clients` - The shared clients map
-/// * `current_state` - The shared current state for detecting changes
+/// After recalculation, the updated state is broadcast to all clients
+/// viewing the same ship.
 async fn handle_trade_state_update(
+    client_id: ClientId,
     mut state: TradeState,
     db: &SharedDb,
     clients: &Clients,
-    current_state: &SharedState,
+    states: &SharedStates,
 ) {
-    // Get the previous state to detect what changed
+    let ship_name = match current_ship_of(clients, client_id).await {
+        Some(s) => s,
+        None => {
+            log::warn!(
+                "Client {} sent StateUpdate before SelectShip — dropping",
+                client_id
+            );
+            return;
+        }
+    };
+
+    // Get the previous state for this ship to detect what changed
     let prev_state = {
-        let state_guard = current_state.read().await;
-        state_guard.clone()
+        let states_guard = states.read().await;
+        states_guard.get(&ship_name).cloned()
     };
 
     // Detect what changed and recalculate as needed
     let recalculated = recalculate_trade_state(&mut state, prev_state.as_ref());
 
     if recalculated {
-        log::info!("Server recalculated trade state due to world/skill changes");
+        log::info!(
+            "Server recalculated trade state for ship {} due to world/skill changes",
+            ship_name
+        );
     }
 
-    // Update the shared current state
+    // Update the per-ship cache
     {
-        let mut state_guard = current_state.write().await;
-        *state_guard = Some(state.clone());
+        let mut states_guard = states.write().await;
+        states_guard.insert(ship_name.clone(), state.clone());
     }
 
-    // Save to Firestore
-    if let Err(e) = save_trade_state(db, DEFAULT_SESSION, &state).await {
-        log::error!("Failed to save trade state to Firestore: {}", e);
+    // Save to Firestore under this ship's session
+    if let Err(e) = save_trade_state(db, &ship_name, &state).await {
+        log::error!(
+            "Failed to save trade state for ship {} to Firestore: {}",
+            ship_name,
+            e
+        );
         // Continue to broadcast even if Firestore save fails
     }
 
-    // Broadcast to ALL clients (server is authoritative, so sender gets the recalculated state too)
-    let sent_count = broadcast_to_clients(clients, &state, None).await;
+    // Broadcast to all clients on this ship (sender included — server is
+    // authoritative and may have rewritten fields they need to see).
+    let sent_count = broadcast_to_ship(clients, &ship_name, &state).await;
     log::info!(
-        "Broadcast trade state update to {} clients (recalculated: {})",
+        "Broadcast trade state for ship {} to {} clients (recalculated: {})",
+        ship_name,
         sent_count,
         recalculated
     );
@@ -507,12 +580,16 @@ fn recalculate_trade_state(state: &mut TradeState, prev_state: Option<&TradeStat
                 || prev.dest_zone != state.dest_zone
         });
 
-    // Check if skills changed
+    // Check if skills changed.
+    //
+    // The Ship Broker skill (`ship.broker_skill`) and the steward skill
+    // (`ship.steward_skill`) live on the unified `Ship` config. Changing
+    // any other Ship field (capacity, hardware, periodic costs, …) also
+    // signals "skills_changed" — that's a slight over-trigger but keeps
+    // the diff trivially correct now that `Ship` derives `PartialEq`.
     let skills_changed = prev_state.is_none()
         || prev_state.is_some_and(|prev| {
-            prev.buyer_broker_skill != state.buyer_broker_skill
-                || prev.seller_broker_skill != state.seller_broker_skill
-                || prev.steward_skill != state.steward_skill
+            prev.ship != state.ship || prev.system_broker_skill != state.system_broker_skill
         });
 
     // Regenerate trade table if origin world changed
@@ -537,32 +614,45 @@ fn recalculate_trade_state(state: &mut TradeState, prev_state: Option<&TradeStat
         }
     }
 
-    // Reprice goods if origin changed, dest changed, or skills changed
+    // Reprice goods if origin changed, dest changed, or skills changed.
+    //
+    // Mapping from the new `Ship` / `system_broker_skill` shape to the
+    // `(buyer_broker_skill, supplier_broker_skill)` arguments expected
+    // by `available_goods` and `ship_manifest`:
+    //   - At origin, the player buys: buyer = ship.broker_skill,
+    //     supplier = system_broker_skill.
+    //   - At origin, the "sell back" preview reverses sides: buyer =
+    //     system_broker_skill, supplier = ship.broker_skill.
+    //   - The manifest pricing here mirrors the legacy call exactly
+    //     (player as buyer, system as supplier) so existing behaviour
+    //     is preserved.
     if (origin_changed || dest_changed || skills_changed)
         && let Some(world) = origin_world.as_ref()
     {
-        // Price goods to buy at origin
+        // Price goods to buy at origin (player buying from system).
         state.available_goods.price_goods_to_buy(
             &world.get_trade_classes(),
-            state.buyer_broker_skill,
-            state.seller_broker_skill,
+            state.ship.broker_skill,
+            state.system_broker_skill,
         );
 
-        // Price goods to sell at the current world.
+        // Price goods to sell at the current world (system buying from
+        // ship — sides reversed).
         state.available_goods.price_goods_to_sell(
             Some(world.get_trade_classes()),
-            state.seller_broker_skill,
-            state.buyer_broker_skill,
+            state.system_broker_skill,
+            state.ship.broker_skill,
         );
 
         state.available_goods.sort_by_discount();
         log::info!("Repriced available goods");
 
-        // Reprice ship manifest goods
+        // Reprice ship manifest goods (preserves legacy argument order:
+        // player-as-buyer, system-as-supplier).
         state.ship_manifest.price_goods(
             &origin_world,
-            state.buyer_broker_skill,
-            state.seller_broker_skill,
+            state.ship.broker_skill,
+            state.system_broker_skill,
         );
         recalculated = true;
         log::info!("Repriced ship manifest");
@@ -583,8 +673,8 @@ fn recalculate_trade_state(state: &mut TradeState, prev_state: Option<&TradeStat
                 dest.travel_zone,
                 dest.tech_level,
                 distance,
-                state.steward_skill as i32,
-                state.buyer_broker_skill as i32,
+                state.ship.steward_skill as i32,
+                state.ship.broker_skill as i32,
             );
 
             state.available_passengers = Some(passengers);
@@ -617,11 +707,31 @@ fn recalculate_trade_state(state: &mut TradeState, prev_state: Option<&TradeStat
 ///
 /// This re-rolls all random values (prices, passengers) without changing the state.
 /// It's used when the user clicks the "Generate" button to get different random values.
-async fn handle_regenerate_command(db: &SharedDb, clients: &Clients, current_state: &SharedState) {
-    let mut state = match current_state.write().await.take() {
+/// Scoped to the requesting client's currently-selected ship.
+async fn handle_regenerate_command(
+    client_id: ClientId,
+    db: &SharedDb,
+    clients: &Clients,
+    states: &SharedStates,
+) {
+    let ship_name = match current_ship_of(clients, client_id).await {
         Some(s) => s,
         None => {
-            log::warn!("Received regenerate command but no state available");
+            log::warn!(
+                "Client {} sent Regenerate before SelectShip — dropping",
+                client_id
+            );
+            return;
+        }
+    };
+
+    let mut state = match states.write().await.remove(&ship_name) {
+        Some(s) => s,
+        None => {
+            log::warn!(
+                "Received regenerate for ship {} but no state cached",
+                ship_name
+            );
             return;
         }
     };
@@ -647,14 +757,14 @@ async fn handle_regenerate_command(db: &SharedDb, clients: &Clients, current_sta
                 new_table.reset_die_rolls();
                 new_table.price_goods_to_buy(
                     &world.get_trade_classes(),
-                    state.buyer_broker_skill,
-                    state.seller_broker_skill,
+                    state.ship.broker_skill,
+                    state.system_broker_skill,
                 );
                 let dest_trade_classes = dest_world.as_ref().map(|w| w.get_trade_classes());
                 new_table.price_goods_to_sell(
                     dest_trade_classes,
-                    state.seller_broker_skill,
-                    state.buyer_broker_skill,
+                    state.system_broker_skill,
+                    state.ship.broker_skill,
                 );
                 new_table.sort_by_discount();
                 state.available_goods = new_table;
@@ -671,8 +781,8 @@ async fn handle_regenerate_command(db: &SharedDb, clients: &Clients, current_sta
         state.ship_manifest.reset_die_rolls();
         state.ship_manifest.price_goods(
             &origin_world,
-            state.buyer_broker_skill,
-            state.seller_broker_skill,
+            state.ship.broker_skill,
+            state.system_broker_skill,
         );
         log::info!("Regenerated manifest prices");
     }
@@ -695,20 +805,89 @@ async fn handle_regenerate_command(db: &SharedDb, clients: &Clients, current_sta
             dest.travel_zone,
             dest.tech_level,
             distance,
-            state.steward_skill as i32,
-            state.buyer_broker_skill as i32,
+            state.ship.steward_skill as i32,
+            state.ship.broker_skill as i32,
         );
 
         state.available_passengers = Some(passengers);
         log::info!("Regenerated passengers with fresh die rolls");
     }
 
-    // Save updated state to Firestore
-    if let Err(e) = save_trade_state(db, DEFAULT_SESSION, &state).await {
-        log::error!("Failed to save regenerated state to Firestore: {}", e);
+    // Save updated state to Firestore under this ship's session
+    if let Err(e) = save_trade_state(db, &ship_name, &state).await {
+        log::error!(
+            "Failed to save regenerated state for ship {} to Firestore: {}",
+            ship_name,
+            e
+        );
     }
 
-    // Update shared state and broadcast to all clients
-    *current_state.write().await = Some(state.clone());
-    broadcast_to_clients(clients, &state, None).await;
+    // Update cache and broadcast to clients viewing this ship
+    states.write().await.insert(ship_name.clone(), state.clone());
+    broadcast_to_ship(clients, &ship_name, &state).await;
+}
+
+/// Handles an `ApplyMonthlyExpenses` command from a client.
+///
+/// Subtracts one 28-day period of fixed expenses (mortgage +
+/// maintenance + salary, computed by [`crate::trade::Ship::monthly_expenses`])
+/// from the current ship's manifest profit, persists the updated state,
+/// and broadcasts it to every client viewing this ship. Mirrors the
+/// structure of `handle_regenerate_command` so the cache / Firestore /
+/// broadcast invariants stay aligned across both commands.
+///
+/// If the requesting client hasn't selected a ship yet, or no cached
+/// state exists for the selected ship, the command is dropped with a
+/// warning — there's no sensible default `Ship` to compute expenses
+/// against until at least one StateUpdate or SelectShip has been
+/// processed.
+async fn handle_apply_monthly_expenses(
+    client_id: ClientId,
+    db: &SharedDb,
+    clients: &Clients,
+    states: &SharedStates,
+) {
+    let ship_name = match current_ship_of(clients, client_id).await {
+        Some(s) => s,
+        None => {
+            log::warn!(
+                "Client {} sent ApplyMonthlyExpenses before SelectShip — dropping",
+                client_id
+            );
+            return;
+        }
+    };
+
+    let mut state = match states.write().await.remove(&ship_name) {
+        Some(s) => s,
+        None => {
+            log::warn!(
+                "Received ApplyMonthlyExpenses for ship {} but no state cached",
+                ship_name
+            );
+            return;
+        }
+    };
+
+    let expenses = state.ship.monthly_expenses();
+    state.ship_manifest.profit -= expenses;
+    log::info!(
+        "Applied monthly expenses for ship {}: -{} credits (new profit: {})",
+        ship_name,
+        expenses,
+        state.ship_manifest.profit
+    );
+
+    // Save updated state to Firestore under this ship's session
+    if let Err(e) = save_trade_state(db, &ship_name, &state).await {
+        log::error!(
+            "Failed to save state for ship {} after applying monthly expenses: {}",
+            ship_name,
+            e
+        );
+    }
+
+    // Update cache and broadcast to clients viewing this ship
+    states.write().await.insert(ship_name.clone(), state.clone());
+    broadcast_to_ship(clients, &ship_name, &state).await;
 }

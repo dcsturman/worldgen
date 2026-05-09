@@ -38,20 +38,22 @@ pub fn WorldMap() -> impl IntoView {
     // regen on change (typing was painful — every keystroke kicked off a
     // 1-2s WASM compute). The user edits both freely, then clicks the
     // Regenerate button, which bumps this counter and triggers a single
-    // render with the current input values. Cold start fires once so the
-    // default UWP/seed shows up without requiring a click.
+    // render with the current input values. We deliberately do NOT fire
+    // on cold start: showing up to a 1-2s WASM compute the moment a user
+    // navigates to the page is jarring — they should pay that cost only
+    // when they actually ask for a map.
     let regen = RwSignal::new(0u32);
     let pending_render = RwSignal::new(false);
 
     let svg_html = RwSignal::new(String::new());
 
-    // Watch the regen counter. Fires once on cold start (prev=None), then
-    // every time the Regenerate button bumps it. Reads uwp/seed at fire
-    // time so editing the inputs doesn't trigger a render — only the
-    // button does.
+    // Watch the regen counter. Skips the cold-start tick (prev=None) so
+    // landing on the page is instant; fires only when the Regenerate
+    // button bumps the counter. Reads uwp/seed at fire time so editing
+    // the inputs doesn't trigger a render — only the button does.
     Effect::new(move |prev: Option<u32>| {
         let cur = regen.get();
-        let changed = prev.is_none() || prev != Some(cur);
+        let changed = matches!(prev, Some(p) if p != cur);
         if changed {
             let uwp_str = uwp.get_untracked();
             let seed_v = seed.get_untracked();

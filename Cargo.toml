@@ -7,7 +7,7 @@ license = "MIT"
 [features]
 default = []
 # Backend feature enables native-only server code (tokio, firestore, etc.)
-backend = ["dep:tokio", "dep:tokio-tungstenite", "dep:futures-util", "dep:firestore", "dep:env_logger", "dep:rustls", "dep:reqwest", "dep:sentry"]
+backend = ["dep:tokio", "dep:tokio-tungstenite", "dep:futures-util", "dep:firestore", "dep:env_logger", "dep:rustls", "dep:reqwest", "dep:sentry", "dep:jsonwebtoken"]
 # Local development mode: connect directly to backend on 8081 instead of through nginx
 local-dev = []
 
@@ -54,6 +54,12 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 # with `Connection reset by peer` during the TLS handshake.
 reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls", "native-tls-vendored"], optional = true }
 sentry = { version = "0.34", default-features = false, features = ["backtrace", "contexts", "panic", "reqwest", "rustls"], optional = true }
+# jsonwebtoken 10.x requires an explicit crypto backend feature — neither is
+# the default, and gcloud-sdk pulls jsonwebtoken without picking one, so
+# Firestore auth panics at the first JWT signing attempt without this. We
+# pick `rust_crypto` (pure-Rust) over `aws_lc_rs` to avoid pulling in
+# another native C crypto lib alongside ring (which we already use via rustls).
+jsonwebtoken = { version = "10", default-features = false, features = ["use_pem", "rust_crypto"], optional = true }
 
 [[bin]]
 name = "main"

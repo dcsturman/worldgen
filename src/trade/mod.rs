@@ -8,8 +8,11 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 pub mod available_goods;
 pub mod available_passengers;
+pub mod ship;
 pub mod ship_manifest;
 pub mod table;
+
+pub use ship::Ship;
 
 /// Trade classifications that determine a world's economic characteristics
 ///

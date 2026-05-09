@@ -5,13 +5,10 @@
 //! low-berth life support, and the simulation's day-counter constants
 //! used by the periodic-maintenance/salary tick.
 
-/// Cost in credits to rent a stateroom for one jump.
-///
-/// One stateroom houses either one high-passage passenger, one
-/// medium-passage passenger, or two basic-passage passengers. A single
-/// basic-passage passenger still occupies (and pays for) a full
-/// stateroom on its own.
-pub const STATEROOM_COST: i64 = 1_000;
+// `STATEROOM_COST` and `CREW_LIFE_SUPPORT_PER_MEMBER` are defined on
+// `crate::trade::ship` (the unified Ship struct's home) and re-exported
+// here so existing simulator imports keep working.
+pub use crate::trade::ship::{CREW_LIFE_SUPPORT_PER_MEMBER, STATEROOM_COST};
 
 /// Per-jump life-support cost for a high-passage passenger.
 pub const HIGH_LIFE_SUPPORT: i64 = 2_000;
@@ -80,6 +77,11 @@ pub fn staterooms_used(high: i32, medium: i32, basic: i32) -> i32 {
     let basic_rooms = if basic > 0 { (basic + 1) / 2 } else { 0 };
     high + medium + basic_rooms
 }
+
+// Per-jump crew life-support is now `Ship::crew_life_support_per_jump()`
+// on `crate::trade::ship::Ship`. The standalone `crew_cost(crew_staterooms,
+// crew_size)` helper that used to live here was redundant once the unified
+// `Ship` struct landed; all callers have been migrated.
 
 /// Return `(stateroom_cost, life_support_cost, low_berth_cost)` for a
 /// turn carrying `high`/`medium`/`basic`/`low` passengers.

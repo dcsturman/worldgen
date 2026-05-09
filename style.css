@@ -223,6 +223,34 @@ input[type="text"] {
   width: 130px;
 }
 
+.ship-name-input {
+  width: 180px;
+}
+
+.ship-name-current {
+  align-self: center;
+  font-style: italic;
+  color: #555;
+}
+
+/* Visually dim everything below the ship-name picker until a ship is
+   selected. fieldset[disabled] also disables form controls inside,
+   which is the actual functional gate. */
+.trade-fieldset[disabled] {
+  opacity: 0.5;
+}
+
+.ship-name-prompt {
+  margin: 0.5em 0 1em 0;
+  padding: 0.75em 1em;
+  border-left: 3px solid #4a90c2;
+  background: #f4f8fb;
+  color: #2c3e50;
+  font-family: "Space Mono", sans-serif;
+  font-size: 0.95em;
+  max-width: 60em;
+}
+
 .world-text-entry {
   flex-direction: column;
 }

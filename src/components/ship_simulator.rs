@@ -21,6 +21,7 @@ use crate::simulator::protocol::{ClientMessage, ServerMessage};
 use crate::simulator::types::{
     Action, Date, SimulationParams, SimulationResult, SimulationStep, WorldRef,
 };
+use crate::trade::Ship;
 use crate::trade::ZoneClassification;
 
 /// High-level run state of the simulator.
@@ -214,12 +215,14 @@ pub fn ShipSimulator() -> impl IntoView {
     // ---- Form state ----
     // Ship
     let cargo_capacity = RwSignal::new(80i32);
-    let staterooms = RwSignal::new(4i32);
+    let crew_staterooms = RwSignal::new(4i32);
+    let passenger_staterooms = RwSignal::new(4i32);
     let low_berths = RwSignal::new(4i32);
-    let jump = RwSignal::new(2i32);
+    let jump_rating = RwSignal::new(2i16);
     let fuel_cost_per_parsec = RwSignal::new(500i64);
     let maintenance_per_period = RwSignal::new(5_000i64);
-    let crew_salary_per_period = RwSignal::new(12_000i64);
+    let salary_per_period = RwSignal::new(12_000i64);
+    let mortgage_per_period = RwSignal::new(0i64);
     let crew_profit_share = RwSignal::new(0.10f32);
 
     // Crew
@@ -227,6 +230,7 @@ pub fn ShipSimulator() -> impl IntoView {
     let steward_skill = RwSignal::new(1i16);
     let leadership_skill = RwSignal::new(1i16);
     let weapons = RwSignal::new(2i16);
+    let crew_size = RwSignal::new(4i32);
 
     // Voyage
     let starting_budget = RwSignal::new(500_000i64);
@@ -254,12 +258,15 @@ pub fn ShipSimulator() -> impl IntoView {
     // ---- Validation ----
     let is_valid = Memo::new(move |_| {
         cargo_capacity.get() > 0
-            && staterooms.get() >= 0
+            && crew_staterooms.get() >= 0
+            && passenger_staterooms.get() >= 0
             && low_berths.get() >= 0
-            && jump.get() > 0
+            && crew_size.get() >= 0
+            && jump_rating.get() > 0
             && fuel_cost_per_parsec.get() >= 0
             && maintenance_per_period.get() >= 0
-            && crew_salary_per_period.get() >= 0
+            && salary_per_period.get() >= 0
+            && mortgage_per_period.get() >= 0
             && (0.0..=1.0).contains(&crew_profit_share.get())
             && (-3..=5).contains(&broker_skill.get())
             && (-3..=5).contains(&steward_skill.get())
@@ -291,16 +298,25 @@ pub fn ShipSimulator() -> impl IntoView {
         run_state.set(RunState::Connecting);
 
         let params = SimulationParams {
-            broker_skill: broker_skill.get_untracked(),
-            steward_skill: steward_skill.get_untracked(),
-            leadership_skill: leadership_skill.get_untracked(),
-            weapons: weapons.get_untracked(),
-            cargo_capacity: cargo_capacity.get_untracked(),
-            staterooms: staterooms.get_untracked(),
-            low_berths: low_berths.get_untracked(),
-            jump: jump.get_untracked(),
-            maintenance_per_period: maintenance_per_period.get_untracked(),
-            crew_salary_per_period: crew_salary_per_period.get_untracked(),
+            ship: Ship {
+                // Form has no ship-name input yet; default to empty.
+                // The simulator runs against `home_world` for identity, not
+                // `ship.name`, so this is safe.
+                name: String::new(),
+                broker_skill: broker_skill.get_untracked(),
+                steward_skill: steward_skill.get_untracked(),
+                leadership_skill: leadership_skill.get_untracked(),
+                weapons: weapons.get_untracked(),
+                cargo_capacity: cargo_capacity.get_untracked(),
+                passenger_staterooms: passenger_staterooms.get_untracked(),
+                low_berths: low_berths.get_untracked(),
+                crew_staterooms: crew_staterooms.get_untracked(),
+                crew_size: crew_size.get_untracked(),
+                jump_rating: jump_rating.get_untracked(),
+                mortgage_per_period: mortgage_per_period.get_untracked(),
+                maintenance_per_period: maintenance_per_period.get_untracked(),
+                salary_per_period: salary_per_period.get_untracked(),
+            },
             fuel_cost_per_parsec: fuel_cost_per_parsec.get_untracked(),
             crew_profit_share: crew_profit_share.get_untracked(),
             starting_budget: starting_budget.get_untracked(),
@@ -339,17 +355,20 @@ pub fn ShipSimulator() -> impl IntoView {
 
             <SimForm
                 cargo_capacity=cargo_capacity
-                staterooms=staterooms
+                crew_staterooms=crew_staterooms
+                passenger_staterooms=passenger_staterooms
                 low_berths=low_berths
-                jump=jump
+                jump_rating=jump_rating
                 fuel_cost_per_parsec=fuel_cost_per_parsec
                 maintenance_per_period=maintenance_per_period
-                crew_salary_per_period=crew_salary_per_period
+                salary_per_period=salary_per_period
+                mortgage_per_period=mortgage_per_period
                 crew_profit_share=crew_profit_share
                 broker_skill=broker_skill
                 steward_skill=steward_skill
                 leadership_skill=leadership_skill
                 weapons=weapons
+                crew_size=crew_size
                 starting_budget=starting_budget
                 start_date_text=start_date_text
                 target_date_text=target_date_text
@@ -386,9 +405,9 @@ pub fn ShipSimulator() -> impl IntoView {
                 </span>
             </div>
 
-            <SimLog steps=steps home_name=home_name />
-
             <SimSummary run_state=run_state />
+
+            <SimLog steps=steps home_name=home_name />
 
             <RouteMap run_state=run_state steps=steps />
         </div>
@@ -400,17 +419,20 @@ pub fn ShipSimulator() -> impl IntoView {
 #[allow(clippy::too_many_arguments)]
 fn SimForm(
     cargo_capacity: RwSignal<i32>,
-    staterooms: RwSignal<i32>,
+    crew_staterooms: RwSignal<i32>,
+    passenger_staterooms: RwSignal<i32>,
     low_berths: RwSignal<i32>,
-    jump: RwSignal<i32>,
+    jump_rating: RwSignal<i16>,
     fuel_cost_per_parsec: RwSignal<i64>,
     maintenance_per_period: RwSignal<i64>,
-    crew_salary_per_period: RwSignal<i64>,
+    salary_per_period: RwSignal<i64>,
+    mortgage_per_period: RwSignal<i64>,
     crew_profit_share: RwSignal<f32>,
     broker_skill: RwSignal<i16>,
     steward_skill: RwSignal<i16>,
     leadership_skill: RwSignal<i16>,
     weapons: RwSignal<i16>,
+    crew_size: RwSignal<i32>,
     starting_budget: RwSignal<i64>,
     start_date_text: RwSignal<String>,
     target_date_text: RwSignal<String>,
@@ -438,14 +460,26 @@ fn SimForm(
                             }
                         />
                     </label>
-                    <label>"Staterooms"
+                    <label>"Crew staterooms"
                         <input
                             type="number"
                             min="0"
-                            prop:value=move || staterooms.get()
+                            prop:value=move || crew_staterooms.get()
                             on:input=move |ev| {
                                 if let Ok(v) = event_target_value(&ev).parse::<i32>() {
-                                    staterooms.set(v);
+                                    crew_staterooms.set(v);
+                                }
+                            }
+                        />
+                    </label>
+                    <label>"Passenger staterooms"
+                        <input
+                            type="number"
+                            min="0"
+                            prop:value=move || passenger_staterooms.get()
+                            on:input=move |ev| {
+                                if let Ok(v) = event_target_value(&ev).parse::<i32>() {
+                                    passenger_staterooms.set(v);
                                 }
                             }
                         />
@@ -466,10 +500,10 @@ fn SimForm(
                         <input
                             type="number"
                             min="1"
-                            prop:value=move || jump.get()
+                            prop:value=move || jump_rating.get()
                             on:input=move |ev| {
-                                if let Ok(v) = event_target_value(&ev).parse::<i32>() {
-                                    jump.set(v);
+                                if let Ok(v) = event_target_value(&ev).parse::<i16>() {
+                                    jump_rating.set(v);
                                 }
                             }
                         />
@@ -502,15 +536,27 @@ fn SimForm(
                         <input
                             type="number"
                             min="0"
-                            prop:value=move || crew_salary_per_period.get()
+                            prop:value=move || salary_per_period.get()
                             on:input=move |ev| {
                                 if let Ok(v) = event_target_value(&ev).parse::<i64>() {
-                                    crew_salary_per_period.set(v);
+                                    salary_per_period.set(v);
                                 }
                             }
                         />
                     </label>
-                    <label>"Crew profit share (0.0 - 1.0)"
+                    <label>"Mortgage / period (Cr)"
+                        <input
+                            type="number"
+                            min="0"
+                            prop:value=move || mortgage_per_period.get()
+                            on:input=move |ev| {
+                                if let Ok(v) = event_target_value(&ev).parse::<i64>() {
+                                    mortgage_per_period.set(v);
+                                }
+                            }
+                        />
+                    </label>
+                    <label>"Crew profit share"
                         <input
                             type="text"
                             inputmode="decimal"
@@ -531,7 +577,7 @@ fn SimForm(
             <fieldset class="sim-fieldset">
                 <legend>"Crew"</legend>
                 <div class="sim-grid">
-                    <label>"Broker"
+                    <label>"Ship Broker skill"
                         <input
                             type="number"
                             min="-3"
@@ -583,6 +629,18 @@ fn SimForm(
                             }
                         />
                     </label>
+                    <label>"Crew size"
+                        <input
+                            type="number"
+                            min="0"
+                            prop:value=move || crew_size.get()
+                            on:input=move |ev| {
+                                if let Ok(v) = event_target_value(&ev).parse::<i32>() {
+                                    crew_size.set(v);
+                                }
+                            }
+                        />
+                    </label>
                 </div>
             </fieldset>
 
@@ -608,7 +666,7 @@ fn SimForm(
                             bind:value=start_date_text
                         />
                     </label>
-                    <label>"Target completion (DDD-YYYY)"
+                    <label>"Target completion"
                         <input
                             type="text"
                             class:sim-invalid=move || parse_ddd_yyyy(&target_date_text.read()).is_none()
@@ -748,9 +806,10 @@ fn describe_action(action: &Action, home_port: &str) -> Option<(String, &'static
             stateroom_cost,
             ls_cost,
             low_cost,
+            crew_cost,
         } => (
             format!(
-                "Paid life support: staterooms {stateroom_cost} + LS {ls_cost} + low {low_cost}"
+                "Paid life support: staterooms {stateroom_cost} + LS {ls_cost} + low {low_cost} + crew {crew_cost}"
             ),
             "sim-action sim-action-ls",
         ),
@@ -765,10 +824,11 @@ fn describe_action(action: &Action, home_port: &str) -> Option<(String, &'static
         Action::PayPeriodic {
             maintenance,
             salary,
+            mortgage,
             period_index,
         } => (
             format!(
-                "Month {}: maintenance {maintenance} Cr + crew salary {salary} Cr",
+                "Month {}: maintenance {maintenance} Cr + crew salary {salary} Cr + mortgage {mortgage} Cr",
                 period_index + 1
             ),
             "sim-action sim-action-periodic",

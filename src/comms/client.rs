@@ -13,16 +13,38 @@ use web_sys::{CloseEvent, ErrorEvent, MessageEvent, WebSocket};
 
 use super::{ServerCommand, ServerMessage, TradeState};
 use crate::systems::world::World;
+use crate::trade::Ship;
 use crate::trade::ZoneClassification;
 use crate::trade::available_goods::AvailableGoodsTable;
 use crate::trade::available_passengers::AvailablePassengers;
 use crate::trade::ship_manifest::ShipManifest;
 
-/// Holds the write signals for all trade state fields
+/// Write-side handles for every reactive field the WebSocket client
+/// pushes into when a new [`TradeState`] arrives from the server.
 ///
-/// Client sends: world name, UWP, coordinates, and zone
-/// Server sends back: World objects (generated from the above fields)
-/// This ensures the client and server always have the same World objects.
+/// ## Contract
+///
+/// `TradeSignals` is **write-only**. Every field is a [`WriteSignal`];
+/// the trade-computer component owns the matching read sides
+/// ([`ReadSignal`] / [`Memo`] / [`Signal`]) and registers these write
+/// halves with the [`Client`] via [`Client::register_signals`]. When a
+/// state update lands on the WebSocket, the client deserialises it into
+/// a [`TradeState`] and calls `set` on each of these signals; the
+/// component re-renders from the corresponding read sides.
+///
+/// ## Field shape
+///
+/// - World fields (`origin_*`, `dest_*`) split per attribute the client
+///   may want to bind individually. The client sends `name`, `uwp`,
+///   `coords`, `zone` to the server; the server fills the `*_world`
+///   fields and sends the populated [`World`] back.
+/// - `ship` is the unified [`Ship`] config — capacity, crew, hardware,
+///   ship-broker / steward / leadership skills, periodic costs.
+///   Carried as a single signal because every field is server-mirrored
+///   and the component splits it back out via memos on the read side.
+/// - `system_broker_skill` is the planet-side counterparty broker.
+///   Replaces the legacy `buyer_broker_skill` / `seller_broker_skill`
+///   pair (the player's broker is now `ship.broker_skill`).
 #[derive(Clone)]
 pub struct TradeSignals {
     pub origin_world_name: WriteSignal<String>,
@@ -38,9 +60,13 @@ pub struct TradeSignals {
     pub available_goods: WriteSignal<AvailableGoodsTable>,
     pub available_passengers: WriteSignal<Option<AvailablePassengers>>,
     pub ship_manifest: WriteSignal<ShipManifest>,
-    pub buyer_broker_skill: WriteSignal<i16>,
-    pub seller_broker_skill: WriteSignal<i16>,
-    pub steward_skill: WriteSignal<i16>,
+    /// Unified ship configuration (Ship Broker skill, steward skill,
+    /// capacity, crew, hardware, periodic costs). The component owns the
+    /// read side and may project individual sub-fields via memos.
+    pub ship: WriteSignal<Ship>,
+    /// Planet-side broker on the current trade leg. The Ship Broker
+    /// skill lives on `ship.broker_skill`, not here.
+    pub system_broker_skill: WriteSignal<i16>,
     pub illegal_goods: WriteSignal<bool>,
 }
 
@@ -56,6 +82,11 @@ pub struct Client {
     /// Whether we have received the initial state from the server
     /// This prevents sending default state before server has a chance to send us the real state
     received_initial_state: Rc<Cell<bool>>,
+    /// Currently-selected ship. The server scopes this connection's state
+    /// to the named ship's Firestore session. We hold it here so we can
+    /// re-send it if the WebSocket reconnects, and so `set_ship` can fire
+    /// before the WS has finished opening (it queues until `onopen`).
+    pending_ship: Rc<RefCell<Option<String>>>,
 }
 
 impl Client {
@@ -76,6 +107,7 @@ impl Client {
         let signals: Rc<RefCell<Option<TradeSignals>>> = Rc::new(RefCell::new(None));
         let last_received_state: Rc<RefCell<Option<TradeState>>> = Rc::new(RefCell::new(None));
         let received_initial_state: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+        let pending_ship: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
 
         // Set up message handler
         let signals_clone = signals.clone();
@@ -101,9 +133,28 @@ impl Client {
         ws.set_onerror(Some(onerror_callback.as_ref().unchecked_ref()));
         onerror_callback.forget();
 
-        // Set up open handler
+        // Set up open handler. If a ship name was queued before the socket
+        // finished opening (the common case — the component reads it from
+        // localStorage on mount, before the WS handshake completes), send
+        // the SelectShip command now so the server can hand us that ship's
+        // state.
+        let pending_ship_for_open = pending_ship.clone();
+        let ws_for_open = ws.clone();
         let onopen_callback = Closure::<dyn FnMut()>::new(move || {
             info!("WebSocket connection established");
+            if let Some(ship_name) = pending_ship_for_open.borrow().clone() {
+                let msg = ServerMessage::Command(ServerCommand::SelectShip { ship_name });
+                match serde_json::to_string(&msg) {
+                    Ok(json) => {
+                        if let Err(e) = ws_for_open.send_with_str(&json) {
+                            error!("Failed to send queued SelectShip on open: {:?}", e);
+                        } else {
+                            debug!("Sent queued SelectShip on connection open");
+                        }
+                    }
+                    Err(e) => error!("Failed to serialize queued SelectShip: {}", e),
+                }
+            }
         });
         ws.set_onopen(Some(onopen_callback.as_ref().unchecked_ref()));
         onopen_callback.forget();
@@ -124,7 +175,40 @@ impl Client {
             signals,
             last_received_state,
             received_initial_state,
+            pending_ship,
         })
+    }
+
+    /// Tell the server which ship's session this connection should sync.
+    ///
+    /// Resets the "received initial state" flag so the next StateUpdate
+    /// effect won't fire until the server's reply for the new ship has
+    /// arrived. If the WebSocket is already open we send immediately;
+    /// otherwise we hold the name and the `onopen` handler will send it.
+    /// Calling this with the same name as before is harmless — the server
+    /// just sends that ship's state again.
+    pub fn set_ship(&self, ship_name: String) {
+        *self.pending_ship.borrow_mut() = Some(ship_name.clone());
+        self.received_initial_state.set(false);
+        *self.last_received_state.borrow_mut() = None;
+
+        if !self.is_connected() {
+            // Will be sent by onopen when the socket finishes opening.
+            debug!("set_ship: socket not open yet, queued ship name");
+            return;
+        }
+
+        let msg = ServerMessage::Command(ServerCommand::SelectShip { ship_name });
+        match serde_json::to_string(&msg) {
+            Ok(json) => {
+                if let Err(e) = self.ws.send_with_str(&json) {
+                    error!("Failed to send SelectShip: {:?}", e);
+                } else {
+                    debug!("Sent SelectShip command to server");
+                }
+            }
+            Err(e) => error!("Failed to serialize SelectShip: {}", e),
+        }
     }
 
     /// Register signals with the client for receiving updates
@@ -174,6 +258,26 @@ impl Client {
         }
     }
 
+    /// Ask the server to subtract one 28-day period of fixed expenses
+    /// (mortgage + maintenance + salary) from the current ship's manifest
+    /// profit. The server applies the deduction, persists the new state,
+    /// and broadcasts it back to all clients on this ship.
+    pub fn send_apply_monthly_expenses(&self) {
+        let msg = ServerMessage::Command(ServerCommand::ApplyMonthlyExpenses);
+        match serde_json::to_string(&msg) {
+            Ok(json) => {
+                if let Err(e) = self.ws.send_with_str(&json) {
+                    error!("Failed to send apply_monthly_expenses command: {:?}", e);
+                } else {
+                    debug!("Sent apply_monthly_expenses command to server");
+                }
+            }
+            Err(e) => {
+                error!("Failed to serialize apply_monthly_expenses command: {}", e);
+            }
+        }
+    }
+
     /// Check if the WebSocket connection is open
     pub fn is_connected(&self) -> bool {
         self.ws.ready_state() == WebSocket::OPEN
@@ -213,7 +317,9 @@ impl Client {
 fn states_equal(a: &TradeState, b: &TradeState) -> bool {
     // Compare all fields except version
     // Note: We compare the client-sent fields (name, UWP, coords, zone) but NOT the World objects
-    // The World objects are generated by the server and we don't send them back to the server
+    // The World objects are generated by the server and we don't send them back to the server.
+    // `Ship` derives `PartialEq`, so a single `==` covers every ship-side
+    // field (Ship Broker skill, steward, capacity, hardware, costs, …).
     a.origin_world_name == b.origin_world_name
         && a.origin_uwp == b.origin_uwp
         && a.origin_coords == b.origin_coords
@@ -225,9 +331,8 @@ fn states_equal(a: &TradeState, b: &TradeState) -> bool {
         && a.available_goods == b.available_goods
         && a.available_passengers == b.available_passengers
         && a.ship_manifest == b.ship_manifest
-        && a.buyer_broker_skill == b.buyer_broker_skill
-        && a.seller_broker_skill == b.seller_broker_skill
-        && a.steward_skill == b.steward_skill
+        && a.ship == b.ship
+        && a.system_broker_skill == b.system_broker_skill
         && a.illegal_goods == b.illegal_goods
 }
 
@@ -275,9 +380,8 @@ fn handle_message(
     signals.available_goods.set(state.available_goods);
     signals.available_passengers.set(state.available_passengers);
     signals.ship_manifest.set(state.ship_manifest);
-    signals.buyer_broker_skill.set(state.buyer_broker_skill);
-    signals.seller_broker_skill.set(state.seller_broker_skill);
-    signals.steward_skill.set(state.steward_skill);
+    signals.ship.set(state.ship.clone());
+    signals.system_broker_skill.set(state.system_broker_skill);
     signals.illegal_goods.set(state.illegal_goods);
 
     info!("Trade state updated from server");

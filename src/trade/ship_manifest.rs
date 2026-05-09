@@ -60,6 +60,14 @@ const LOW_COST: [i32; 7] = [0, 700, 1300, 2200, 3900, 7200, 27000];
 /// Index 0 is unused, indices 1-6 represent jump distances 1-6
 const FREIGHT_COST: [i32; 7] = [0, 1000, 1600, 2600, 4400, 8500, 32000];
 
+/// Per-passenger cargo allotment in tons by class. High-passage gets a
+/// full ton of personal cargo; medium and basic get progressively less;
+/// low passengers in cold sleep carry nothing.
+pub const HIGH_PAX_CARGO_TONS: f64 = 1.0;
+pub const MEDIUM_PAX_CARGO_TONS: f64 = 0.1;
+pub const BASIC_PAX_CARGO_TONS: f64 = 0.01;
+pub const LOW_PAX_CARGO_TONS: f64 = 0.0;
+
 impl ShipManifest {
     /// Returns the total number of passengers in the manifest
     pub fn total_passengers_not_low(&self) -> i32 {
@@ -167,6 +175,31 @@ impl ShipManifest {
     ) -> i32 {
         let distance_index = distance.clamp(1, 6) as usize;
         FREIGHT_COST[distance_index] * self.total_freight_tons(available_passengers)
+    }
+
+    /// Per-ton freight rate at a given jump distance, in credits.
+    /// `distance` is clamped to `1..=6` to match the published table.
+    pub fn freight_rate_per_ton(distance: i32) -> i32 {
+        FREIGHT_COST[distance.clamp(1, 6) as usize]
+    }
+
+    /// Total tons of personal-cargo allotment owed to the passengers on
+    /// the manifest. Fractional because medium/basic passengers carry
+    /// 0.1 / 0.01 tons each.
+    pub fn passenger_cargo_tons(&self) -> f64 {
+        self.high_passengers as f64 * HIGH_PAX_CARGO_TONS
+            + self.medium_passengers as f64 * MEDIUM_PAX_CARGO_TONS
+            + self.basic_passengers as f64 * BASIC_PAX_CARGO_TONS
+            + self.low_passengers as f64 * LOW_PAX_CARGO_TONS
+    }
+
+    /// Total tons of cargo space consumed by the manifest:
+    /// trade goods + freight + passenger personal cargo. Returned as
+    /// `f64` because passenger cargo is fractional.
+    pub fn total_cargo_used_tons(&self, available_passengers: &AvailablePassengers) -> f64 {
+        self.trade_goods_tonnage() as f64
+            + self.total_freight_tons(available_passengers) as f64
+            + self.passenger_cargo_tons()
     }
 
     /// Adds or updates a trade good in the manifest
@@ -326,5 +359,35 @@ impl ShipManifest {
 
         // Reset passengers, freight, and drop the cost expended for future trades.
         self.reset_passengers_and_freight();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn passenger_cargo_tons_per_class() {
+        let mut m = ShipManifest::default();
+        assert_eq!(m.passenger_cargo_tons(), 0.0);
+        m.high_passengers = 3;
+        assert!((m.passenger_cargo_tons() - 3.0).abs() < 1e-9);
+        m.medium_passengers = 4;
+        assert!((m.passenger_cargo_tons() - 3.4).abs() < 1e-9);
+        m.basic_passengers = 5;
+        assert!((m.passenger_cargo_tons() - 3.45).abs() < 1e-9);
+        m.low_passengers = 10;
+        // Low passengers contribute zero.
+        assert!((m.passenger_cargo_tons() - 3.45).abs() < 1e-9);
+    }
+
+    #[test]
+    fn total_cargo_used_includes_passenger_cargo() {
+        let mut m = ShipManifest::default();
+        m.high_passengers = 2;
+        m.medium_passengers = 5;
+        // 2 + 0.5 = 2.5 tons of pax cargo, no goods, no freight.
+        let avail = AvailablePassengers::default();
+        assert!((m.total_cargo_used_tons(&avail) - 2.5).abs() < 1e-9);
     }
 }

@@ -5,6 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::systems::world::World;
+use crate::trade::Ship;
 use crate::trade::ZoneClassification;
 use crate::trade::available_goods::AvailableGoodsTable;
 use crate::trade::available_passengers::AvailablePassengers;
@@ -20,6 +21,12 @@ use crate::trade::ship_manifest::ShipManifest;
 pub struct TradeState {
     /// Version number for state compatibility
     pub version: u32,
+    /// Unified ship configuration (capacity, crew, hardware, periodic
+    /// costs, and the ship's broker / steward / leadership skills).
+    /// Server-authoritative once persisted to Firestore; clients edit
+    /// fields locally and the server echoes the merged state back.
+    /// `ship.name` is the canonical store for the ship's display name.
+    pub ship: Ship,
     /// Origin world name (sent by client)
     pub origin_world_name: String,
     /// Origin world UWP (9-character code, sent by client)
@@ -46,12 +53,18 @@ pub struct TradeState {
     pub available_passengers: Option<AvailablePassengers>,
     /// Current ship manifest (selected goods, passengers, freight)
     pub ship_manifest: ShipManifest,
-    /// Buyer's broker skill level
-    pub buyer_broker_skill: i16,
-    /// Seller's broker skill level
-    pub seller_broker_skill: i16,
-    /// Steward skill level (affects passenger recruitment)
-    pub steward_skill: i16,
+    /// Counterparty (planet-side) broker skill on the current trade leg.
+    ///
+    /// This is the **system's** broker — the broker on the world the
+    /// player is buying from or selling to — *not* a ship attribute. The
+    /// player's own broker (the Ship Broker skill) lives on
+    /// [`Ship::broker_skill`](crate::trade::Ship::broker_skill) inside
+    /// [`Self::ship`].
+    ///
+    /// Replaces the legacy `buyer_broker_skill` / `seller_broker_skill`
+    /// pair: the player side now comes from `ship.broker_skill`, and this
+    /// field carries the non-player side. Defaults to `0`.
+    pub system_broker_skill: i16,
     /// Whether illegal goods are allowed
     pub illegal_goods: bool,
 }
