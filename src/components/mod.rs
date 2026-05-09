@@ -117,10 +117,12 @@
 //! - Touch-friendly interactive elements
 //! - Scalable text and spacing
 
+pub mod help_tooltip;
 pub mod selector;
 pub mod ship_simulator;
 pub mod system_generator;
 pub mod system_view;
+pub mod tooltip_docs;
 pub mod trade_computer;
 pub mod traveller_map;
 pub mod world_list;

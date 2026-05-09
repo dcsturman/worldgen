@@ -14,6 +14,8 @@ use log::{error, info};
 use wasm_bindgen::prelude::*;
 use web_sys::{CloseEvent, ErrorEvent, MessageEvent, WebSocket};
 
+use crate::components::help_tooltip::HelpTooltip;
+use crate::components::tooltip_docs as docs;
 use crate::components::traveller_map::WorldSearch;
 use crate::simulator::economy::WEAPONS_MAX;
 use crate::simulator::map_render::{MapWaypoint, build_plain_link_url, build_route_map_data};
@@ -448,7 +450,11 @@ fn SimForm(
             <fieldset class="sim-fieldset">
                 <legend>"Ship"</legend>
                 <div class="sim-grid">
-                    <label>"Cargo capacity (tons)"
+                    <label>
+                        <span class="sim-label-row">
+                            "Cargo capacity (tons)"
+                            <HelpTooltip text=docs::CARGO_CAPACITY />
+                        </span>
                         <input
                             type="number"
                             min="1"
@@ -460,7 +466,11 @@ fn SimForm(
                             }
                         />
                     </label>
-                    <label>"Crew staterooms"
+                    <label>
+                        <span class="sim-label-row">
+                            "Crew staterooms"
+                            <HelpTooltip text=docs::CREW_STATEROOMS />
+                        </span>
                         <input
                             type="number"
                             min="0"
@@ -472,7 +482,11 @@ fn SimForm(
                             }
                         />
                     </label>
-                    <label>"Passenger staterooms"
+                    <label>
+                        <span class="sim-label-row">
+                            "Passenger staterooms"
+                            <HelpTooltip text=docs::PASSENGER_STATEROOMS />
+                        </span>
                         <input
                             type="number"
                             min="0"
@@ -484,7 +498,11 @@ fn SimForm(
                             }
                         />
                     </label>
-                    <label>"Low berths"
+                    <label>
+                        <span class="sim-label-row">
+                            "Low berths"
+                            <HelpTooltip text=docs::LOW_BERTHS />
+                        </span>
                         <input
                             type="number"
                             min="0"
@@ -496,7 +514,11 @@ fn SimForm(
                             }
                         />
                     </label>
-                    <label>"Jump (parsecs)"
+                    <label>
+                        <span class="sim-label-row">
+                            "Jump (parsecs)"
+                            <HelpTooltip text=docs::JUMP_RATING />
+                        </span>
                         <input
                             type="number"
                             min="1"
@@ -508,7 +530,11 @@ fn SimForm(
                             }
                         />
                     </label>
-                    <label>"Fuel cost per parsec (Cr)"
+                    <label>
+                        <span class="sim-label-row">
+                            "Fuel cost per parsec (Cr)"
+                            <HelpTooltip text=docs::FUEL_COST_PER_PARSEC />
+                        </span>
                         <input
                             type="number"
                             min="0"
@@ -520,7 +546,11 @@ fn SimForm(
                             }
                         />
                     </label>
-                    <label>"Maintenance / period (Cr)"
+                    <label>
+                        <span class="sim-label-row">
+                            "Maintenance / period (Cr)"
+                            <HelpTooltip text=docs::MAINTENANCE_PER_PERIOD />
+                        </span>
                         <input
                             type="number"
                             min="0"
@@ -532,7 +562,11 @@ fn SimForm(
                             }
                         />
                     </label>
-                    <label>"Crew salary / period (Cr)"
+                    <label>
+                        <span class="sim-label-row">
+                            "Crew salary / period (Cr)"
+                            <HelpTooltip text=docs::SALARY_PER_PERIOD />
+                        </span>
                         <input
                             type="number"
                             min="0"
@@ -544,7 +578,11 @@ fn SimForm(
                             }
                         />
                     </label>
-                    <label>"Mortgage / period (Cr)"
+                    <label>
+                        <span class="sim-label-row">
+                            "Mortgage / period (Cr)"
+                            <HelpTooltip text=docs::MORTGAGE_PER_PERIOD />
+                        </span>
                         <input
                             type="number"
                             min="0"
@@ -556,7 +594,11 @@ fn SimForm(
                             }
                         />
                     </label>
-                    <label>"Crew profit share"
+                    <label>
+                        <span class="sim-label-row">
+                            "Crew profit share"
+                            <HelpTooltip text=docs::CREW_PROFIT_SHARE />
+                        </span>
                         <input
                             type="text"
                             inputmode="decimal"
@@ -577,7 +619,11 @@ fn SimForm(
             <fieldset class="sim-fieldset">
                 <legend>"Crew"</legend>
                 <div class="sim-grid">
-                    <label>"Ship Broker skill"
+                    <label>
+                        <span class="sim-label-row">
+                            "Ship Broker skill"
+                            <HelpTooltip text=docs::BROKER_SKILL />
+                        </span>
                         <input
                             type="number"
                             min="-3"
@@ -590,7 +636,11 @@ fn SimForm(
                             }
                         />
                     </label>
-                    <label>"Steward skill"
+                    <label>
+                        <span class="sim-label-row">
+                            "Steward skill"
+                            <HelpTooltip text=docs::STEWARD_SKILL />
+                        </span>
                         <input
                             type="number"
                             min="-3"
@@ -603,7 +653,11 @@ fn SimForm(
                             }
                         />
                     </label>
-                    <label>"Leadership"
+                    <label>
+                        <span class="sim-label-row">
+                            "Leadership"
+                            <HelpTooltip text=docs::LEADERSHIP />
+                        </span>
                         <input
                             type="number"
                             min="0"
@@ -616,7 +670,11 @@ fn SimForm(
                             }
                         />
                     </label>
-                    <label>"Weapons"
+                    <label>
+                        <span class="sim-label-row">
+                            "Weapons"
+                            <HelpTooltip text=docs::WEAPONS />
+                        </span>
                         <input
                             type="number"
                             min="0"
@@ -629,7 +687,11 @@ fn SimForm(
                             }
                         />
                     </label>
-                    <label>"Crew size"
+                    <label>
+                        <span class="sim-label-row">
+                            "Crew size"
+                            <HelpTooltip text=docs::CREW_SIZE />
+                        </span>
                         <input
                             type="number"
                             min="0"
@@ -647,7 +709,11 @@ fn SimForm(
             <fieldset class="sim-fieldset">
                 <legend>"Voyage"</legend>
                 <div class="sim-grid">
-                    <label>"Starting budget (Cr)"
+                    <label>
+                        <span class="sim-label-row">
+                            "Starting budget (Cr)"
+                            <HelpTooltip text=docs::STARTING_BUDGET />
+                        </span>
                         <input
                             type="number"
                             min="0"
@@ -659,21 +725,33 @@ fn SimForm(
                             }
                         />
                     </label>
-                    <label>"Start date (DDD-YYYY)"
+                    <label>
+                        <span class="sim-label-row">
+                            "Start date (DDD-YYYY)"
+                            <HelpTooltip text=docs::START_DATE />
+                        </span>
                         <input
                             type="text"
                             class:sim-invalid=move || parse_ddd_yyyy(&start_date_text.read()).is_none()
                             bind:value=start_date_text
                         />
                     </label>
-                    <label>"Target completion"
+                    <label>
+                        <span class="sim-label-row">
+                            "Target completion"
+                            <HelpTooltip text=docs::TARGET_COMPLETION />
+                        </span>
                         <input
                             type="text"
                             class:sim-invalid=move || parse_ddd_yyyy(&target_date_text.read()).is_none()
                             bind:value=target_date_text
                         />
                     </label>
-                    <label>"Illegal goods"
+                    <label>
+                        <span class="sim-label-row">
+                            "Illegal goods"
+                            <HelpTooltip text=docs::ILLEGAL_GOODS />
+                        </span>
                         <input
                             type="checkbox"
                             prop:checked=move || illegal_goods.get()

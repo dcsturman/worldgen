@@ -151,6 +151,8 @@ use log::{debug, error, info};
 
 use crate::comms::TradeState;
 use crate::comms::client::{Client, TradeSignals};
+use crate::components::help_tooltip::HelpTooltip;
+use crate::components::tooltip_docs as docs;
 use crate::components::traveller_map::WorldSearch;
 use crate::systems::world::World;
 
@@ -497,6 +499,7 @@ pub fn Trade(
             <div class="key-region world-entry-form">
                 <label class="ship-name-label">
                     "Ship Name "
+                    <HelpTooltip text=docs::SHIP_NAME below=true />
                     <input
                         type="text"
                         class="ship-name-input"
@@ -551,6 +554,7 @@ pub fn Trade(
                 <div class="skill-entry">
                     <div>
                         <label for="ship-broker-skill">"Ship Broker skill:"</label>
+                        <HelpTooltip text=docs::BROKER_SKILL />
                         <input
                             type="number"
                             id="ship-broker-skill"
@@ -565,6 +569,7 @@ pub fn Trade(
                     </div>
                     <div>
                         <label for="ship-steward-skill">"Steward skill:"</label>
+                        <HelpTooltip text=docs::STEWARD_SKILL />
                         <input
                             type="number"
                             id="ship-steward-skill"
@@ -579,6 +584,7 @@ pub fn Trade(
                     </div>
                     <div>
                         <label for="ship-crew-size">"Crew size:"</label>
+                        <HelpTooltip text=docs::CREW_SIZE />
                         <input
                             type="number"
                             id="ship-crew-size"
@@ -592,6 +598,7 @@ pub fn Trade(
                     </div>
                     <div>
                         <label for="ship-crew-staterooms">"Crew staterooms:"</label>
+                        <HelpTooltip text=docs::CREW_STATEROOMS />
                         <input
                             type="number"
                             id="ship-crew-staterooms"
@@ -607,6 +614,7 @@ pub fn Trade(
                 <div class="skill-entry">
                     <div>
                         <label for="ship-passenger-staterooms">"Passenger staterooms:"</label>
+                        <HelpTooltip text=docs::PASSENGER_STATEROOMS />
                         <input
                             type="number"
                             id="ship-passenger-staterooms"
@@ -620,6 +628,7 @@ pub fn Trade(
                     </div>
                     <div>
                         <label for="ship-low-berths">"Low berths:"</label>
+                        <HelpTooltip text=docs::LOW_BERTHS />
                         <input
                             type="number"
                             id="ship-low-berths"
@@ -633,6 +642,7 @@ pub fn Trade(
                     </div>
                     <div>
                         <label for="ship-cargo-capacity">"Cargo capacity (tons):"</label>
+                        <HelpTooltip text=docs::CARGO_CAPACITY />
                         <input
                             type="number"
                             id="ship-cargo-capacity"
@@ -648,6 +658,7 @@ pub fn Trade(
                 <div class="skill-entry">
                     <div>
                         <label for="ship-mortgage">"Mortgage / period (Cr):"</label>
+                        <HelpTooltip text=docs::MORTGAGE_PER_PERIOD />
                         <input
                             type="number"
                             id="ship-mortgage"
@@ -661,6 +672,7 @@ pub fn Trade(
                     </div>
                     <div>
                         <label for="ship-maintenance">"Maintenance / period (Cr):"</label>
+                        <HelpTooltip text=docs::MAINTENANCE_PER_PERIOD />
                         <input
                             type="number"
                             id="ship-maintenance"
@@ -674,6 +686,7 @@ pub fn Trade(
                     </div>
                     <div>
                         <label for="ship-salary">"Salary / period (Cr):"</label>
+                        <HelpTooltip text=docs::SALARY_PER_PERIOD />
                         <input
                             type="number"
                             id="ship-salary"
@@ -755,6 +768,7 @@ pub fn Trade(
                 <div class="skill-entry">
                     <div>
                         <label for="distance">"Distance: "</label>
+                        <HelpTooltip text=docs::DISTANCE />
                         <input
                             class="distance-input"
                             type="number"
@@ -769,6 +783,7 @@ pub fn Trade(
                     </div>
                     <div>
                         <label for="system-broker-skill">"System Broker skill:"</label>
+                        <HelpTooltip text=docs::SYSTEM_BROKER_SKILL />
                         <input
                             type="number"
                             id="system-broker-skill"
@@ -783,6 +798,7 @@ pub fn Trade(
                     </div>
                     <div>
                         <label for="include-illegal">"Include Illegal Goods:"</label>
+                        <HelpTooltip text=docs::ILLEGAL_GOODS />
                         <input
                             id="include-illegal"
                             type="checkbox"
@@ -1972,6 +1988,7 @@ fn ShipManifestView(
                         >
                             "Execute Trades"
                         </button>
+                        <HelpTooltip text=docs::EXECUTE_TRADES />
                     </div>
                     <div class="manifest-item">
                         <span class="manifest-label">"Profit:"</span>
