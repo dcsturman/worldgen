@@ -1078,6 +1078,65 @@ datalist option {
   font-size: 1.05rem;
 }
 
+/* Side-by-side layout for the SimSummary and Captain's Log panels. */
+.sim-summary-pair {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  max-width: 1500px;
+  margin: 1.5rem auto;
+  width: calc(100% - 2rem);
+}
+
+.sim-summary-pair > * {
+  min-width: 18rem;
+  /* Override the centred / max-width default of `.sim-summary` so the
+     two children share row width instead of each centering at 1000px. */
+  max-width: none;
+  margin: 0;
+  width: auto;
+}
+
+/* Asymmetric layout: structured summary stays narrow, captain's log
+   takes twice the share so the prose has room to breathe. */
+.sim-summary-pair > .sim-summary {
+  flex: 1 1 0;
+}
+.sim-summary-pair > .captains-log {
+  flex: 2 1 0;
+}
+
+.captains-log-text {
+  white-space: pre-wrap;
+  font-family: Georgia, "Times New Roman", serif;
+  line-height: 1.4;
+  margin: 0.75rem 0 0;
+  background: rgba(0, 0, 0, 0.25);
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+  min-height: 1.5rem;
+  /* Cap the height so a long log doesn't push the rest of the page
+     down — scroll within the panel instead. ~70% of viewport keeps
+     the footer + button visible without scrolling the whole window. */
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.captains-log-footer {
+  font-size: 0.85em;
+  opacity: 0.7;
+  margin-top: 0.5rem;
+}
+
+.captains-log-error {
+  background: #4a1f1f;
+  border: 1px solid #8a3f3f;
+  color: #ffd0d0;
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+  margin-top: 0.5rem;
+}
+
 .sim-route-map {
   margin: 1.5rem auto;
   max-width: 1000px;

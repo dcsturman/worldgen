@@ -114,8 +114,7 @@ impl TradeServer {
             let states = self.states.clone();
 
             tokio::spawn(async move {
-                if let Err(e) =
-                    handle_connection(stream, addr, clients, next_id, db, states).await
+                if let Err(e) = handle_connection(stream, addr, clients, next_id, db, states).await
                 {
                     log::error!("Error handling connection from {}: {}", addr, e);
                 }
@@ -236,14 +235,8 @@ async fn handle_post_handshake(
                 // Try to parse as a ServerMessage (which can be either a state update or a command)
                 match serde_json::from_str::<ServerMessage>(&text) {
                     Ok(ServerMessage::StateUpdate(trade_state)) => {
-                        handle_trade_state_update(
-                            client_id,
-                            trade_state,
-                            &db,
-                            &clients,
-                            &states,
-                        )
-                        .await;
+                        handle_trade_state_update(client_id, trade_state, &db, &clients, &states)
+                            .await;
                     }
                     Ok(ServerMessage::Command(ServerCommand::Regenerate)) => {
                         handle_regenerate_command(client_id, &db, &clients, &states).await;
@@ -324,7 +317,11 @@ async fn broadcast_to_ship(clients: &Clients, ship: &str, state: &TradeState) ->
         }
     }
 
-    log::debug!("Broadcast TradeState to {} clients on ship {}", sent_count, ship);
+    log::debug!(
+        "Broadcast TradeState to {} clients on ship {}",
+        sent_count,
+        ship
+    );
     sent_count
 }
 
@@ -413,7 +410,10 @@ async fn handle_select_ship(
     if state.ship.name != ship_name {
         state.ship.name = ship_name.clone();
     }
-    states.write().await.insert(ship_name.clone(), state.clone());
+    states
+        .write()
+        .await
+        .insert(ship_name.clone(), state.clone());
 
     // Send the state to just this client.
     let clients_guard = clients.read().await;
@@ -421,11 +421,7 @@ async fn handle_select_ship(
         match serde_json::to_string(&state) {
             Ok(json) => {
                 if info.sender.send(Message::Text(json.into())).is_ok() {
-                    log::info!(
-                        "Sent state for ship {} to client {}",
-                        ship_name,
-                        client_id
-                    );
+                    log::info!("Sent state for ship {} to client {}", ship_name, client_id);
                 } else {
                     log::warn!(
                         "Failed to queue state for ship {} to client {}",
@@ -823,7 +819,10 @@ async fn handle_regenerate_command(
     }
 
     // Update cache and broadcast to clients viewing this ship
-    states.write().await.insert(ship_name.clone(), state.clone());
+    states
+        .write()
+        .await
+        .insert(ship_name.clone(), state.clone());
     broadcast_to_ship(clients, &ship_name, &state).await;
 }
 
@@ -888,6 +887,9 @@ async fn handle_apply_monthly_expenses(
     }
 
     // Update cache and broadcast to clients viewing this ship
-    states.write().await.insert(ship_name.clone(), state.clone());
+    states
+        .write()
+        .await
+        .insert(ship_name.clone(), state.clone());
     broadcast_to_ship(clients, &ship_name, &state).await;
 }

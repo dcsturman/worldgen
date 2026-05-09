@@ -14,8 +14,7 @@ pub const CARGO_CAPACITY: &str = "Total cargo capacity on the ship.  Used to hol
 pub const CREW_STATEROOMS: &str = "Total number of standard staterooms used by the crew, used to determine monthly support costs.";
 pub const PASSENGER_STATEROOMS: &str = "Total number of standard staterooms available for high, medium, and basic passengers, used both for availability \
                                         when soliciting passengers and for monthly support costs.";
-pub const LOW_BERTHS: &str =
-    "Total number of low berths available for low passengers, used both for availability when \
+pub const LOW_BERTHS: &str = "Total number of low berths available for low passengers, used both for availability when \
                               soliticting low passengers and for monthly support costs.";
 pub const JUMP_RATING: &str = "Max jump of this ship. Jump rating is used when looking at available destinations for the next jump.";
 pub const FUEL_COST_PER_PARSEC: &str = "Cost of fuel used per jump by the ship.  If the ship has no fuel processors enter Cr 1000/ton for refined fule. \

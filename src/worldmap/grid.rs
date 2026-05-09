@@ -385,12 +385,16 @@ mod tests {
                 if i == j {
                     continue;
                 }
-                let d = ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt();
+                let d =
+                    ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt();
                 if (d - target).abs() < 1e-6 {
                     neighbors += 1;
                 }
             }
-            assert_eq!(neighbors, 5, "vertex {i} has {neighbors} neighbors, expected 5");
+            assert_eq!(
+                neighbors, 5,
+                "vertex {i} has {neighbors} neighbors, expected 5"
+            );
         }
     }
 
@@ -428,7 +432,10 @@ mod tests {
     fn barycentric_sums_to_one() {
         for (_, _, b) in iter_face_hex_barycentric(HEXES_PER_EDGE) {
             let sum = b[0] + b[1] + b[2];
-            assert!((sum - 1.0).abs() < 1e-12, "barycentric does not sum to 1: {b:?}");
+            assert!(
+                (sum - 1.0).abs() < 1e-12,
+                "barycentric does not sum to 1: {b:?}"
+            );
             assert!(b.iter().all(|x| *x >= -1e-12 && *x <= 1.0 + 1e-12));
         }
     }

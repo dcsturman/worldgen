@@ -14,14 +14,12 @@ pub mod svg;
 
 use super::WorldMap;
 use super::colormap::{
-    C_DEEP_OCEAN, C_GRASSLAND, C_ICE_CAP, C_JUNGLE, C_ROCKY_HIGHLAND, C_SANDY_HIGHLAND,
-    C_SAVANNA, C_SEA_ICE, C_SHALLOW_OCEAN, C_SNOW, C_STEPPE, C_TAIGA, C_TEMPERATE_FOREST,
-    C_TEMPERATE_RAINFOREST, C_TROP_SEASONAL_FOREST, C_TUNDRA, C_DESERT_SAND,
+    C_DEEP_OCEAN, C_DESERT_SAND, C_GRASSLAND, C_ICE_CAP, C_JUNGLE, C_ROCKY_HIGHLAND,
+    C_SANDY_HIGHLAND, C_SAVANNA, C_SEA_ICE, C_SHALLOW_OCEAN, C_SNOW, C_STEPPE, C_TAIGA,
+    C_TEMPERATE_FOREST, C_TEMPERATE_RAINFOREST, C_TROP_SEASONAL_FOREST, C_TUNDRA,
 };
 use super::features::{CityTier, Feature};
-use super::grid::{
-    Face, HEXES_PER_EDGE, SHEET_HEIGHT, SHEET_WIDTH, TRIANGLE_SIDE, pointy_top_hex,
-};
+use super::grid::{Face, HEXES_PER_EDGE, SHEET_HEIGHT, SHEET_WIDTH, TRIANGLE_SIDE, pointy_top_hex};
 use super::raster;
 
 #[derive(Clone, Copy, Debug)]
@@ -126,11 +124,12 @@ pub fn render_png(map: &WorldMap) -> Result<Vec<u8>, String> {
 
 /// Encode an RGBA8 buffer to PNG using tiny_skia (also our PNG backend).
 fn raster_to_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
-    let mut pixmap = tiny_skia::Pixmap::new(width, height).ok_or_else(|| {
-        format!("tiny_skia::Pixmap::new failed for {width}x{height}")
-    })?;
+    let mut pixmap = tiny_skia::Pixmap::new(width, height)
+        .ok_or_else(|| format!("tiny_skia::Pixmap::new failed for {width}x{height}"))?;
     pixmap.data_mut().copy_from_slice(rgba);
-    pixmap.encode_png().map_err(|e| format!("PNG encode failed: {e}"))
+    pixmap
+        .encode_png()
+        .map_err(|e| format!("PNG encode failed: {e}"))
 }
 
 /// Vector overlay: face triangle outlines, the hex grid, rivers, and
@@ -233,7 +232,11 @@ fn draw_title_block<R: Renderer + ?Sized>(r: &mut R, map: &WorldMap) {
 
     let hex = pointy_top_hex((cx, cy), radius * 1.732); // flat_to_flat = r*sqrt(3)
     r.fill_polygon(&hex, card_fill);
-    let outline: Vec<(f64, f64)> = hex.iter().chain(std::iter::once(&hex[0])).copied().collect();
+    let outline: Vec<(f64, f64)> = hex
+        .iter()
+        .chain(std::iter::once(&hex[0]))
+        .copied()
+        .collect();
     r.stroke_polyline(&outline, ink, 1.4);
 
     let label_size = 9.0;
@@ -246,9 +249,27 @@ fn draw_title_block<R: Renderer + ?Sized>(r: &mut R, map: &WorldMap) {
     let scale_str = format!("1 hex ≈ {} km", format_thousands(hex_km));
     // Rough text-centering: subtract ~0.27 × char_count × size.
     let center_x = |s: &str, size: f64| cx - (s.chars().count() as f64) * size * 0.27;
-    r.fill_text(center_x(&uwp_str, value_size), cy - 13.0, value_size, &uwp_str, ink);
-    r.fill_text(center_x(&seed_str, label_size), cy + 5.0, label_size, &seed_str, ink);
-    r.fill_text(center_x(&scale_str, label_size), cy + 21.0, label_size, &scale_str, ink);
+    r.fill_text(
+        center_x(&uwp_str, value_size),
+        cy - 13.0,
+        value_size,
+        &uwp_str,
+        ink,
+    );
+    r.fill_text(
+        center_x(&seed_str, label_size),
+        cy + 5.0,
+        label_size,
+        &seed_str,
+        ink,
+    );
+    r.fill_text(
+        center_x(&scale_str, label_size),
+        cy + 21.0,
+        label_size,
+        &scale_str,
+        ink,
+    );
 }
 
 /// Hex flat-to-flat in km, derived from the UWP's world-size digit and
@@ -407,10 +428,16 @@ const LEGEND_TERRAINS: &[(Color, &str)] = &[
     (Color::from_palette(C_STEPPE), "Steppe"),
     (Color::from_palette(C_GRASSLAND), "Grassland"),
     (Color::from_palette(C_TEMPERATE_FOREST), "Temperate forest"),
-    (Color::from_palette(C_TEMPERATE_RAINFOREST), "Temp. rainforest"),
+    (
+        Color::from_palette(C_TEMPERATE_RAINFOREST),
+        "Temp. rainforest",
+    ),
     (Color::from_palette(C_DESERT_SAND), "Desert"),
     (Color::from_palette(C_SAVANNA), "Savanna"),
-    (Color::from_palette(C_TROP_SEASONAL_FOREST), "Trop. seasonal forest"),
+    (
+        Color::from_palette(C_TROP_SEASONAL_FOREST),
+        "Trop. seasonal forest",
+    ),
     (Color::from_palette(C_JUNGLE), "Jungle"),
     (Color::from_palette(C_ROCKY_HIGHLAND), "Rocky highland"),
     (Color::from_palette(C_SANDY_HIGHLAND), "Sandy highland"),
@@ -513,7 +540,10 @@ fn draw_legend<R: Renderer + ?Sized>(r: &mut R, x: f64, y: f64, w: f64, h: f64) 
         // Slightly larger glyph radius than the swatch so the rings read
         // clearly at the legend's modest size.
         let glyph_r = swatch_size * 0.55;
-        let feat = Feature::City { tier: *tier, starport: *starport };
+        let feat = Feature::City {
+            tier: *tier,
+            starport: *starport,
+        };
         draw_feature(r, (glyph_cx, glyph_cy), glyph_r, feat);
         let text_x = cx0 + swatch_size + 8.0;
         let text_y = glyph_cy + label_size * 0.35;

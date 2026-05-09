@@ -14,6 +14,10 @@ use log::{error, info};
 use wasm_bindgen::prelude::*;
 use web_sys::{CloseEvent, ErrorEvent, MessageEvent, WebSocket};
 
+use crate::comms::captains_log::{
+    ClientMessage as LogClientMessage, ServerMessage as LogServerMessage,
+};
+use crate::components::captains_log_prompt::build_prompt;
 use crate::components::help_tooltip::HelpTooltip;
 use crate::components::tooltip_docs as docs;
 use crate::components::traveller_map::WorldSearch;
@@ -67,6 +71,34 @@ fn get_ws_url() -> String {
     }
     // Fallback
     "ws://localhost:8081/ws/simulator".to_string()
+}
+
+/// Get the WebSocket URL for the captain's-log endpoint.
+///
+/// Mirrors `get_ws_url` but for `/ws/captains-log`.
+fn get_captains_log_ws_url() -> String {
+    if let Some(window) = web_sys::window()
+        && let Ok(location) = window.location().host()
+    {
+        let protocol = if window.location().protocol().unwrap_or_default() == "https:" {
+            "wss"
+        } else {
+            "ws"
+        };
+
+        // Local development mode: connect directly to backend on 8081
+        #[cfg(feature = "local-dev")]
+        {
+            if location.starts_with("localhost") {
+                return "ws://localhost:8081/ws/captains-log".to_string();
+            }
+        }
+
+        // Docker/Production: connect to same host (nginx proxies /ws/* to backend)
+        return format!("{}://{}/ws/captains-log", protocol, location);
+    }
+    // Fallback
+    "ws://localhost:8081/ws/captains-log".to_string()
 }
 
 /// Lightweight per-run WebSocket client. The closures must be kept alive
@@ -197,6 +229,169 @@ impl SimClient {
     }
 }
 
+/// State of the captain's-log generation flow. Independent of `RunState` —
+/// the simulation can finish and the user may then choose to generate
+/// (or regenerate) a captain's log on top of the same result.
+#[derive(Debug, Clone)]
+enum LogState {
+    /// No generation in progress; ready (or never started).
+    Idle,
+    /// WebSocket open; deltas streaming in.
+    Streaming,
+    /// Server sent `Done`. Token counts and finish_reason are logged
+    /// to the browser console at info level for diagnostics but not
+    /// surfaced in the UI — they break the in-character feel.
+    Done,
+    /// Server (or transport) reported an error. String is the human banner.
+    Errored(String),
+}
+
+/// One-shot WebSocket client for `/ws/captains-log`. Mirrors `SimClient`
+/// in shape but specialised to the captain's-log lifecycle: open, send a
+/// single `RunSummary`, stream deltas, terminate on `Done` or `Error`.
+#[allow(dead_code)]
+struct LogClient {
+    ws: WebSocket,
+    on_open: Closure<dyn FnMut()>,
+    on_message: Closure<dyn FnMut(MessageEvent)>,
+    on_close: Closure<dyn FnMut(CloseEvent)>,
+    on_error: Closure<dyn FnMut(ErrorEvent)>,
+}
+
+impl LogClient {
+    /// Open a WebSocket and send a single `RunSummary` once it opens.
+    /// Frames are dispatched into `log_text` / `log_state`.
+    fn start(
+        prompt: String,
+        log_text: RwSignal<String>,
+        log_state: RwSignal<LogState>,
+    ) -> Result<Self, String> {
+        let url = get_captains_log_ws_url();
+        info!("Captain's log connecting to {}", url);
+        let ws = WebSocket::new(&url).map_err(|e| format!("Failed to open WebSocket: {:?}", e))?;
+        ws.set_binary_type(web_sys::BinaryType::Arraybuffer);
+
+        let got_terminal: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
+
+        // ---- on_open: send the prompt ----
+        let ws_for_open = ws.clone();
+        let prompt_for_open = prompt;
+        let log_state_for_open = log_state;
+        let on_open = Closure::<dyn FnMut()>::new(move || {
+            let msg = LogClientMessage::RunSummary {
+                prompt: prompt_for_open.clone(),
+            };
+            match serde_json::to_string(&msg) {
+                Ok(json) => match ws_for_open.send_with_str(&json) {
+                    Ok(_) => {
+                        info!("Sent captain's-log RunSummary request");
+                    }
+                    Err(e) => {
+                        error!("Failed to send RunSummary: {:?}", e);
+                        log_state_for_open.set(LogState::Errored(format!("Send failed: {:?}", e)));
+                        let _ = ws_for_open.close();
+                    }
+                },
+                Err(e) => {
+                    error!("Failed to serialize RunSummary: {}", e);
+                    log_state_for_open.set(LogState::Errored(format!("Serialize failed: {}", e)));
+                    let _ = ws_for_open.close();
+                }
+            }
+        });
+        ws.set_onopen(Some(on_open.as_ref().unchecked_ref()));
+
+        // ---- on_message: parse ServerMessage and dispatch ----
+        let got_terminal_for_msg = got_terminal.clone();
+        let ws_for_msg = ws.clone();
+        let on_message = Closure::<dyn FnMut(_)>::new(move |e: MessageEvent| {
+            let Some(text) = e.data().as_string() else {
+                error!("Received non-text WebSocket frame on captain's-log; ignoring");
+                return;
+            };
+            match serde_json::from_str::<LogServerMessage>(&text) {
+                Ok(LogServerMessage::Delta { text }) => {
+                    log_text.update(|s| s.push_str(&text));
+                }
+                Ok(LogServerMessage::Done {
+                    prompt_tokens,
+                    output_tokens,
+                    finish_reason,
+                }) => {
+                    *got_terminal_for_msg.borrow_mut() = true;
+                    info!(
+                        "Captain's log done: {} prompt / {} output tokens (finish_reason={:?})",
+                        prompt_tokens, output_tokens, finish_reason
+                    );
+                    log_state.set(LogState::Done);
+                    let _ = ws_for_msg.close();
+                }
+                Ok(LogServerMessage::Error {
+                    code,
+                    message,
+                    vertex_status,
+                    ..
+                }) => {
+                    *got_terminal_for_msg.borrow_mut() = true;
+                    error!("Captain's log error: {} {}", code, message);
+                    let suffix = vertex_status
+                        .map(|s| format!(" (HTTP {})", s))
+                        .unwrap_or_default();
+                    log_state.set(LogState::Errored(format!(
+                        "{}: {}{}",
+                        code, message, suffix
+                    )));
+                    log_text.set(String::new());
+                    let _ = ws_for_msg.close();
+                }
+                Err(err) => {
+                    error!(
+                        "Failed to parse captain's-log ServerMessage: {} (text: {})",
+                        err, text
+                    );
+                }
+            }
+        });
+        ws.set_onmessage(Some(on_message.as_ref().unchecked_ref()));
+
+        // ---- on_close: surface premature close as an error ----
+        let got_terminal_for_close = got_terminal.clone();
+        let on_close = Closure::<dyn FnMut(_)>::new(move |e: CloseEvent| {
+            info!(
+                "Captain's-log WebSocket closed: code={}, reason={}",
+                e.code(),
+                e.reason()
+            );
+            if !*got_terminal_for_close.borrow() {
+                let reason = if e.reason().is_empty() {
+                    format!("Connection closed (code {})", e.code())
+                } else {
+                    format!("Connection closed: {} (code {})", e.reason(), e.code())
+                };
+                log_state.update(|s| {
+                    if !matches!(s, LogState::Done | LogState::Errored(_)) {
+                        *s = LogState::Errored(reason.clone());
+                    }
+                });
+            }
+        });
+        ws.set_onclose(Some(on_close.as_ref().unchecked_ref()));
+
+        let on_error = Closure::<dyn FnMut(_)>::new(move |e: ErrorEvent| {
+            error!("Captain's-log WebSocket error: {:?}", e.message());
+        });
+        ws.set_onerror(Some(on_error.as_ref().unchecked_ref()));
+
+        Ok(Self {
+            ws,
+            on_open,
+            on_message,
+            on_close,
+            on_error,
+        })
+    }
+}
+
 /// Parse a `"DDD-YYYY"` date string. The day must be in 0..=364 and the
 /// year must fit in `u16`. Returns `None` for any malformed input — the
 /// form uses this both for validation and for the live "invalid" styling
@@ -216,6 +411,7 @@ fn parse_ddd_yyyy(s: &str) -> Option<Date> {
 pub fn ShipSimulator() -> impl IntoView {
     // ---- Form state ----
     // Ship
+    let ship_name = RwSignal::new(String::new());
     let cargo_capacity = RwSignal::new(80i32);
     let crew_staterooms = RwSignal::new(4i32);
     let passenger_staterooms = RwSignal::new(4i32);
@@ -253,6 +449,10 @@ pub fn ShipSimulator() -> impl IntoView {
     // ---- Run state ----
     let run_state = RwSignal::new(RunState::Idle);
     let steps = RwSignal::new(Vec::<SimulationStep>::new());
+    // Cache the params used for the most recent run so the captain's-log
+    // panel can build its prompt from the same inputs even if the form
+    // has been edited since.
+    let last_params = RwSignal::new(None::<SimulationParams>);
 
     // Hold the live client so its closures stay alive across renders.
     let client_holder: Rc<RefCell<Option<SimClient>>> = Rc::new(RefCell::new(None));
@@ -301,10 +501,10 @@ pub fn ShipSimulator() -> impl IntoView {
 
         let params = SimulationParams {
             ship: Ship {
-                // Form has no ship-name input yet; default to empty.
-                // The simulator runs against `home_world` for identity, not
-                // `ship.name`, so this is safe.
-                name: String::new(),
+                // Ship name is optional — used by the captain's-log
+                // narrative; the simulator itself runs against
+                // `home_world` for identity, not `ship.name`.
+                name: ship_name.get_untracked().trim().to_string(),
                 broker_skill: broker_skill.get_untracked(),
                 steward_skill: steward_skill.get_untracked(),
                 leadership_skill: leadership_skill.get_untracked(),
@@ -340,6 +540,8 @@ pub fn ShipSimulator() -> impl IntoView {
             illegal_goods: illegal_goods.get_untracked(),
         };
 
+        last_params.set(Some(params.clone()));
+
         match SimClient::start(params, run_state, steps) {
             Ok(client) => {
                 *client_holder_for_run.borrow_mut() = Some(client);
@@ -356,6 +558,7 @@ pub fn ShipSimulator() -> impl IntoView {
             <h1 class="no-print">"Ship Simulator"</h1>
 
             <SimForm
+                ship_name=ship_name
                 cargo_capacity=cargo_capacity
                 crew_staterooms=crew_staterooms
                 passenger_staterooms=passenger_staterooms
@@ -407,7 +610,20 @@ pub fn ShipSimulator() -> impl IntoView {
                 </span>
             </div>
 
-            <SimSummary run_state=run_state />
+            <div class="sim-summary-pair">
+                <SimSummary run_state=run_state last_params=last_params />
+                // Only mount the captain's-log panel once a simulation
+                // has actually completed — empty state has nothing to
+                // narrate. Unmounting on non-Done also cleanly drops
+                // any in-flight WS client between runs.
+                {move || matches!(run_state.get(), RunState::Done(_)).then(|| view! {
+                    <CaptainsLog
+                        run_state=run_state
+                        steps=steps
+                        last_params=last_params
+                    />
+                })}
+            </div>
 
             <SimLog steps=steps home_name=home_name />
 
@@ -420,6 +636,7 @@ pub fn ShipSimulator() -> impl IntoView {
 #[component]
 #[allow(clippy::too_many_arguments)]
 fn SimForm(
+    ship_name: RwSignal<String>,
     cargo_capacity: RwSignal<i32>,
     crew_staterooms: RwSignal<i32>,
     passenger_staterooms: RwSignal<i32>,
@@ -450,6 +667,16 @@ fn SimForm(
             <fieldset class="sim-fieldset">
                 <legend>"Ship"</legend>
                 <div class="sim-grid">
+                    <label>
+                        <span class="sim-label-row">
+                            "Ship name"
+                        </span>
+                        <input
+                            type="text"
+                            placeholder="(optional — invent one)"
+                            bind:value=ship_name
+                        />
+                    </label>
                     <label>
                         <span class="sim-label-row">
                             "Cargo capacity (tons)"
@@ -1179,7 +1406,10 @@ fn RouteMap(run_state: RwSignal<RunState>, steps: RwSignal<Vec<SimulationStep>>)
 
 /// Renders the final summary card, including the Save-as-PDF print button.
 #[component]
-fn SimSummary(run_state: RwSignal<RunState>) -> impl IntoView {
+fn SimSummary(
+    run_state: RwSignal<RunState>,
+    last_params: RwSignal<Option<SimulationParams>>,
+) -> impl IntoView {
     let print_handler = move |_| {
         if let Some(window) = web_sys::window() {
             let _ = window.print();
@@ -1193,12 +1423,16 @@ fn SimSummary(run_state: RwSignal<RunState>) -> impl IntoView {
                 let marooned_panel = if r.marooned {
                     let loc = r.marooned_at.as_ref().map(|w| w.name.clone()).unwrap_or_default();
                     let on_date = r.marooned_on.map(|d| d.format()).unwrap_or_default();
-                    let rescue_date = r.rescue_arrives_on.map(|d| d.format()).unwrap_or_default();
+                    let signal_date = r.rescue_arrives_on.map(|d| d.format()).unwrap_or_default();
+                    let home_name = last_params
+                        .get()
+                        .map(|p| p.home_world.name.clone())
+                        .unwrap_or_else(|| "home".to_string());
                     view! {
                         <div class="sim-summary sim-summary-marooned">
                             <h2>"⚠ Marooned"</h2>
                             <p>"Marooned at "<strong>{loc}</strong>" on "<strong>{on_date}</strong>"."</p>
-                            <p>"Rescue expected to arrive "<strong>{rescue_date}</strong>"."</p>
+                            <p>"Distress signal received at "<strong>{home_name}</strong>" on "<strong>{signal_date}</strong>"."</p>
                         </div>
                     }.into_any()
                 } else {
@@ -1279,5 +1513,107 @@ fn SimSummary(run_state: RwSignal<RunState>) -> impl IntoView {
             }
             _ => view! { <div></div> }.into_any(),
         }}
+    }
+}
+
+/// AI-generated captain's-log narrative panel. Sits next to the
+/// `SimSummary` panel and is a no-op until the simulation completes.
+///
+/// One-shot WebSocket flow per click: open `/ws/captains-log`, send the
+/// assembled prompt, append `Delta` frames into `log_text`, terminate
+/// on `Done` (records token usage) or `Error` (clears text and shows a
+/// banner). Each subsequent click clears state and starts fresh.
+#[component]
+fn CaptainsLog(
+    run_state: RwSignal<RunState>,
+    steps: RwSignal<Vec<SimulationStep>>,
+    last_params: RwSignal<Option<SimulationParams>>,
+) -> impl IntoView {
+    let log_text = RwSignal::new(String::new());
+    let log_state = RwSignal::new(LogState::Idle);
+
+    // Hold the live client so its closures stay alive across renders.
+    let client_holder: Rc<RefCell<Option<LogClient>>> = Rc::new(RefCell::new(None));
+
+    // Whenever the simulator kicks off a new run (Connecting / Running),
+    // clear the captain's-log panel so the old voyage's narrative doesn't
+    // linger next to fresh simulation data. Also drops any in-flight
+    // generation client to abort a stale stream.
+    {
+        let client_holder = client_holder.clone();
+        Effect::new(move |_| match run_state.get() {
+            RunState::Connecting | RunState::Running { .. } => {
+                log_text.set(String::new());
+                log_state.set(LogState::Idle);
+                *client_holder.borrow_mut() = None;
+            }
+            _ => {}
+        });
+    }
+
+    let client_holder_for_click = client_holder.clone();
+    let on_generate = move |_| {
+        // Need a completed simulation and the params we ran with.
+        let result = match run_state.get_untracked() {
+            RunState::Done(r) => r,
+            _ => return,
+        };
+        let Some(params) = last_params.get_untracked() else {
+            log_state.set(LogState::Errored(
+                "Internal error: simulation parameters missing.".to_string(),
+            ));
+            return;
+        };
+        // Reset for a fresh attempt (also clears any prior error banner).
+        log_text.set(String::new());
+        log_state.set(LogState::Streaming);
+
+        let prompt = {
+            let steps_ref = steps.read();
+            build_prompt(&params.ship.name, &params, &steps_ref, &result)
+        };
+
+        match LogClient::start(prompt, log_text, log_state) {
+            Ok(client) => {
+                *client_holder_for_click.borrow_mut() = Some(client);
+            }
+            Err(e) => {
+                error!("Failed to start captain's-log client: {}", e);
+                log_state.set(LogState::Errored(e));
+            }
+        }
+    };
+
+    view! {
+        <div class="sim-summary captains-log">
+            <h2>"Captain's Log"</h2>
+            <button
+                class="blue-button no-print"
+                prop:disabled=move || {
+                    !matches!(run_state.get(), RunState::Done(_))
+                        || matches!(log_state.get(), LogState::Streaming)
+                }
+                on:click=on_generate
+            >
+                {move || match log_state.get() {
+                    LogState::Streaming => "Generating...".to_string(),
+                    LogState::Done => "Regenerate Captain's Log".to_string(),
+                    _ => "Generate Captain's Log".to_string(),
+                }}
+            </button>
+            {move || match log_state.get() {
+                LogState::Errored(msg) => view! {
+                    <p class="captains-log-error">
+                        {format!("Captain's log unavailable: {}", msg)}
+                    </p>
+                }.into_any(),
+                _ => view! { <span></span> }.into_any(),
+            }}
+            // Token counts and finish_reason intentionally not rendered —
+            // they break the in-character feel of the log. The data still
+            // flows to the backend log via `vertex: stream complete — …`
+            // for diagnostics.
+            <pre class="captains-log-text">{move || log_text.get()}</pre>
+        </div>
     }
 }

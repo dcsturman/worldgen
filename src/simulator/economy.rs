@@ -21,10 +21,10 @@ pub const LOW_BERTH_COST: i64 = 100;
 
 /// Days of in-jump time per jump (Traveller standard).
 pub const DAYS_PER_JUMP: u32 = 7;
-/// Days spent in port per turn (loading/selling/refueling).
+/// Days spent in port per visit (loading/selling/refueling/recruiting).
+/// Added to `current_date` once on entering each port; incidents add
+/// extra days on top of this.
 pub const DAYS_IN_PORT: u32 = 7;
-/// Total days per turn — one jump plus the port stay before it.
-pub const TURN_DAYS: u32 = DAYS_PER_JUMP + DAYS_IN_PORT;
 /// Days between periodic ship-cost (maintenance + salary) ticks.
 pub const PERIOD_DAYS: u32 = 28;
 /// How many days past the target completion date the executor tolerates

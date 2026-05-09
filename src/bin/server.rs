@@ -1,9 +1,11 @@
 //! # Worldgen WebSocket Server Binary
 //!
-//! Runs the WebSocket server backend. Two endpoints share one TCP port:
+//! Runs the WebSocket server backend. Three endpoints share one TCP port:
 //!
 //! - `/ws/trade` — the multi-client trade-tool sync server.
 //! - `/ws/simulator` — the streaming ship-simulator server.
+//! - `/ws/captains-log` — the streaming Vertex AI captain's-log
+//!   summary server.
 //!
 //! ## Environment Variables
 //!
@@ -17,11 +19,13 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Instant;
 
 use tokio::net::TcpListener;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
 
+use worldgen::backend::captains_log_server;
 use worldgen::backend::server::TradeServer;
 use worldgen::backend::simulator_server;
 
@@ -78,16 +82,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // accept loop that peeks the request URI before deciding which
     // handler to invoke.
     let trade_server = Arc::new(trade_server);
+
+    // Captain's-log shared state: the GCP project id (read from env)
+    // and the global rate limiter shared across every captains-log
+    // connection. The rate limiter holds the Instant of the last
+    // accepted request across the entire process.
+    let captains_log_project: Arc<String> = Arc::new(
+        std::env::var("GCP_PROJECT")
+            .or_else(|_| std::env::var("GOOGLE_CLOUD_PROJECT"))
+            .unwrap_or_default(),
+    );
+    let captains_log_global_limiter: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
+
     let listener = TcpListener::bind(&addr).await?;
     log::info!(
-        "Listening on: {} (trade: /ws/trade, simulator: /ws/simulator)",
+        "Listening on: {} (trade: /ws/trade, simulator: /ws/simulator, captains-log: /ws/captains-log)",
         addr
     );
 
     while let Ok((stream, peer_addr)) = listener.accept().await {
         let trade_server = trade_server.clone();
+        let captains_log_project = captains_log_project.clone();
+        let captains_log_global_limiter = captains_log_global_limiter.clone();
         tokio::spawn(async move {
-            if let Err(e) = dispatch(stream, peer_addr, trade_server).await {
+            if let Err(e) = dispatch(
+                stream,
+                peer_addr,
+                trade_server,
+                captains_log_project,
+                captains_log_global_limiter,
+            )
+            .await
+            {
                 log::error!("Connection from {} ended with error: {}", peer_addr, e);
                 sentry::capture_message(
                     &format!("connection error from {}: {}", peer_addr, e),
@@ -100,12 +126,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     Ok(())
 }
 
-/// Dispatch one accepted TCP stream to either the trade-tool handler
-/// or the simulator handler based on the WebSocket request URI.
+/// Dispatch one accepted TCP stream to either the trade-tool handler,
+/// the simulator handler, or the captain's-log handler based on the
+/// WebSocket request URI.
 async fn dispatch(
     stream: tokio::net::TcpStream,
     peer_addr: SocketAddr,
     trade_server: Arc<TradeServer>,
+    captains_log_project: Arc<String>,
+    captains_log_global_limiter: Arc<Mutex<Option<Instant>>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Capture the request URI during the handshake.
     let captured_path: Arc<RwLock<String>> = Arc::new(RwLock::new(String::new()));
@@ -125,6 +154,14 @@ async fn dispatch(
 
     if path.starts_with("/ws/simulator") {
         simulator_server::handle_simulator_ws(ws_stream).await?;
+    } else if path.starts_with("/ws/captains-log") {
+        captains_log_server::handle_captains_log_ws(
+            ws_stream,
+            peer_addr,
+            captains_log_project,
+            captains_log_global_limiter,
+        )
+        .await;
     } else {
         // Default to trade — preserves the legacy bare-`/` behaviour.
         trade_server.handle_one_ws(ws_stream, peer_addr).await?;

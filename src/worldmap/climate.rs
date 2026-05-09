@@ -32,7 +32,11 @@ impl TempField {
 
     /// Spatial wobble in roughly [-1, 1]. Caller multiplies by an amplitude.
     pub fn wobble(&self, sphere_pos: &[f64; 3]) -> f64 {
-        self.fbm.get([sphere_pos[0] * 1.1, sphere_pos[1] * 1.1, sphere_pos[2] * 1.1])
+        self.fbm.get([
+            sphere_pos[0] * 1.1,
+            sphere_pos[1] * 1.1,
+            sphere_pos[2] * 1.1,
+        ])
     }
 }
 
@@ -98,12 +102,12 @@ pub fn apply_lapse(temp: f64, elev_above_sea: f64, uwp: &Uwp) -> f64 {
 /// tundra/cool band rather than freezing solid.
 fn atmo_temp_floor(uwp: &Uwp) -> f64 {
     match uwp.atmosphere() {
-        0 | 1 => 0.00,    // trace / vacuum — no floor
-        2 | 3 => 0.05,    // very thin
-        4 | 5 => 0.08,    // thin
-        6 | 7 => 0.10,    // standard / Earth-like
-        8 | 9 => 0.13,    // dense
-        _ => 0.08,        // exotic / corrosive — partial retention
+        0 | 1 => 0.00, // trace / vacuum — no floor
+        2 | 3 => 0.05, // very thin
+        4 | 5 => 0.08, // thin
+        6 | 7 => 0.10, // standard / Earth-like
+        8 | 9 => 0.13, // dense
+        _ => 0.08,     // exotic / corrosive — partial retention
     }
 }
 
@@ -161,12 +165,12 @@ pub fn amplify_elevation(elev_above_sea: f64, hyd: u8) -> f64 {
 /// past the rocky-highland threshold.
 fn relief_scale_for_hyd(hyd: u8) -> f64 {
     match hyd {
-        0 => 5.0,        // Mars-like — most land is "above sea" but flat
+        0 => 5.0, // Mars-like — most land is "above sea" but flat
         1 => 3.0,
         2 | 3 => 2.0,
         4 | 5 => 1.4,
         6 | 7 => 1.1,
-        _ => 1.0,        // Earth-like / water-world — full amplification
+        _ => 1.0, // Earth-like / water-world — full amplification
     }
 }
 
@@ -190,12 +194,12 @@ fn temperature_bias(uwp: &Uwp) -> f64 {
     };
     let hyd_bias = if uwp.atmosphere() >= 6 {
         match uwp.hydrographics() {
-            0 => 0.20,        // dry greenhouse — Venus / hot Sahara world
+            0 => 0.20, // dry greenhouse — Venus / hot Sahara world
             1 => 0.12,
             2 | 3 => 0.05,
             4 | 5 => 0.0,
             6 | 7 => -0.02,
-            _ => -0.05,       // water world heat sink
+            _ => -0.05, // water world heat sink
         }
     } else {
         0.0
@@ -222,9 +226,11 @@ impl HumidityField {
     /// Atmosphere 0 → desiccated (no free water); 8+ → wet/jungle bias.
     /// Hydrographics 0 → desert (large negative pull); 10 → water world (positive).
     pub fn sample(&self, sphere_pos: &[f64; 3], uwp: &Uwp) -> f64 {
-        let raw = self
-            .fbm
-            .get([sphere_pos[0] * 1.7, sphere_pos[1] * 1.7, sphere_pos[2] * 1.7]);
+        let raw = self.fbm.get([
+            sphere_pos[0] * 1.7,
+            sphere_pos[1] * 1.7,
+            sphere_pos[2] * 1.7,
+        ]);
         // raw is roughly [-1, 1]; remap to [0, 1].
         let h = (raw + 1.0) * 0.5;
         // Bias arms intentionally leave room for the FBM noise (~[-1,1]/2) to

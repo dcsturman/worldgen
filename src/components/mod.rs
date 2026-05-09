@@ -117,6 +117,8 @@
 //! - Touch-friendly interactive elements
 //! - Scalable text and spacing
 
+pub mod captains_log_instructions;
+pub mod captains_log_prompt;
 pub mod help_tooltip;
 pub mod selector;
 pub mod ship_simulator;

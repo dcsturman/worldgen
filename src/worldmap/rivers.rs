@@ -325,12 +325,8 @@ fn trace_rivers(
                 }
                 Some(t) => {
                     if samples[t].elev <= sea_level {
-                        let coast = find_coast(
-                            elev_field,
-                            sea_level,
-                            s.sphere_pos,
-                            samples[t].sphere_pos,
-                        );
+                        let coast =
+                            find_coast(elev_field, sea_level, s.sphere_pos, samples[t].sphere_pos);
                         path.push((s.face_idx, coast, s.drainage));
                         break;
                     }
@@ -433,11 +429,7 @@ fn subdivide(
     let perp = (-dy / len, dx / len);
     // Coherent displacement: low-freq sample of x,y plus a depth-derived
     // z offset so successive levels of subdivision aren't correlated.
-    let n = warp.get([
-        mx * 0.05,
-        my * 0.05,
-        (depth as f64) * 0.73 + 0.17,
-    ]);
+    let n = warp.get([mx * 0.05, my * 0.05, (depth as f64) * 0.73 + 0.17]);
     let amp = len * MEANDER_AMPLITUDE * n;
     let mut m = (mx + perp.0 * amp, my + perp.1 * amp);
     // Guard against the meander pushing the river across a coastline. The
@@ -456,12 +448,7 @@ fn subdivide(
     subdivide(m, b, warp, depth + 1, out, elev_field, sea_level);
 }
 
-fn is_land(
-    elev_field: &super::noise::ElevationField,
-    sea_level: f64,
-    x: f64,
-    y: f64,
-) -> bool {
+fn is_land(elev_field: &super::noise::ElevationField, sea_level: f64, x: f64, y: f64) -> bool {
     let sphere = super::grid::xy_to_sphere(x, y);
     elev_field.sample(&sphere) > sea_level
 }
@@ -511,9 +498,7 @@ fn nearest_ocean(samples: &[Sample], from: usize, sea_level: f64) -> Option<usiz
         if j == from || s.elev > sea_level {
             continue;
         }
-        let dot = here[0] * s.sphere_pos[0]
-            + here[1] * s.sphere_pos[1]
-            + here[2] * s.sphere_pos[2];
+        let dot = here[0] * s.sphere_pos[0] + here[1] * s.sphere_pos[1] + here[2] * s.sphere_pos[2];
         let dist = 1.0 - dot;
         if best.is_none_or(|(_, d)| dist < d) {
             best = Some((j, dist));
@@ -634,12 +619,7 @@ mod tests {
             .grid
             .hexes
             .iter()
-            .filter(|h| {
-                !matches!(
-                    h.biome,
-                    Biome::DeepOcean | Biome::ShallowOcean
-                )
-            })
+            .filter(|h| !matches!(h.biome, Biome::DeepOcean | Biome::ShallowOcean))
             .count();
         assert!(
             land < map.grid.hexes.len() / 10,

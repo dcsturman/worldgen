@@ -517,12 +517,12 @@ mod tests {
             Candidate {
                 world: near_home.world.clone(),
                 distance: 1,
-            allegiance: None,
+                allegiance: None,
             },
             Candidate {
                 world: far_with_a.world.clone(),
                 distance: 1,
-            allegiance: None,
+                allegiance: None,
             },
         ];
         let early = pick_next(&cands_early, &market, &c_early).unwrap();
@@ -539,12 +539,12 @@ mod tests {
             Candidate {
                 world: near_home.world.clone(),
                 distance: 1,
-            allegiance: None,
+                allegiance: None,
             },
             Candidate {
                 world: far_with_a.world.clone(),
                 distance: 1,
-            allegiance: None,
+                allegiance: None,
             },
         ];
         let late = pick_next(&cands_late, &market, &c_late).unwrap();

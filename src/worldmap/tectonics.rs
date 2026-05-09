@@ -279,9 +279,8 @@ impl TectonicField {
         let warped = self.warp_sphere(sphere_pos);
         let mut best = (-2.0_f64, u8::MAX);
         for plate in &self.plates {
-            let d = plate.seed[0] * warped[0]
-                + plate.seed[1] * warped[1]
-                + plate.seed[2] * warped[2];
+            let d =
+                plate.seed[0] * warped[0] + plate.seed[1] * warped[1] + plate.seed[2] * warped[2];
             if d > best.0 {
                 best = (d, plate.id);
             }
@@ -343,7 +342,11 @@ impl TectonicField {
         } else {
             [-sphere_pos[1] / r_xy, sphere_pos[0] / r_xy, 0.0]
         };
-        let wind = [east[0] * east_sign, east[1] * east_sign, east[2] * east_sign];
+        let wind = [
+            east[0] * east_sign,
+            east[1] * east_sign,
+            east[2] * east_sign,
+        ];
 
         // Boundary normal points from plate a (this side) toward plate b. If wind
         // has a component toward b, this point is upwind (wind hits ridge after

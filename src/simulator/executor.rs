@@ -8,9 +8,9 @@
 //! route planner itself (`route::pick_next`) is sync.
 
 use crate::simulator::economy::{
-    self, ABORT_OVERFLOW_DAYS, ACCIDENT_CR_PER_STEP, DAYS_PER_WEEK, GOV_FINE_CR_PER_STEP,
-    INCIDENT_AVOID_THRESHOLD, NATURAL_INCIDENT_ROLL, PERIOD_DAYS, PLANETARY_BROKER_SKILL,
-    TRADE_SCAM_CR_PER_STEP, TURN_DAYS,
+    self, ABORT_OVERFLOW_DAYS, ACCIDENT_CR_PER_STEP, DAYS_IN_PORT, DAYS_PER_JUMP, DAYS_PER_WEEK,
+    GOV_FINE_CR_PER_STEP, INCIDENT_AVOID_THRESHOLD, NATURAL_INCIDENT_ROLL, PERIOD_DAYS,
+    PLANETARY_BROKER_SKILL, TRADE_SCAM_CR_PER_STEP,
 };
 use crate::simulator::incidents::{
     avoidance_modifier, incident_table_modifier, pirate_cargo, rescue_eta_days, roll_1d3, roll_1d6,
@@ -150,6 +150,15 @@ pub async fn run_simulation(
             );
             break;
         }
+
+        // (2b) Port stay: every visit eats `DAYS_IN_PORT` days for
+        // refuelling, trading, recruiting passengers, etc. This is the
+        // only place the date advances *while at port*, and it's what
+        // makes the per-visit "Arrived" and "Departed" dates differ in
+        // the captain's log. Incidents and complications add days *on
+        // top* of this in step (3).
+        current_date = current_date.add_days(DAYS_IN_PORT);
+        days_since_payment += DAYS_IN_PORT;
 
         // (3) Incident roll. Skipped on the very first iteration so the
         // initial Arrive at the home world doesn't trigger one. Any "weeks
@@ -379,12 +388,7 @@ pub async fn run_simulation(
         // worth the hold space — filling that ton with freight would pay
         // more reliably. Use the freight Cr/ton as a per-ton profit floor.
         let freight_floor = ShipManifest::freight_rate_per_ton(next.distance);
-        let buy_goods = pick_to_buy(
-            &market,
-            cargo_after_pax,
-            buy_budget,
-            freight_floor,
-        );
+        let buy_goods = pick_to_buy(&market, cargo_after_pax, buy_budget, freight_floor);
         for g in &buy_goods {
             // Apply purchase cost to budget *now* so each Buy step reflects
             // the cash outflow.
@@ -541,8 +545,9 @@ pub async fn run_simulation(
         current_world = next.world.clone();
         current_ref = next_ref.clone();
         current_allegiance = next.allegiance.clone();
-        current_date = current_date.add_days(TURN_DAYS);
-        days_since_payment += TURN_DAYS;
+        // Jump time only — the port stay was already added at step (2b).
+        current_date = current_date.add_days(DAYS_PER_JUMP);
+        days_since_payment += DAYS_PER_JUMP;
         jumps_taken += 1;
         total_parsecs_jumped += next.distance.max(0) as u32;
 

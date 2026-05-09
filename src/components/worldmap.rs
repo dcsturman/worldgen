@@ -77,11 +77,8 @@ pub fn WorldMap() -> impl IntoView {
                 };
                 error.set(None);
                 yield_to_browser().await;
-                let mut job = worldmap::RasterJob::new(
-                    &map,
-                    worldmap::SVG_RASTER_W,
-                    worldmap::SVG_RASTER_H,
-                );
+                let mut job =
+                    worldmap::RasterJob::new(&map, worldmap::SVG_RASTER_W, worldmap::SVG_RASTER_H);
                 job.step_elevation(&map);
                 yield_to_browser().await;
                 job.step_color(&map);

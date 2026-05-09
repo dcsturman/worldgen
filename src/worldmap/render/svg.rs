@@ -47,8 +47,7 @@ impl SvgRenderer {
 /// Minimal RFC 4648 base64 encoder. Inlined to avoid pulling in a crate
 /// for the one place we need it (PNG → data URL for SVG embed).
 fn base64_encode(data: &[u8]) -> String {
-    const TABLE: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
     let mut i = 0;
     while i + 3 <= data.len() {
@@ -83,13 +82,7 @@ fn fmt_color(c: Color) -> String {
     if c.3 == 255 {
         format!("rgb({},{},{})", c.0, c.1, c.2)
     } else {
-        format!(
-            "rgba({},{},{},{:.3})",
-            c.0,
-            c.1,
-            c.2,
-            c.3 as f32 / 255.0
-        )
+        format!("rgba({},{},{},{:.3})", c.0, c.1, c.2, c.3 as f32 / 255.0)
     }
 }
 

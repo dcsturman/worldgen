@@ -1,9 +1,7 @@
 //! PNG (raster) backend via tiny-skia. Same primitive interface as SVG.
 
 use ab_glyph::{Font, FontRef, PxScale, ScaleFont};
-use tiny_skia::{
-    Color as SkColor, FillRule, Paint, PathBuilder, Pixmap, Rect, Stroke, Transform,
-};
+use tiny_skia::{Color as SkColor, FillRule, Paint, PathBuilder, Pixmap, Rect, Stroke, Transform};
 
 use super::{Color, Renderer};
 
@@ -21,9 +19,8 @@ impl PngRenderer {
     pub fn new(width: f64, height: f64, scale: f64) -> Result<Self, String> {
         let w = (width * scale).ceil() as u32;
         let h = (height * scale).ceil() as u32;
-        let pixmap = Pixmap::new(w, h).ok_or_else(|| {
-            format!("tiny_skia::Pixmap::new failed for {w}x{h}")
-        })?;
+        let pixmap = Pixmap::new(w, h)
+            .ok_or_else(|| format!("tiny_skia::Pixmap::new failed for {w}x{h}"))?;
         Ok(Self {
             pixmap,
             transform: Transform::from_scale(scale as f32, scale as f32),
@@ -49,9 +46,8 @@ impl PngRenderer {
                 rgba.len()
             ));
         }
-        let mut pixmap = Pixmap::new(pixel_w, pixel_h).ok_or_else(|| {
-            format!("tiny_skia::Pixmap::new failed for {pixel_w}x{pixel_h}")
-        })?;
+        let mut pixmap = Pixmap::new(pixel_w, pixel_h)
+            .ok_or_else(|| format!("tiny_skia::Pixmap::new failed for {pixel_w}x{pixel_h}"))?;
         // tiny_skia stores premultiplied RGBA. Our raster pixels are all
         // alpha=255, so straight RGBA == premultiplied for them — direct
         // copy is correct.

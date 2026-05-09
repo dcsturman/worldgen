@@ -10,8 +10,8 @@
 
 use std::time::Duration;
 
-use futures_util::{SinkExt, StreamExt};
 use futures_util::stream::SplitStream;
+use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio_tungstenite::WebSocketStream;

@@ -199,9 +199,7 @@ pub fn build_route_map_data(waypoints: &[MapWaypoint]) -> Option<RouteMapData> {
     let half_h = TILE_IMAGE_HEIGHT as f64 / 2.0;
     let waypoints_px: Vec<Option<(f64, f64)>> = map_coords
         .into_iter()
-        .map(|opt| {
-            opt.map(|(mx, my)| ((mx - cx) * s + half_w, (cy - my) * s + half_h))
-        })
+        .map(|opt| opt.map(|(mx, my)| ((mx - cx) * s + half_w, (cy - my) * s + half_h)))
         .collect();
 
     Some(RouteMapData {
@@ -308,8 +306,16 @@ mod tests {
         }];
         let data = build_route_map_data(&wps).unwrap();
         let (px, py) = data.waypoints_px[0].unwrap();
-        assert!((px - (TILE_IMAGE_WIDTH as f64 / 2.0)).abs() < 0.01, "px={}", px);
-        assert!((py - (TILE_IMAGE_HEIGHT as f64 / 2.0)).abs() < 0.01, "py={}", py);
+        assert!(
+            (px - (TILE_IMAGE_WIDTH as f64 / 2.0)).abs() < 0.01,
+            "px={}",
+            px
+        );
+        assert!(
+            (py - (TILE_IMAGE_HEIGHT as f64 / 2.0)).abs() < 0.01,
+            "py={}",
+            py
+        );
     }
 
     #[test]
@@ -334,7 +340,12 @@ mod tests {
         let data = build_route_map_data(&wps).unwrap();
         let (_, py0) = data.waypoints_px[0].unwrap();
         let (_, py1) = data.waypoints_px[1].unwrap();
-        assert!(py1 > py0, "expected rimward hex below coreward; got {} vs {}", py1, py0);
+        assert!(
+            py1 > py0,
+            "expected rimward hex below coreward; got {} vs {}",
+            py1,
+            py0
+        );
     }
 
     #[test]

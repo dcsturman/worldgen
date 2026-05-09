@@ -14,7 +14,10 @@ use super::grid::Grid;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Feature {
     /// `starport` flags the single most important city per world; rendered red.
-    City { tier: CityTier, starport: bool },
+    City {
+        tier: CityTier,
+        starport: bool,
+    },
     PolarIce,
 }
 
@@ -57,23 +60,23 @@ fn place_polar_ice(grid: &mut Grid) {
 /// settles near 90%.
 fn tl_urban_base(tl: u8) -> f64 {
     match tl {
-        0 => 0.05,         // hunter-gatherer
-        1 => 0.08,         // bronze age
-        2 => 0.12,         // iron age / classical
-        3 => 0.18,         // medieval
-        4 => 0.30,         // early industrial / steam
-        5 => 0.45,         // mature industrial
-        6 => 0.55,         // mechanized
-        7 => 0.65,         // atomic / nuclear
-        8 => 0.75,         // information age (current Earth)
-        9 => 0.82,         // pre-stellar / fusion
-        10 => 0.87,        // early stellar (jump-1)
-        11 => 0.89,        // average stellar
-        12 => 0.90,        // imperial average
-        13 => 0.91,        // advanced
-        14 => 0.92,        // very advanced
-        15 => 0.93,        // maximum imperial
-        _ => 0.95,         // exceptional / Ancients
+        0 => 0.05,  // hunter-gatherer
+        1 => 0.08,  // bronze age
+        2 => 0.12,  // iron age / classical
+        3 => 0.18,  // medieval
+        4 => 0.30,  // early industrial / steam
+        5 => 0.45,  // mature industrial
+        6 => 0.55,  // mechanized
+        7 => 0.65,  // atomic / nuclear
+        8 => 0.75,  // information age (current Earth)
+        9 => 0.82,  // pre-stellar / fusion
+        10 => 0.87, // early stellar (jump-1)
+        11 => 0.89, // average stellar
+        12 => 0.90, // imperial average
+        13 => 0.91, // advanced
+        14 => 0.92, // very advanced
+        15 => 0.93, // maximum imperial
+        _ => 0.95,  // exceptional / Ancients
     }
 }
 
@@ -328,4 +331,3 @@ mod tests {
         assert!(matches!(sizes[0].0, CityTier::Major | CityTier::Megacity));
     }
 }
-

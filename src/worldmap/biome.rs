@@ -79,7 +79,6 @@ pub fn assign_biomes(
     sea_level: f64,
     base_seed: u64,
 ) {
-
     let faces = grid.faces.clone();
 
     for hex in &mut grid.hexes {
@@ -192,10 +191,18 @@ pub fn compute_sea_level(grid: &Grid, uwp: &Uwp, rng: &mut ChaCha8Rng) -> f64 {
     let hydro = uwp.hydrographics().min(10);
     let frac_water: f64 = match hydro {
         0 => {
-            if rng.random_bool(0.5) { 0.0 } else { rng.random_range(0.0..0.05) }
+            if rng.random_bool(0.5) {
+                0.0
+            } else {
+                rng.random_range(0.0..0.05)
+            }
         }
         10 => {
-            if rng.random_bool(0.5) { 1.0 } else { rng.random_range(0.95..1.0) }
+            if rng.random_bool(0.5) {
+                1.0
+            } else {
+                rng.random_range(0.95..1.0)
+            }
         }
         n => {
             let lo = (n as f64 - 1.0) * 0.10 + 0.05;

@@ -3,6 +3,7 @@
 //! This module provides client-side WebSocket communication for syncing
 //! trade state between multiple clients through the trade server.
 
+pub mod captains_log;
 pub mod client;
 mod state;
 

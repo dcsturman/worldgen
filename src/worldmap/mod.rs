@@ -61,11 +61,21 @@ impl Uwp {
         }
         Ok(Uwp(out))
     }
-    pub fn size(&self) -> u8 { self.0[1] }
-    pub fn atmosphere(&self) -> u8 { self.0[2] }
-    pub fn hydrographics(&self) -> u8 { self.0[3] }
-    pub fn population(&self) -> u8 { self.0[4] }
-    pub fn tech_level(&self) -> u8 { self.0[7] }
+    pub fn size(&self) -> u8 {
+        self.0[1]
+    }
+    pub fn atmosphere(&self) -> u8 {
+        self.0[2]
+    }
+    pub fn hydrographics(&self) -> u8 {
+        self.0[3]
+    }
+    pub fn population(&self) -> u8 {
+        self.0[4]
+    }
+    pub fn tech_level(&self) -> u8 {
+        self.0[7]
+    }
 }
 
 impl std::fmt::Display for Uwp {
@@ -129,8 +139,8 @@ pub fn generate(uwp: &str, seed: u64) -> Result<WorldMap, MapError> {
     // downstream sample (per-hex, per-pixel raster, sub-samples) gets the
     // tectonic uplift baked in.
     let tectonic_field = tectonics::TectonicField::from_uwp(&uwp, tectonic_seed);
-    let elev_field = noise::ElevationField::from_uwp(&uwp, elev_seed)
-        .with_tectonics(tectonic_field);
+    let elev_field =
+        noise::ElevationField::from_uwp(&uwp, elev_seed).with_tectonics(tectonic_field);
     let humidity_field = climate::HumidityField::from_uwp(&uwp, humidity_seed);
     let temp_field = climate::TempField::from_uwp(&uwp, temp_seed);
 
@@ -283,12 +293,12 @@ mod tests {
     #[ignore]
     fn dump_samples() {
         let cases = [
-            ("garden", "A788899-A"),  // hyd 8 garden
-            ("earth", "C886977-8"),   // real-Earth UWP (hyd 6)
+            ("garden", "A788899-A"), // hyd 8 garden
+            ("earth", "C886977-8"),  // real-Earth UWP (hyd 6)
             ("waterworld", "A78A899-A"),
             ("desert", "A780899-A"),
-            ("ice", "A300077-A"),     // small + thin atmo + low pop
-            ("urban", "A8888AA-A"),   // pop A
+            ("ice", "A300077-A"),   // small + thin atmo + low pop
+            ("urban", "A8888AA-A"), // pop A
         ];
         for (name, uwp) in cases {
             let map = generate(uwp, 1).unwrap();
@@ -380,7 +390,11 @@ mod tests {
                     continue;
                 }
                 let raw_t = climate::temperature_at(&sphere, climate::TEMP_AMPLITUDE);
-                let t = climate::apply_lapse(climate::adjust_temperature(raw_t, &map.uwp), above, &map.uwp);
+                let t = climate::apply_lapse(
+                    climate::adjust_temperature(raw_t, &map.uwp),
+                    above,
+                    &map.uwp,
+                );
                 let mut hu = map.humidity_field.sample(&sphere, &map.uwp);
                 if let Some(tf) = tec {
                     hu = colormap::rain_shadow_adjustment(hu, tf.rain_shadow_at(&sphere));
@@ -396,10 +410,15 @@ mod tests {
                 } else if t < 0.32 {
                     if hu < 0.32 { "tundra" } else { "taiga" }
                 } else if t < 0.6 {
-                    if hu < 0.40 { "steppe" }
-                    else if hu < 0.60 { "grassland" }
-                    else if hu < 0.78 { "temperate forest" }
-                    else { "temperate rainforest" }
+                    if hu < 0.40 {
+                        "steppe"
+                    } else if hu < 0.60 {
+                        "grassland"
+                    } else if hu < 0.78 {
+                        "temperate forest"
+                    } else {
+                        "temperate rainforest"
+                    }
                 } else if hu < 0.25 {
                     "desert"
                 } else if hu < 0.5 {
@@ -413,9 +432,13 @@ mod tests {
                 // apply_rocky_overlay (>=0.32) and apply_snow_overlay
                 // (>=0.5 with temp<0.5).
                 let label: &'static str = if above >= 0.32 {
-                    if t < 0.5 && above >= 0.5 { "snowy peak" }
-                    else if t >= 0.6 && hu < 0.35 { "rocky highland (sandy)" }
-                    else { "rocky highland (gray)" }
+                    if t < 0.5 && above >= 0.5 {
+                        "snowy peak"
+                    } else if t >= 0.6 && hu < 0.35 {
+                        "rocky highland (sandy)"
+                    } else {
+                        "rocky highland (gray)"
+                    }
                 } else {
                     base
                 };
@@ -489,7 +512,11 @@ mod tests {
                     continue; // skip ocean — it's a depth ramp, no single swatch
                 }
                 let raw_t = climate::temperature_at(&sphere, climate::TEMP_AMPLITUDE);
-                let t = climate::apply_lapse(climate::adjust_temperature(raw_t, &map.uwp), above, &map.uwp);
+                let t = climate::apply_lapse(
+                    climate::adjust_temperature(raw_t, &map.uwp),
+                    above,
+                    &map.uwp,
+                );
                 let mut hu = map.humidity_field.sample(&sphere, &map.uwp);
                 if let Some(tf) = tec {
                     hu = colormap::rain_shadow_adjustment(hu, tf.rain_shadow_at(&sphere));
@@ -503,23 +530,40 @@ mod tests {
                 // Pick the legend swatch the user expects to see here.
                 let expected = expected_biome_color(t, hu, above);
                 total += 1;
-                let dist = (r as i32 - expected.0 as i32).abs()
+                let dist = (r as i32 - expected.0 as i32)
+                    .abs()
                     .max((g as i32 - expected.1 as i32).abs())
                     .max((b as i32 - expected.2 as i32).abs());
-                let bucket = if dist == 0 { 0 }
-                    else if dist <= 5 { 1 }
-                    else if dist <= 10 { 2 }
-                    else if dist <= 20 { 3 }
-                    else if dist <= 40 { 4 }
-                    else if dist <= 80 { 5 }
-                    else { 6 };
+                let bucket = if dist == 0 {
+                    0
+                } else if dist <= 5 {
+                    1
+                } else if dist <= 10 {
+                    2
+                } else if dist <= 20 {
+                    3
+                } else if dist <= 40 {
+                    4
+                } else if dist <= 80 {
+                    5
+                } else {
+                    6
+                };
                 buckets[bucket] += 1;
             }
         }
 
         eprintln!("--- pixel-vs-INTENDED-biome audit, Earth, seed 1 ---");
         eprintln!("total land pixels: {total}");
-        let labels = ["= legend  ", "≤5 LSB    ", "≤10 LSB   ", "≤20 LSB   ", "≤40 LSB   ", "≤80 LSB   ", ">80 LSB   "];
+        let labels = [
+            "= legend  ",
+            "≤5 LSB    ",
+            "≤10 LSB   ",
+            "≤20 LSB   ",
+            "≤40 LSB   ",
+            "≤80 LSB   ",
+            ">80 LSB   ",
+        ];
         for (i, label) in labels.iter().enumerate() {
             let c = buckets[i];
             let pct = 100.0 * c as f64 / total as f64;
@@ -547,20 +591,32 @@ mod tests {
             };
         }
         // Base biome.
-        if t < 0.10 { return C_ICE_CAP; }
+        if t < 0.10 {
+            return C_ICE_CAP;
+        }
         if t < 0.32 {
             return if h < 0.32 { C_TUNDRA } else { C_TAIGA };
         }
         if t < 0.6 {
-            return if h < 0.40 { C_STEPPE }
-                else if h < 0.60 { C_GRASSLAND }
-                else if h < 0.78 { C_TEMPERATE_FOREST }
-                else { C_TEMPERATE_RAINFOREST };
+            return if h < 0.40 {
+                C_STEPPE
+            } else if h < 0.60 {
+                C_GRASSLAND
+            } else if h < 0.78 {
+                C_TEMPERATE_FOREST
+            } else {
+                C_TEMPERATE_RAINFOREST
+            };
         }
-        if h < 0.25 { C_DESERT_SAND }
-        else if h < 0.5 { C_SAVANNA }
-        else if h < 0.7 { C_TROP_SEASONAL_FOREST }
-        else { C_JUNGLE }
+        if h < 0.25 {
+            C_DESERT_SAND
+        } else if h < 0.5 {
+            C_SAVANNA
+        } else if h < 0.7 {
+            C_TROP_SEASONAL_FOREST
+        } else {
+            C_JUNGLE
+        }
     }
 
     /// Honest audit: classify every rendered pixel by its distance to the
@@ -595,20 +651,29 @@ mod tests {
             total += 1;
             let mut min_d = i32::MAX;
             for &(pr, pg, pb) in LEGEND_PALETTE {
-                let d = (r as i32 - pr as i32).abs()
+                let d = (r as i32 - pr as i32)
+                    .abs()
                     .max((g as i32 - pg as i32).abs())
                     .max((b as i32 - pb as i32).abs());
                 if d < min_d {
                     min_d = d;
                 }
             }
-            let bucket = if min_d == 0 { 0 }
-                else if min_d <= 5 { 1 }
-                else if min_d <= 10 { 2 }
-                else if min_d <= 20 { 3 }
-                else if min_d <= 40 { 4 }
-                else if min_d <= 80 { 5 }
-                else { 6 };
+            let bucket = if min_d == 0 {
+                0
+            } else if min_d <= 5 {
+                1
+            } else if min_d <= 10 {
+                2
+            } else if min_d <= 20 {
+                3
+            } else if min_d <= 40 {
+                4
+            } else if min_d <= 80 {
+                5
+            } else {
+                6
+            };
             buckets[bucket] += 1;
             if min_d > worst.3 {
                 worst = (r, g, b, min_d);
@@ -617,14 +682,24 @@ mod tests {
 
         eprintln!("--- pixel-vs-palette audit, Earth UWP, seed 1 ---");
         eprintln!("total non-space pixels: {total}");
-        let labels = ["= palette  ", "≤5 LSB    ", "≤10 LSB   ", "≤20 LSB   ", "≤40 LSB   ", "≤80 LSB   ", ">80 LSB   "];
+        let labels = [
+            "= palette  ",
+            "≤5 LSB    ",
+            "≤10 LSB   ",
+            "≤20 LSB   ",
+            "≤40 LSB   ",
+            "≤80 LSB   ",
+            ">80 LSB   ",
+        ];
         for (i, label) in labels.iter().enumerate() {
             let c = buckets[i];
             let pct = 100.0 * c as f64 / total as f64;
             eprintln!("  {label} {c:8}  {pct:5.2}%");
         }
-        eprintln!("worst pixel: rgb({}, {}, {})  distance from nearest palette = {}",
-                  worst.0, worst.1, worst.2, worst.3);
+        eprintln!(
+            "worst pixel: rgb({}, {}, {})  distance from nearest palette = {}",
+            worst.0, worst.1, worst.2, worst.3
+        );
     }
 
     #[test]
@@ -672,10 +747,7 @@ mod tests {
                 .flat_map(|h| h.features.iter())
                 .filter(|f| matches!(f, features::Feature::City { .. }))
                 .count();
-            assert!(
-                cities > 0,
-                "Pop 7 desert at seed {seed} placed no cities",
-            );
+            assert!(cities > 0, "Pop 7 desert at seed {seed} placed no cities",);
         }
     }
 

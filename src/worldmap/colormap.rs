@@ -127,7 +127,11 @@ fn ocean_color(elev_above_sea: f64, temp: f64) -> (u8, u8, u8) {
         return C_SEA_ICE;
     }
     let depth = (-elev_above_sea).max(0.0);
-    if depth < 0.04 { C_SHALLOW_OCEAN } else { C_DEEP_OCEAN }
+    if depth < 0.04 {
+        C_SHALLOW_OCEAN
+    } else {
+        C_DEEP_OCEAN
+    }
 }
 
 /// Temperature threshold below which a pixel renders as ice. Lowered from
@@ -326,20 +330,38 @@ mod tests {
             (0.10, 0.45, 0.10, C_STEPPE, "steppe"),
             (0.10, 0.45, 0.50, C_GRASSLAND, "grassland"),
             (0.10, 0.45, 0.70, C_TEMPERATE_FOREST, "temperate forest"),
-            (0.10, 0.45, 0.90, C_TEMPERATE_RAINFOREST, "temperate rainforest"),
+            (
+                0.10,
+                0.45,
+                0.90,
+                C_TEMPERATE_RAINFOREST,
+                "temperate rainforest",
+            ),
             // Desert at humidity 0.10 + temp 0.61: red weight is
             // ((0.61-0.6)/0.4)*0.4 = 0.01, dry = (0.15/0.25) = 0.60, so
             // red*dry ~ 0.006 — color is essentially C_DESERT_SAND.
             (0.10, 0.61, 0.10, C_DESERT_SAND, "desert (sand)"),
             (0.10, 0.70, 0.40, C_SAVANNA, "savanna"),
-            (0.10, 0.70, 0.60, C_TROP_SEASONAL_FOREST, "trop. seasonal forest"),
+            (
+                0.10,
+                0.70,
+                0.60,
+                C_TROP_SEASONAL_FOREST,
+                "trop. seasonal forest",
+            ),
             (0.10, 0.70, 0.85, C_JUNGLE, "jungle"),
             // Ocean: deep (well past the shelf) for the C_DEEP_OCEAN
             // endpoint, and exactly at sea level (depth 0) for the
             // C_SHALLOW_OCEAN endpoint. Skip cold ocean (it blends to
             // sea-ice).
             (-0.10, 0.50, 0.50, C_DEEP_OCEAN, "deep ocean"),
-            (0.0_f64.next_down(), 0.50, 0.50, C_SHALLOW_OCEAN, "shallow ocean (sea level)"),
+            (
+                0.0_f64.next_down(),
+                0.50,
+                0.50,
+                C_SHALLOW_OCEAN,
+                "shallow ocean (sea level)",
+            ),
         ];
 
         for (elev, temp, hum, want, name) in samples {
@@ -395,11 +417,7 @@ mod tests {
                     let temp = (ti as f64) / 10.0;
                     let hum = (hi as f64) / 10.0;
                     let got = elevation_color(elev, temp, hum);
-                    let nearest = allowed
-                        .iter()
-                        .map(|c| sq_dist(got, *c))
-                        .min()
-                        .unwrap();
+                    let nearest = allowed.iter().map(|c| sq_dist(got, *c)).min().unwrap();
                     if nearest > max_dist_sq {
                         max_dist_sq = nearest;
                     }

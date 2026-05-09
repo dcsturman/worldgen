@@ -7,7 +7,7 @@ license = "MIT"
 [features]
 default = []
 # Backend feature enables native-only server code (tokio, firestore, etc.)
-backend = ["dep:tokio", "dep:tokio-tungstenite", "dep:futures-util", "dep:firestore", "dep:env_logger", "dep:rustls", "dep:reqwest", "dep:sentry", "dep:jsonwebtoken"]
+backend = ["dep:tokio", "dep:tokio-tungstenite", "dep:futures-util", "dep:firestore", "dep:env_logger", "dep:rustls", "dep:reqwest", "dep:sentry", "dep:jsonwebtoken", "dep:gcp_auth"]
 # Local development mode: connect directly to backend on 8081 instead of through nginx
 local-dev = []
 
@@ -60,6 +60,11 @@ sentry = { version = "0.34", default-features = false, features = ["backtrace", 
 # pick `rust_crypto` (pure-Rust) over `aws_lc_rs` to avoid pulling in
 # another native C crypto lib alongside ring (which we already use via rustls).
 jsonwebtoken = { version = "10", default-features = false, features = ["use_pem", "rust_crypto"], optional = true }
+# gcp_auth is used by the captain's-log Vertex AI client to mint OAuth
+# bearer tokens from the existing GOOGLE_APPLICATION_CREDENTIALS service
+# account. It uses ring + rustls (already in our tree via Firestore) so
+# it adds no new C deps.
+gcp_auth = { version = "0.12", optional = true }
 
 [[bin]]
 name = "main"

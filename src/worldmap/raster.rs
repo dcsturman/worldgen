@@ -36,12 +36,7 @@ const CONT_DRYING: f64 = 0.18;
 /// compute (this is the dominant cost of PNG generation). The diagonal
 /// rotation still gives reasonable rotational symmetry without doubling
 /// up on cardinal directions.
-const CONT_OFFSETS: [(f64, f64); 4] = [
-    (0.7, 0.7),
-    (-0.7, 0.7),
-    (0.7, -0.7),
-    (-0.7, -0.7),
-];
+const CONT_OFFSETS: [(f64, f64); 4] = [(0.7, 0.7), (-0.7, 0.7), (0.7, -0.7), (-0.7, -0.7)];
 
 /// Fraction of a small ring of 2D offsets that are also land.
 /// 0 = surrounded by ocean, 1 = deep interior. Land-only; gate at caller.
@@ -196,7 +191,11 @@ impl RasterJob {
                 let above = above as f64;
 
                 let raw_t = climate::temperature_at_wobbled(&sphere, &map.temp_field);
-                let t = climate::apply_lapse(climate::adjust_temperature(raw_t, &map.uwp), above, &map.uwp);
+                let t = climate::apply_lapse(
+                    climate::adjust_temperature(raw_t, &map.uwp),
+                    above,
+                    &map.uwp,
+                );
 
                 let mut h = map.humidity_field.sample(&sphere, &map.uwp);
                 if let Some(tec) = tectonics {
@@ -205,7 +204,12 @@ impl RasterJob {
                 h = climate::apply_altitude_drying(h, above);
                 if above > 0.0 {
                     let cont = continentality_from_grid(
-                        &self.elev, w_i32, h_i32, px as i32, py as i32, &self.cont_offsets,
+                        &self.elev,
+                        w_i32,
+                        h_i32,
+                        px as i32,
+                        py as i32,
+                        &self.cont_offsets,
                     );
                     h = apply_continentality(h, cont);
                 }
@@ -247,8 +251,7 @@ impl RasterJob {
                         const FLAT_LIMIT: f64 = 0.20;
                         const FULL_LIMIT: f64 = 0.50;
                         let slope = (dx * dx + dy * dy).sqrt();
-                        let tt = ((slope - FLAT_LIMIT) / (FULL_LIMIT - FLAT_LIMIT))
-                            .clamp(0.0, 1.0);
+                        let tt = ((slope - FLAT_LIMIT) / (FULL_LIMIT - FLAT_LIMIT)).clamp(0.0, 1.0);
                         let strength = tt * tt * (3.0 - 2.0 * tt);
                         if strength > 0.0 {
                             let lit = colormap::apply_hillshade(c, dx, dy);
@@ -307,9 +310,8 @@ impl RasterJob {
                 if !self.elev[i].is_nan() {
                     continue;
                 }
-                let hash = (px as u32)
-                    .wrapping_mul(0x9E37_79B9)
-                    ^ (py as u32).wrapping_mul(0xC2B2_AE35);
+                let hash =
+                    (px as u32).wrapping_mul(0x9E37_79B9) ^ (py as u32).wrapping_mul(0xC2B2_AE35);
                 let n = ((hash % 5) as i32) - 2;
                 let pi = i * 4;
                 self.rgba[pi] = (self.rgba[pi] as i32 + n).clamp(0, 255) as u8;
@@ -350,12 +352,10 @@ fn collect_faces(faces: &[Face]) -> Vec<BoundedTri> {
     faces
         .iter()
         .flat_map(|f| {
-            f.unfolded_positions
-                .iter()
-                .map(|tri| BoundedTri {
-                    aabb: aabb_of(tri),
-                    tri: *tri,
-                })
+            f.unfolded_positions.iter().map(|tri| BoundedTri {
+                aabb: aabb_of(tri),
+                tri: *tri,
+            })
         })
         .collect()
 }
