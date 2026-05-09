@@ -337,7 +337,7 @@ impl AvailablePassengers {
         );
 
         // Sort freight lots by size (largest first)
-        self.freight_lots.sort_by(|a, b| b.size.cmp(&a.size));
+        self.freight_lots.sort_by_key(|b| std::cmp::Reverse(b.size));
     }
 
     /// Generates the number of cargo lots for a specific cargo class

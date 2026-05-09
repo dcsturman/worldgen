@@ -1007,8 +1007,7 @@ fn SimForm(
                         let sector = home_sector.get();
                         let uwp = home_uwp.get();
                         let zone = home_zone.get();
-                        if coords.is_some() && !sector.is_empty() && uwp.len() == 9 {
-                            let (hx, hy) = coords.unwrap();
+                        if let Some((hx, hy)) = coords && !sector.is_empty() && uwp.len() == 9 {
                             view! {
                                 <div class="sim-home-detail">
                                     <div>

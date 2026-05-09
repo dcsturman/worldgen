@@ -761,7 +761,7 @@ pub fn WorldSearch(
                         }
                         if world_results.len() > MAX_SEARCH_RESULTS {
                             // Sort by world name length (shorter names first)
-                            world_results.sort_by(|a, b| a.0.len().cmp(&b.0.len()));
+                            world_results.sort_by_key(|a| a.0.len());
                             world_results.truncate(MAX_SEARCH_RESULTS);
                         }
 

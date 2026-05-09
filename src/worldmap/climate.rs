@@ -49,6 +49,7 @@ impl TempField {
 ///   - lat 60° (mid-latitude) → temp = 0.33 (temperate/cold threshold)
 ///   - lat 75° (sub-polar) → temp = 0.15 (ice/tundra threshold)
 ///   - lat 90° (pole) → temp ≈ 0.0
+///
 /// Maps `(cos(lat) - 0.05)` linearly through 0.735 so that lat 30° lands
 /// exactly on 0.60 — the previous shape clipped at 1.0 across a 32°-wide
 /// band, putting most of the polar caps' wide bottoms into hot biomes
@@ -180,6 +181,7 @@ fn relief_scale_for_hyd(hyd: u8) -> f64 {
 ///     greenhouse environments (Venus-like / Sahara-like) because there
 ///     are no oceans to absorb solar input. High-hyd worlds with thick
 ///     atmos cool slightly via ocean heat sinks.
+///
 /// Hyd modifier only applies for atmo ≥ 6 — you need actual atmosphere to
 /// retain heat. A Mars-like (atmo 1, hyd 0) gets no greenhouse boost.
 fn temperature_bias(uwp: &Uwp) -> f64 {

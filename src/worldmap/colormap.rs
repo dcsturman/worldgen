@@ -289,14 +289,6 @@ fn to_f64(c: (u8, u8, u8)) -> (f64, f64, f64) {
     (c.0 as f64, c.1 as f64, c.2 as f64)
 }
 
-fn lerp_rgb(a: (f64, f64, f64), b: (f64, f64, f64), t: f64) -> (f64, f64, f64) {
-    (
-        a.0 + (b.0 - a.0) * t,
-        a.1 + (b.1 - a.1) * t,
-        a.2 + (b.2 - a.2) * t,
-    )
-}
-
 fn clamp_rgb(c: (f64, f64, f64)) -> (u8, u8, u8) {
     (
         c.0.clamp(0.0, 255.0) as u8,

@@ -162,11 +162,10 @@ fn compute_flow(mut samples: Vec<Sample>, sea_level: f64) -> Vec<Sample> {
         let here_elev = samples[i].elev;
         let mut best: Option<usize> = None;
         let mut best_drop = 0.0;
-        for j in 0..n {
+        for (j, sj) in samples.iter().enumerate().take(n) {
             if i == j {
                 continue;
             }
-            let sj = &samples[j];
             let dot = here[0] * sj.sphere_pos[0]
                 + here[1] * sj.sphere_pos[1]
                 + here[2] * sj.sphere_pos[2];

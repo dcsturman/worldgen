@@ -118,21 +118,21 @@ fn write_voyage_header(
         if result.went_negative { "yes" } else { "no" }
     );
 
-    if result.marooned {
-        if let (Some(loc), Some(on)) = (result.marooned_at.as_ref(), result.marooned_on) {
-            let signal_arrives = result
-                .rescue_arrives_on
-                .map(|d| d.format())
-                .unwrap_or_else(|| "unknown".to_string());
-            let _ = writeln!(
-                out,
-                "MAROONED at {} on {}. Distress signal will reach home ({}) on {}. Actual rescue would take additional time after that.",
-                loc.name,
-                on.format(),
-                params.home_world.name,
-                signal_arrives,
-            );
-        }
+    if result.marooned
+        && let (Some(loc), Some(on)) = (result.marooned_at.as_ref(), result.marooned_on)
+    {
+        let signal_arrives = result
+            .rescue_arrives_on
+            .map(|d| d.format())
+            .unwrap_or_else(|| "unknown".to_string());
+        let _ = writeln!(
+            out,
+            "MAROONED at {} on {}. Distress signal will reach home ({}) on {}. Actual rescue would take additional time after that.",
+            loc.name,
+            on.format(),
+            params.home_world.name,
+            signal_arrives,
+        );
     }
 }
 

@@ -101,9 +101,7 @@ pub trait HasSatellites {
     /// This ensures consistent display order and simplifies orbital mechanics
     /// calculations. Called automatically by `clean_satellites()`.
     fn sort_satellites(&mut self) {
-        self.get_satellites_mut()
-            .sats
-            .sort_by(|a, b| a.orbit.cmp(&b.orbit));
+        self.get_satellites_mut().sats.sort_by_key(|a| a.orbit);
     }
 
     /// Consolidates ring systems and organizes satellite collection
