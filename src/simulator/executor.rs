@@ -607,6 +607,7 @@ pub async fn run_simulation(
 /// `manifest` to apply effects, emits one of the `Incident*` action
 /// variants, and returns the number of weeks lost so the caller can
 /// advance the simulation clock.
+#[allow(clippy::too_many_arguments)]
 fn run_incident_roll(
     params: &SimulationParams,
     current_world: &World,
