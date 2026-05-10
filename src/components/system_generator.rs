@@ -503,6 +503,17 @@ pub fn World() -> impl IntoView {
 
     let remove_row = move |id: u32| {
         rows.update(|rs| rs.retain(|r| r.id != id));
+        // Drop any orphaned per-row error attached to this row, otherwise
+        // `any_row_errors` stays true after the row that produced the
+        // error is gone and Generate stays disabled. If that empties the
+        // per-row error list, also clear the global "fix per-row errors
+        // above" banner — it's the only message `do_generate` writes
+        // while row errors exist, so wiping `global_errors` here is
+        // safe.
+        row_errors.update(|errs| errs.retain(|(rid, _)| *rid != id));
+        if row_errors.with(Vec::is_empty) {
+            global_errors.set(vec![]);
+        }
     };
 
     let do_generate = move || {

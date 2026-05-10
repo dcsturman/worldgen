@@ -67,8 +67,8 @@ impl Plate {
     /// `1/aspect`, so the plate annexes more area in that direction and
     /// becomes elongated.
     pub fn proximity(&self, p: &[f64; 3]) -> f64 {
-        let cos_theta = (self.seed[0] * p[0] + self.seed[1] * p[1] + self.seed[2] * p[2])
-            .clamp(-1.0, 1.0);
+        let cos_theta =
+            (self.seed[0] * p[0] + self.seed[1] * p[1] + self.seed[2] * p[2]).clamp(-1.0, 1.0);
         if self.aspect <= 1.0 + 1e-6 {
             return cos_theta;
         }
@@ -82,9 +82,7 @@ impl Plate {
             p[1] - cos_theta * self.seed[1],
             p[2] - cos_theta * self.seed[2],
         ];
-        let m = (perp_raw[0] * perp_raw[0]
-            + perp_raw[1] * perp_raw[1]
-            + perp_raw[2] * perp_raw[2])
+        let m = (perp_raw[0] * perp_raw[0] + perp_raw[1] * perp_raw[1] + perp_raw[2] * perp_raw[2])
             .sqrt();
         if m < 1e-9 {
             return 1.0;

@@ -682,72 +682,97 @@ pub fn WorldSearch(
         }
     };
 
-    // Handle selection from datalist
+    // Handle commit from the input — fires on `change` (blur or Enter).
+    //
+    // Three paths, in order of preference:
+    //   1. The input matches the dropdown's formatted string
+    //      "Name (Sector) UWP" → look up that exact result.
+    //   2. The input is a bare name that case-insensitively matches a
+    //      result's world name → take that result.
+    //   3. The user typed something that drew matches but didn't pick
+    //      one → take the first result in the dropdown.
+    //
+    // Paths 2 and 3 fix the "type Glisten, blur away" bug where the
+    // bare name used to be committed with no UWP / coords / zone.
     let handle_selection = move |_| {
         let current_input = input_name.get();
-        // Parse the format: "WorldName (Sector) UWP"
-        let (world_name, sector_name) = if let Some(paren_start) = current_input.find(" (") {
-            if let Some(paren_end) = current_input.find(") ") {
-                let world_name = &current_input[..paren_start];
-                let sector_name = &current_input[paren_start + 2..paren_end];
-                (world_name, sector_name)
-            } else {
-                return; // Invalid format
-            }
-        } else {
-            return; // Invalid format
-        };
-
-        let mut found = false;
-        for (search_name, result_sector, world_uwp, hex_x, hex_y) in search_results.get() {
-            if world_name == search_name && sector_name == result_sector {
-                let hex_string = format!("{:02}{:02}", hex_x, hex_y);
-
-                // Commit the name to just the world name
-                commit_name(world_name.to_string());
-
-                if let Some(s) = sector {
-                    s.set(result_sector.clone());
-                }
-
-                wasm_bindgen_futures::spawn_local(async move {
-                    match fetch_data_world(&result_sector, &hex_string).await {
-                        Ok(world_data) => {
-                            let world_zone = match world_data.zone {
-                                Some(zone) => match zone.as_str() {
-                                    "A" => ZoneClassification::Amber,
-                                    "R" => ZoneClassification::Red,
-                                    _ => ZoneClassification::Green,
-                                },
-                                None => ZoneClassification::Green,
-                            };
-                            zone.set(world_zone);
-                            if let Some(s) = stellar {
-                                s.set(world_data.stellar.clone());
-                            }
-                            if let Some(p) = pbg {
-                                p.set(world_data.pbg.clone());
-                            }
-                            commit_uwp(world_data.uwp);
-                        }
-                        Err(err) => {
-                            log::error!("Error fetching world data: {err:?}");
-                            // Fallback to the UWP from search results
-                            commit_uwp(world_uwp);
-                        }
-                    }
-                });
-                coords.set(Some((hex_x, hex_y)));
-                found = true;
-                break;
-            }
+        if current_input.trim().is_empty() {
+            return;
         }
-        if !found {
+        let results = search_results.get();
+
+        // Path 1: parens-formatted dropdown string.
+        let parens_pick = current_input
+            .find(" (")
+            .and_then(|paren_start| {
+                current_input
+                    .find(") ")
+                    .map(|paren_end| (paren_start, paren_end))
+            })
+            .and_then(|(start, end)| {
+                let world_name = &current_input[..start];
+                let sector_name = &current_input[start + 2..end];
+                results
+                    .iter()
+                    .find(|(n, s, ..)| n == world_name && s == sector_name)
+                    .cloned()
+            });
+
+        // Paths 2/3: bare name typed in; prefer an exact (case-insensitive)
+        // name match, then fall back to the first result.
+        let pick = parens_pick.or_else(|| {
+            let typed = current_input.trim();
+            results
+                .iter()
+                .find(|(n, ..)| n.eq_ignore_ascii_case(typed))
+                .cloned()
+                .or_else(|| results.first().cloned())
+        });
+
+        let Some((search_name, result_sector, world_uwp, hex_x, hex_y)) = pick else {
+            // Nothing in the dropdown to pick from — leave the bare
+            // input committed but clear downstream state so the rest
+            // of the UI doesn't pretend we know which world it is.
             coords.set(None);
             if let Some(s) = sector {
                 s.set(String::new());
             }
+            return;
+        };
+
+        let hex_string = format!("{:02}{:02}", hex_x, hex_y);
+        commit_name(search_name.clone());
+        if let Some(s) = sector {
+            s.set(result_sector.clone());
         }
+        let sector_for_fetch = result_sector.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            match fetch_data_world(&sector_for_fetch, &hex_string).await {
+                Ok(world_data) => {
+                    let world_zone = match world_data.zone {
+                        Some(z) => match z.as_str() {
+                            "A" => ZoneClassification::Amber,
+                            "R" => ZoneClassification::Red,
+                            _ => ZoneClassification::Green,
+                        },
+                        None => ZoneClassification::Green,
+                    };
+                    zone.set(world_zone);
+                    if let Some(s) = stellar {
+                        s.set(world_data.stellar.clone());
+                    }
+                    if let Some(p) = pbg {
+                        p.set(world_data.pbg.clone());
+                    }
+                    commit_uwp(world_data.uwp);
+                }
+                Err(err) => {
+                    log::error!("Error fetching world data: {err:?}");
+                    commit_uwp(world_uwp);
+                }
+            }
+        });
+        coords.set(Some((hex_x, hex_y)));
     };
 
     // Debounced search function - watch the input_name signal for changes
