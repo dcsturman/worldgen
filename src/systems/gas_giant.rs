@@ -41,7 +41,7 @@ use crate::systems::has_satellites::HasSatellites;
 use crate::systems::name_tables::{gen_moon_name, gen_planet_name};
 use crate::systems::system::Star;
 use crate::systems::system_tables::ZoneTable;
-use crate::systems::world::{Satellites, World};
+use crate::systems::world::{Satellites, World, force_lifeless};
 use crate::trade::PortCode;
 use crate::util::{arabic_to_roman, roll_1d6, roll_2d6};
 use std::fmt::Display;
@@ -334,20 +334,24 @@ impl HasSatellites for GasGiant {
             hydro = 0;
         }
 
-        let population = (roll_2d6() - 2
-            + if orbit as i32 <= system_zones.inner {
-                -5
-            } else if orbit as i32 > system_zones.habitable {
-                -4
-            } else {
-                0
-            }
-            + if ![5, 6, 8].contains(&atmosphere) {
-                -2
-            } else {
-                0
-            })
-        .clamp(0, 10);
+        let population = if force_lifeless(main_world, atmosphere) {
+            0
+        } else {
+            (roll_2d6() - 2
+                + if orbit as i32 <= system_zones.inner {
+                    -5
+                } else if orbit as i32 > system_zones.habitable {
+                    -4
+                } else {
+                    0
+                }
+                + if ![5, 6, 8].contains(&atmosphere) {
+                    -2
+                } else {
+                    0
+                })
+            .clamp(0, 10)
+        };
 
         let satellite_name = gen_moon_name();
         let mut satellite = World::new(

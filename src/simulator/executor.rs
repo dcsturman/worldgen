@@ -63,7 +63,7 @@ pub async fn run_simulation(
     let mut jumps_taken: u32 = 0;
 
     let mut current_world =
-        World::from_upp(&params.home_world.name, &params.home_world.uwp, false, true).map_err(
+        World::from_uwp(&params.home_world.name, &params.home_world.uwp, false, true).map_err(
             |e| ExecutorError::InvalidHomeUwp(format!("{}: {}", params.home_world.uwp, e)),
         )?;
     current_world.gen_trade_classes();

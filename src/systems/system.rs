@@ -38,12 +38,92 @@ use rand::prelude::IndexedRandom;
 use reactive_stores::Store;
 use std::fmt::Display;
 
+use crate::systems::constraint::{Constraint, ConstraintError, PartialUwp, SystemConstraints};
 use crate::systems::gas_giant::{GasGiant, GasGiantSize};
 use crate::systems::has_satellites::HasSatellites;
 use crate::systems::name_tables::gen_star_system_name;
 use crate::systems::system_tables::get_zone;
 use crate::systems::world::World;
 use crate::util::{roll_1d6, roll_2d6, roll_10};
+
+/// Overrides for one star — primary, secondary, or tertiary.
+/// `None` on any field means "roll as today."
+#[derive(Default, Debug, Clone, Copy)]
+pub struct StarOverride {
+    pub orbit: Option<StarOrbit>,
+    pub spectral: Option<StarType>,
+    pub subtype: Option<u8>,
+    pub size: Option<StarSize>,
+}
+
+#[derive(Default, Debug, Clone, Copy)]
+pub struct GasGiantOverride {
+    pub size: Option<GasGiantSize>,
+    pub num_satellites: Option<i32>,
+    /// `Some(o)` pins this giant to orbit `o` (skipped with a warn if
+    /// `o` is already claimed or out of range). `None` lets the
+    /// random viable-orbit picker choose.
+    pub orbit: Option<i32>,
+}
+
+#[derive(Default, Debug, Clone)]
+pub struct PlanetOverride {
+    pub name: Option<String>,
+    pub orbit: Option<i32>,
+    /// User-specified UWP columns. `None` (or all-wild) rolls every
+    /// digit; a fully-specified `PartialUwp` reproduces the classic
+    /// "from_uwp" path; anything in between fills the wild columns
+    /// via the same per-orbit / per-zone rolls `World::generate` uses.
+    pub partial_uwp: Option<PartialUwp>,
+    pub num_satellites: Option<i32>,
+}
+
+#[derive(Default, Debug, Clone)]
+pub struct BeltOverride {
+    pub name: Option<String>,
+    pub orbit: Option<i32>,
+    pub partial_uwp: Option<PartialUwp>,
+    pub num_satellites: Option<i32>,
+}
+
+#[derive(Default, Debug, Clone)]
+pub struct MoonOverride {
+    pub name: Option<String>,
+    pub parent_orbit: i32,
+    pub partial_uwp: Option<PartialUwp>,
+}
+
+/// Aggregate of every constraint-driven override the system generator
+/// honors. Stars and gas giants flow into the star/gas-giant gen
+/// passes; planets get placed before random world-fill; moons attach
+/// after satellite generation runs.
+#[derive(Default, Debug, Clone)]
+pub struct SystemOverrides {
+    /// First entry overrides the primary, second the secondary, third the
+    /// tertiary. Empty means "roll the count of stars and all their
+    /// types as today."
+    pub stars: Vec<StarOverride>,
+    /// `Some` overrides the random gas-giant count to `gas_giants.len()`
+    /// and applies the per-entry size/moon overrides in placement order.
+    /// `None` keeps today's random count.
+    pub gas_giants: Option<Vec<GasGiantOverride>>,
+    /// Pinned non-main-world planets. Placed before the random world
+    /// fill so they win the orbit; the fill loop skips them.
+    pub planets: Vec<PlanetOverride>,
+    /// Pinned planetoid belts. Placed alongside planets; size is
+    /// always forced to 0.
+    pub belts: Vec<BeltOverride>,
+    /// Orbits that the user explicitly marked empty — set to
+    /// `OrbitContent::Blocked` before any random pass so nothing
+    /// fills them.
+    pub empties: Vec<i32>,
+    /// Moons to attach to existing bodies after satellite generation.
+    pub moons: Vec<MoonOverride>,
+    /// Main world's num_moons override, threaded through fill_system_with
+    /// after place_main_world resolves the world's orbit. `None` rolls
+    /// the moon count as today.
+    pub main_world_num_satellites: Option<i32>,
+}
 
 /// A complete star system with primary star and optional companions
 ///
@@ -280,26 +360,102 @@ impl System {
         } else {
             0
         };
-        let mut system = gen_stars(star_mod, true);
+        let overrides = SystemOverrides::default();
+        let mut system = gen_stars(star_mod, true, &overrides);
         main_world.gen_trade_classes();
-        system.fill_system(main_world, true);
+        system.fill_system_with(main_world, true, &overrides);
         system
+    }
+
+    /// Constraint-driven entry point. The classic `generate_system(World)`
+    /// path is the special case of a single fully-specified
+    /// `Planet { is_mainworld: true }` constraint plus no overrides.
+    ///
+    /// What's wired today:
+    /// - Required: exactly one `Planet { is_mainworld: true }` with a
+    ///   fully-specified UWP. Partial UWPs and ordinary `Planet`/`Moon`
+    ///   rows still return `UnsupportedYet`.
+    /// - Honored: any number of `Star` constraints (used as primary +
+    ///   companion overrides); any number of `GasGiant` constraints
+    ///   (sets the gas-giant count and per-giant size/moon counts).
+    pub fn generate_from_constraints(
+        constraints: SystemConstraints,
+    ) -> Result<System, Vec<ConstraintError>> {
+        let errors = constraints.validate();
+        if !errors.is_empty() {
+            return Err(errors);
+        }
+
+        // The main-world Planet constraint still requires a fully-
+        // specified UWP — partial main-world UWPs need eager-roll
+        // logic (see design doc) that doesn't ship in this turn.
+        if let Some(Constraint::Planet {
+            uwp: Some(p),
+            is_mainworld: true,
+            ..
+        }) = constraints.main_world()
+            && !p.is_complete()
+        {
+            return Err(vec![ConstraintError::UnsupportedYet(
+                "partial UWPs on the main world aren't supported yet — supply every column"
+                    .to_string(),
+            )]);
+        }
+
+        let Some(Constraint::Planet {
+            name,
+            uwp: Some(uwp),
+            is_mainworld: true,
+            num_satellites: main_num_satellites,
+            ..
+        }) = constraints.main_world().cloned()
+        else {
+            return Err(vec![ConstraintError::UnsupportedYet(
+                "a fully-specified main-world Planet constraint is required".to_string(),
+            )]);
+        };
+
+        let uwp_string = uwp.to_string_with_wildcards();
+        let world_name = name.unwrap_or_else(|| "Main World".to_string());
+        let mut main_world =
+            World::from_uwp(&world_name, &uwp_string, false, true).map_err(|e| {
+                vec![ConstraintError::ContradictoryUwp(format!(
+                    "from_uwp({uwp_string:?}) failed: {e}"
+                ))]
+            })?;
+
+        let mut overrides = collect_overrides(&constraints);
+        overrides.main_world_num_satellites = main_num_satellites;
+
+        let star_mod = if (main_world.atmosphere >= 4 && main_world.atmosphere <= 9)
+            || main_world.get_population() >= 8
+        {
+            4
+        } else {
+            0
+        };
+        let mut system = gen_stars(star_mod, true, &overrides);
+        main_world.gen_trade_classes();
+        system.fill_system_with(main_world, true, &overrides);
+        Ok(system)
     }
 
     fn generate_companion(
         primary_type_roll: i32,
         primary_size_roll: i32,
         orbit: StarOrbit,
+        override_: StarOverride,
     ) -> System {
         let companion_type_roll = roll_2d6() + primary_type_roll;
         let companion_size_roll = roll_2d6() + primary_size_roll;
-        let mut companion: System = System::new(
-            gen_companion_star_type(companion_type_roll),
-            roll_10() as StarSubType,
-            gen_companion_star_size(companion_size_roll),
-            orbit,
-            0,
-        );
+        let star_type = override_
+            .spectral
+            .unwrap_or_else(|| gen_companion_star_type(companion_type_roll));
+        let subtype = override_.subtype.unwrap_or_else(|| roll_10() as StarSubType);
+        let star_size = override_
+            .size
+            .unwrap_or_else(|| gen_companion_star_size(companion_size_roll));
+        let mut companion: System = System::new(star_type, subtype, star_size, orbit, 0);
         companion.set_max_orbits(gen_max_orbits(&companion.star));
 
         if companion.orbit == StarOrbit::Far {
@@ -311,6 +467,7 @@ impl System {
                     companion_type_roll,
                     companion_size_roll,
                     orbit,
+                    StarOverride::default(),
                 ));
 
                 // If the secondary of the secondary is also in a FAR orbit, then it can have a full range of
@@ -365,28 +522,37 @@ impl System {
             .collect();
 
         while viable_giants.len() + viable_other_orbits.len() > 0 && num_planetoids > 0 {
+            // Pull the actual orbit value out of the candidate vec —
+            // pre-existing bug previously returned the random *index*
+            // (`pos`) as if it were an orbit, which both ignored the
+            // shuffle and could overwrite slots that weren't viable
+            // (e.g. an Empty-pinned Blocked orbit at index 0).
             let orbit = if !viable_giants.is_empty() {
                 let pos = rand::rng().random_range(0..viable_giants.len());
-                viable_giants.remove(pos);
-                pos
+                viable_giants.remove(pos)
             } else {
                 let pos = rand::rng().random_range(0..viable_other_orbits.len());
-                viable_other_orbits.remove(pos);
-                pos
+                viable_other_orbits.remove(pos)
             };
 
-            let population = (roll_2d6() - 2
-                + if orbit as i32 <= get_zone(&self.star).inner {
-                    -5
-                } else {
-                    0
-                }
-                + if orbit as i32 > get_zone(&self.star).habitable {
-                    -5
-                } else {
-                    0
-                })
-            .clamp(0, main_world.get_population() - 1);
+            // Belts have atmosphere 0, so the lifeless rule fires
+            // automatically when the system's main TL is < 7.
+            let population = if crate::systems::world::force_lifeless(main_world, 0) {
+                0
+            } else {
+                (roll_2d6() - 2
+                    + if orbit as i32 <= get_zone(&self.star).inner {
+                        -5
+                    } else {
+                        0
+                    }
+                    + if orbit as i32 > get_zone(&self.star).habitable {
+                        -5
+                    } else {
+                        0
+                    })
+                .clamp(0, main_world.get_population() - 1)
+            };
 
             let mut planetoid = World::new(
                 "Planetoid Belt".to_string(),
@@ -409,22 +575,31 @@ impl System {
         }
     }
 
-    fn gen_gas_giants(&mut self) -> i32 {
-        if roll_2d6() >= 10 {
-            // No gas giant in system
-            return 0;
-        }
-
-        let mut num_giants = match roll_2d6() {
-            1..=3 => 1,
-            4..=5 => 2,
-            6..=7 => 3,
-            8..=10 => 4,
-            _ => 5,
+    fn gen_gas_giants(
+        &mut self,
+        overrides: Option<&[GasGiantOverride]>,
+    ) -> (i32, std::collections::HashMap<usize, i32>) {
+        // When the user pinned a list of gas giants (typically via
+        // Traveller-Map autopop), the count is authoritative — even if
+        // the count is zero, which the random path would never produce.
+        let mut num_giants = if let Some(list) = overrides {
+            list.len() as i32
+        } else if roll_2d6() >= 10 {
+            return (0, std::collections::HashMap::new());
+        } else {
+            match roll_2d6() {
+                1..=3 => 1,
+                4..=5 => 2,
+                6..=7 => 3,
+                8..=10 => 4,
+                _ => 5,
+            }
         };
 
         num_giants = num_giants.min(count_open_orbits(self));
         let original_num_giants = num_giants;
+        let mut moon_overrides: std::collections::HashMap<usize, i32> =
+            std::collections::HashMap::new();
 
         let habitable = get_zone(&self.star).habitable;
 
@@ -462,8 +637,23 @@ impl System {
             })
             .collect();
 
+        let mut placed_idx = 0;
         while viable_outer_orbits.len() + viable_inner_orbits.len() > 0 && num_giants > 0 {
-            let orbit = if !viable_outer_orbits.is_empty() {
+            // If the override at this index pins an orbit and that
+            // orbit is currently viable (i.e. empty and within range),
+            // honor it. Otherwise fall back to the random pick.
+            let pinned_orbit: Option<usize> = overrides
+                .and_then(|list| list.get(placed_idx).and_then(|o| o.orbit))
+                .and_then(|o| if o >= 0 { Some(o as usize) } else { None })
+                .filter(|o| {
+                    viable_outer_orbits.contains(o) || viable_inner_orbits.contains(o)
+                });
+
+            let orbit = if let Some(o) = pinned_orbit {
+                viable_outer_orbits.retain(|x| *x != o);
+                viable_inner_orbits.retain(|x| *x != o);
+                o
+            } else if !viable_outer_orbits.is_empty() {
                 let pos = rand::rng().random_range(0..viable_outer_orbits.len());
 
                 viable_outer_orbits.remove(pos)
@@ -473,18 +663,33 @@ impl System {
                 viable_inner_orbits.remove(pos)
             };
 
-            if roll_1d6() <= 3 {
-                self.set_orbit_slot(
-                    orbit,
-                    OrbitContent::GasGiant(GasGiant::new(GasGiantSize::Small, orbit)),
-                );
-            } else {
-                self.set_orbit_slot(
-                    orbit,
-                    OrbitContent::GasGiant(GasGiant::new(GasGiantSize::Large, orbit)),
-                );
+            let (size, moon_override) = match overrides {
+                Some(list) => {
+                    let o = list.get(placed_idx).copied().unwrap_or_default();
+                    let size = o.size.unwrap_or_else(|| {
+                        if roll_1d6() <= 3 {
+                            GasGiantSize::Small
+                        } else {
+                            GasGiantSize::Large
+                        }
+                    });
+                    (size, o.num_satellites)
+                }
+                None => {
+                    let size = if roll_1d6() <= 3 {
+                        GasGiantSize::Small
+                    } else {
+                        GasGiantSize::Large
+                    };
+                    (size, None)
+                }
+            };
+            if let Some(m) = moon_override {
+                moon_overrides.insert(orbit, m);
             }
+            self.set_orbit_slot(orbit, OrbitContent::GasGiant(GasGiant::new(size, orbit)));
             num_giants -= 1;
+            placed_idx += 1;
         }
 
         if num_giants > 0 {
@@ -492,16 +697,52 @@ impl System {
                 "Not enough orbits for gas giants. Need {original_num_giants} in system {self:?}",
             );
         }
-        original_num_giants - num_giants
+        (original_num_giants - num_giants, moon_overrides)
     }
 
     fn fill_system(&mut self, main_world: World, is_primary: bool) {
+        self.fill_system_with(main_world, is_primary, &SystemOverrides::default());
+    }
+
+    fn fill_system_with(
+        &mut self,
+        main_world: World,
+        is_primary: bool,
+        overrides: &SystemOverrides,
+    ) {
         // First block appropriate orbits (just to have some number of empty orbits)
         self.gen_blocked_orbits();
 
         let main_world_copy = main_world.clone();
         let system_zones = get_zone(&self.star);
-        let num_gas_giants = self.gen_gas_giants();
+
+        // Empty constraints reserve their orbits first so nothing
+        // else can claim them.
+        if is_primary {
+            self.apply_empty_constraints(&overrides.empties);
+        }
+
+        // Place user-pinned non-main planets and belts FIRST so the
+        // random gas-giant / planetoid passes route around them.
+        // Without this, a Planet constraint at orbit 1 can lose to a
+        // randomly chosen gas giant.
+        let mut planet_moon_overrides: std::collections::HashMap<usize, i32> =
+            std::collections::HashMap::new();
+        if is_primary {
+            self.place_planet_constraints(
+                &overrides.planets,
+                &main_world_copy,
+                &mut planet_moon_overrides,
+            );
+            self.place_belt_constraints(
+                &overrides.belts,
+                &main_world_copy,
+                &mut planet_moon_overrides,
+            );
+        }
+
+        let (num_gas_giants, gg_moon_overrides) =
+            self.gen_gas_giants(overrides.gas_giants.as_deref());
 
         // Next generate planetoids
         self.gen_planetoids(num_gas_giants, &main_world_copy);
@@ -511,7 +752,47 @@ impl System {
         }
 
         for i in 0..=get_zone(&self.star).hot {
-            self.set_orbit_slot(i as usize, OrbitContent::Blocked);
+            // Block remaining empty hot-zone orbits — but don't
+            // overwrite a user-pinned planet that landed inside the
+            // hot zone (the user explicitly chose that orbit).
+            if self.is_slot_empty(i as usize) {
+                self.set_orbit_slot(i as usize, OrbitContent::Blocked);
+            }
+        }
+
+        if is_primary {
+            // Main world's num_moons override: now that place_main_world
+            // has resolved which orbit the main world landed at, key
+            // the override on that orbit so the satellite-gen loop
+            // below picks it up like any other pinned planet.
+            if let Some(n) = overrides.main_world_num_satellites {
+                for (idx, slot) in self.orbit_slots.iter().enumerate() {
+                    if let Some(OrbitContent::World(w)) = slot
+                        && w.is_mainworld()
+                    {
+                        planet_moon_overrides.insert(idx, n);
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Count Moon constraints per parent orbit so the random
+        // satellite generation below knows how many slots are already
+        // claimed by explicit Moon rows. Without this subtraction, a
+        // body with `num_moons=1` and one Moon constraint targeting
+        // the same orbit would end up with 2 moons (one rolled, one
+        // from the constraint).
+        let mut moon_constraints_per_orbit: std::collections::HashMap<usize, i32> =
+            std::collections::HashMap::new();
+        if is_primary {
+            for m in &overrides.moons {
+                if m.parent_orbit < 0 {
+                    continue;
+                }
+                let po = m.parent_orbit as usize;
+                *moon_constraints_per_orbit.entry(po).or_insert(0) += 1;
+            }
         }
 
         for i in (get_zone(&self.star).hot + 1)..self.get_max_orbits() as i32 {
@@ -526,17 +807,27 @@ impl System {
 
         let zone_table = get_zone(&self.star);
         for i in 0..self.get_max_orbits() {
+            let claimed_by_constraints =
+                moon_constraints_per_orbit.get(&i).copied().unwrap_or(0);
             match &mut self.orbit_slots[i] {
                 Some(OrbitContent::World(world)) => {
-                    let num_satellites = world.determine_num_satellites();
-                    for _ in 0..num_satellites {
+                    let target = planet_moon_overrides
+                        .get(&i)
+                        .copied()
+                        .unwrap_or_else(|| world.determine_num_satellites());
+                    let to_roll = (target - claimed_by_constraints).max(0);
+                    for _ in 0..to_roll {
                         world.gen_satellite(&zone_table, &main_world_copy, &self.star);
                     }
                     world.clean_satellites();
                 }
                 Some(OrbitContent::GasGiant(gas_giant)) => {
-                    let num_satellites = gas_giant.determine_num_satellites();
-                    for _ in 0..num_satellites {
+                    let target = gg_moon_overrides
+                        .get(&i)
+                        .copied()
+                        .unwrap_or_else(|| gas_giant.determine_num_satellites());
+                    let to_roll = (target - claimed_by_constraints).max(0);
+                    for _ in 0..to_roll {
                         gas_giant.gen_satellite(&system_zones, &main_world_copy, &self.star);
                     }
                     gas_giant.clean_satellites();
@@ -546,6 +837,17 @@ impl System {
             }
         }
 
+        // Attach Moon constraints to their parent bodies. Skipped for
+        // companion subsystems — TM autopop only describes the primary.
+        if is_primary {
+            self.apply_moon_constraints(&overrides.moons, &main_world_copy);
+        }
+
+        // Companion stars don't carry their own constraint overrides
+        // through here yet — their internal worlds and gas giants still
+        // roll randomly. The autopop case (single primary system from
+        // Traveller Map) is handled by the override list at the top
+        // level, so this is fine for now.
         if let Some(secondary) = &mut self.secondary
             && secondary.orbit != StarOrbit::Primary
         {
@@ -621,7 +923,21 @@ impl System {
                     main_world.compute_astro_data(&self.star);
                     self.set_orbit_slot(habitable as usize, OrbitContent::World(main_world));
                 }
-                Some(OrbitContent::World(_)) | None => {
+                Some(OrbitContent::World(_)) => {
+                    // Habitable orbit was claimed by a user-pinned
+                    // Planet constraint earlier — don't overwrite.
+                    // Fall back to whichever empty orbit is left.
+                    let empty_orbits = self.get_unused_orbits();
+                    let pos = empty_orbits
+                        .first()
+                        .copied()
+                        .unwrap_or(habitable as usize);
+                    main_world.position_in_system = pos;
+                    main_world.orbit = pos;
+                    main_world.compute_astro_data(&self.star);
+                    self.set_orbit_slot(pos, OrbitContent::World(main_world));
+                }
+                None => {
                     main_world.position_in_system = habitable as usize;
                     main_world.orbit = habitable as usize;
                     main_world.compute_astro_data(&self.star);
@@ -647,6 +963,249 @@ impl System {
                 main_world.position_in_system = pos;
                 self.set_orbit_slot(pos, OrbitContent::World(main_world));
             };
+        }
+    }
+
+    /// Place every pinned non-main-world Planet override at its
+    /// requested orbit (or pick from currently-empty orbits if no
+    /// orbit was specified). Records the per-planet moon-count override
+    /// keyed by final orbit so satellite generation can pick it up
+    /// later.
+    fn place_planet_constraints(
+        &mut self,
+        planets: &[PlanetOverride],
+        main_world: &World,
+        moon_overrides_out: &mut std::collections::HashMap<usize, i32>,
+    ) {
+        for p in planets {
+            // Choose the orbit. Explicit orbit wins; if it'd land
+            // outside the system or be already filled, skip the
+            // constraint with a warn — validation should have caught
+            // a duplicate-orbit collision earlier; this is the
+            // "orbit higher than max" / "orbit blocked by hot zone"
+            // edge case.
+            let orbit = match p.orbit {
+                Some(o) => {
+                    let o_usize = o.max(0) as usize;
+                    if o_usize >= self.get_max_orbits() || !self.is_slot_empty(o_usize) {
+                        warn!(
+                            "Planet constraint for orbit {o} can't be placed (occupied or out of range); skipping"
+                        );
+                        continue;
+                    }
+                    o_usize
+                }
+                None => match self.get_unused_orbits().first() {
+                    Some(o) => *o,
+                    None => {
+                        warn!("Planet constraint with no orbit and no empty slots; skipping");
+                        continue;
+                    }
+                },
+            };
+
+            // Generate the world honoring whatever digits the user
+            // pinned in the partial UWP — wild columns get rolled with
+            // the same per-orbit modifiers as a fully-rolled world.
+            let name_ref = p.name.as_deref();
+            let mut new_world = World::generate_with_partial(
+                &self.star,
+                orbit,
+                main_world,
+                p.partial_uwp.as_ref(),
+                name_ref,
+                false,
+                false,
+            );
+            new_world.orbit = orbit;
+            if name_ref.is_none() {
+                new_world.gen_name(&self.name, orbit);
+            }
+            new_world.compute_astro_data(&self.star);
+
+            if let Some(n) = p.num_satellites {
+                moon_overrides_out.insert(orbit, n);
+            }
+
+            self.set_orbit_slot(orbit, OrbitContent::World(new_world));
+        }
+    }
+
+    /// Place every Belt constraint as a size-0 planetoid belt at its
+    /// requested orbit (or grab the first empty slot if no orbit was
+    /// specified). Reuses the partial-aware world generator with the
+    /// size column forced to 0.
+    fn place_belt_constraints(
+        &mut self,
+        belts: &[BeltOverride],
+        main_world: &World,
+        moon_overrides_out: &mut std::collections::HashMap<usize, i32>,
+    ) {
+        for b in belts {
+            let orbit = match b.orbit {
+                Some(o) => {
+                    let o_usize = o.max(0) as usize;
+                    if o_usize >= self.get_max_orbits() || !self.is_slot_empty(o_usize) {
+                        warn!(
+                            "Belt constraint for orbit {o} can't be placed (occupied or out of range); skipping"
+                        );
+                        continue;
+                    }
+                    o_usize
+                }
+                None => match self.get_unused_orbits().first() {
+                    Some(o) => *o,
+                    None => {
+                        warn!("Belt constraint with no orbit and no empty slots; skipping");
+                        continue;
+                    }
+                },
+            };
+
+            let mut partial = b.partial_uwp.clone().unwrap_or_default();
+            // Belts are by definition size 0; override whatever the
+            // user typed. Atmosphere and hydro default to 0 too,
+            // matching the existing planetoid-belt generator.
+            partial.size = Some(0);
+            if partial.atmosphere.is_none() {
+                partial.atmosphere = Some(0);
+            }
+            if partial.hydro.is_none() {
+                partial.hydro = Some(0);
+            }
+
+            let default_name = "Planetoid Belt".to_string();
+            let name_ref = b.name.as_deref().unwrap_or(default_name.as_str());
+            let mut new_world = World::generate_with_partial(
+                &self.star,
+                orbit,
+                main_world,
+                Some(&partial),
+                Some(name_ref),
+                false,
+                false,
+            );
+            new_world.orbit = orbit;
+            new_world.compute_astro_data(&self.star);
+
+            if let Some(n) = b.num_satellites {
+                moon_overrides_out.insert(orbit, n);
+            }
+
+            self.set_orbit_slot(orbit, OrbitContent::World(new_world));
+        }
+    }
+
+    /// Set every user-specified Empty orbit to `OrbitContent::Blocked`.
+    /// Runs first in the placement pipeline so subsequent passes
+    /// (planet, gas-giant, random fill) treat the slot as taken.
+    fn apply_empty_constraints(&mut self, empties: &[i32]) {
+        for &orbit in empties {
+            if orbit < 0 {
+                warn!("Empty constraint with negative orbit ({orbit}); skipping");
+                continue;
+            }
+            let o = orbit as usize;
+            if o >= self.get_max_orbits() {
+                warn!(
+                    "Empty constraint at orbit {orbit} is past the system's max ({}); skipping",
+                    self.get_max_orbits()
+                );
+                continue;
+            }
+            self.set_orbit_slot(o, OrbitContent::Blocked);
+        }
+    }
+
+    /// Append every Moon constraint to its parent body's satellite
+    /// list. Empty UWPs run through `gen_satellite`; partial or full
+    /// UWPs go through `build_partial_satellite` so user-specified
+    /// columns are honored and the rest get rolled with the standard
+    /// per-zone modifiers.
+    fn apply_moon_constraints(&mut self, moons: &[MoonOverride], main_world: &World) {
+        let zone = get_zone(&self.star);
+        let star = self.star;
+        for m in moons {
+            let parent_orbit = m.parent_orbit;
+            if parent_orbit < 0 {
+                warn!("Moon constraint with negative parent_orbit ({parent_orbit}); skipping");
+                continue;
+            }
+            let parent_idx = parent_orbit as usize;
+            if parent_idx >= self.orbit_slots.len() {
+                warn!(
+                    "Moon constraint references parent_orbit {parent_orbit} which is out of range; skipping"
+                );
+                continue;
+            }
+
+            // Decide the satellite's size: user override > parent-
+            // specific roll. We resolve this BEFORE generating the
+            // satellite orbit because is-ring affects the orbit roll.
+            let size_override = m.partial_uwp.as_ref().and_then(|p| p.size).map(|s| s as i32);
+
+            match &mut self.orbit_slots[parent_idx] {
+                Some(OrbitContent::World(parent)) => {
+                    if m.partial_uwp.is_none() {
+                        // No UWP — run the standard satellite pipeline.
+                        parent.gen_satellite(&zone, main_world, &star);
+                        if let Some(name) = &m.name
+                            && let Some(last) = parent.get_satellites_mut().sats.last_mut()
+                        {
+                            last.name = name.clone();
+                        }
+                        continue;
+                    }
+                    let size = size_override.unwrap_or_else(|| (parent.size - roll_1d6()).max(-1));
+                    let parent_pos = parent.position_in_system;
+                    let sat_orbit = parent.gen_satellite_orbit(size == 0);
+                    let satellite = crate::systems::world::build_partial_satellite(
+                        &star,
+                        parent_pos,
+                        sat_orbit,
+                        size,
+                        &zone,
+                        main_world,
+                        m.partial_uwp.as_ref(),
+                        m.name.as_deref(),
+                    );
+                    parent.push_satellite(satellite);
+                }
+                Some(OrbitContent::GasGiant(parent)) => {
+                    if m.partial_uwp.is_none() {
+                        parent.gen_satellite(&zone, main_world, &star);
+                        if let Some(name) = &m.name
+                            && let Some(last) = parent.get_satellites_mut().sats.last_mut()
+                        {
+                            last.name = name.clone();
+                        }
+                        continue;
+                    }
+                    let size = size_override.unwrap_or_else(|| {
+                        (match parent.size {
+                            GasGiantSize::Small => roll_2d6() - 6,
+                            GasGiantSize::Large => roll_2d6() - 4,
+                        })
+                        .max(-1)
+                    });
+                    let parent_pos = parent.orbit;
+                    let sat_orbit = parent.gen_satellite_orbit(size == 0);
+                    let satellite = crate::systems::world::build_partial_satellite(
+                        &star,
+                        parent_pos,
+                        sat_orbit,
+                        size,
+                        &zone,
+                        main_world,
+                        m.partial_uwp.as_ref(),
+                        m.name.as_deref(),
+                    );
+                    parent.push_satellite(satellite);
+                }
+                _ => warn!(
+                    "Moon constraint parent_orbit {parent_orbit} doesn't reference a World or GasGiant; skipping"
+                ),
+            }
         }
     }
 
@@ -740,7 +1299,7 @@ impl Display for System {
             writeln!(
                 f,
                 "\n{:<7}{:<24}{:<12}{:<18}",
-                "Orbit", "Name", "UPP", "Remarks"
+                "Orbit", "Name", "UWP", "Remarks"
             )?;
         }
 
@@ -930,17 +1489,34 @@ fn empty_orbits_near_companion(system: &mut System, orbit: usize) {
     system.set_orbit_slot(orbit + 2, OrbitContent::Blocked);
 }
 
-fn gen_stars(world_mod: i32, companions_possible: bool) -> System {
-    let num_stars = if companions_possible {
+fn gen_stars(
+    world_mod: i32,
+    companions_possible: bool,
+    overrides: &SystemOverrides,
+) -> System {
+    // If the user supplied any Star constraints, the count of those is
+    // authoritative — we generate exactly that many stars. Otherwise
+    // fall back to the random count (or 1 for non-primary systems).
+    let num_stars = if !overrides.stars.is_empty() {
+        overrides.stars.len() as i32
+    } else if companions_possible {
         gen_num_stars()
     } else {
         1
     };
+
+    let primary_override = overrides.stars.first().copied().unwrap_or_default();
     let primary_type_roll = roll_2d6();
     let primary_size_roll = roll_2d6();
-    let star_type = gen_primary_star_type(primary_type_roll + world_mod);
-    let star_subtype = roll_10() as StarSubType;
-    let star_size = gen_primary_star_size(primary_size_roll, star_type, star_subtype);
+    let star_type = primary_override
+        .spectral
+        .unwrap_or_else(|| gen_primary_star_type(primary_type_roll + world_mod));
+    let star_subtype = primary_override
+        .subtype
+        .unwrap_or_else(|| roll_10() as StarSubType);
+    let star_size = primary_override
+        .size
+        .unwrap_or_else(|| gen_primary_star_size(primary_size_roll, star_type, star_subtype));
 
     let mut system = System::new(star_type, star_subtype, star_size, StarOrbit::Primary, 0);
     let star = system.star;
@@ -948,13 +1524,17 @@ fn gen_stars(world_mod: i32, companions_possible: bool) -> System {
 
     // Do this for a secondary, which we have with 2 or 3 stars.
     if num_stars >= 2 {
-        let orbit = gen_companion_orbit(roll_2d6());
+        let secondary_override = overrides.stars.get(1).copied().unwrap_or_default();
+        let orbit = secondary_override
+            .orbit
+            .unwrap_or_else(|| gen_companion_orbit(roll_2d6()));
         match orbit {
             StarOrbit::Primary | StarOrbit::Far => {
                 system.secondary = Some(Box::new(System::generate_companion(
                     primary_type_roll,
                     primary_size_roll,
                     orbit,
+                    secondary_override,
                 )));
             }
             // If the companion has an orbit, but its inside the primary star, just treat it as the primary orbit.
@@ -963,6 +1543,7 @@ fn gen_stars(world_mod: i32, companions_possible: bool) -> System {
                     primary_type_roll,
                     primary_size_roll,
                     StarOrbit::Primary,
+                    secondary_override,
                 )));
             }
             StarOrbit::System(position) => {
@@ -970,6 +1551,7 @@ fn gen_stars(world_mod: i32, companions_possible: bool) -> System {
                     primary_type_roll,
                     primary_size_roll,
                     orbit,
+                    secondary_override,
                 )));
                 system.set_orbit_slot(position, OrbitContent::Secondary);
                 empty_orbits_near_companion(&mut system, position);
@@ -980,13 +1562,17 @@ fn gen_stars(world_mod: i32, companions_possible: bool) -> System {
     // Do this for a tertiary, which we have with 3 stars.
     // TODO: This is a blatant copy of the code above; how do I DRY this?
     if num_stars == 3 {
-        let orbit = gen_companion_orbit(roll_2d6() + 4);
+        let tertiary_override = overrides.stars.get(2).copied().unwrap_or_default();
+        let orbit = tertiary_override
+            .orbit
+            .unwrap_or_else(|| gen_companion_orbit(roll_2d6() + 4));
         match orbit {
             StarOrbit::Primary | StarOrbit::Far => {
                 system.tertiary = Some(Box::new(System::generate_companion(
                     primary_type_roll,
                     primary_size_roll,
                     orbit,
+                    tertiary_override,
                 )));
             }
             StarOrbit::System(position) if position as i32 <= get_zone(&star).inside => {
@@ -994,6 +1580,7 @@ fn gen_stars(world_mod: i32, companions_possible: bool) -> System {
                     primary_type_roll,
                     primary_size_roll,
                     StarOrbit::Primary,
+                    tertiary_override,
                 )));
             }
             StarOrbit::System(position) => {
@@ -1001,6 +1588,7 @@ fn gen_stars(world_mod: i32, companions_possible: bool) -> System {
                     primary_type_roll,
                     primary_size_roll,
                     orbit,
+                    tertiary_override,
                 )));
                 system.set_orbit_slot(position, OrbitContent::Tertiary);
                 empty_orbits_near_companion(&mut system, position);
@@ -1008,6 +1596,136 @@ fn gen_stars(world_mod: i32, companions_possible: bool) -> System {
         }
     }
     system
+}
+
+/// Pull the actionable star and gas-giant overrides out of a
+/// `SystemConstraints`. Star constraints map to entries in `stars` in
+/// declaration order (first becomes the primary override). Gas-giant
+/// constraints become a non-empty `Some(Vec)` so the random-count
+/// branch in `gen_gas_giants` is suppressed.
+fn collect_overrides(constraints: &SystemConstraints) -> SystemOverrides {
+    let stars = constraints
+        .bodies
+        .iter()
+        .filter_map(|c| match c {
+            Constraint::Star {
+                orbit,
+                spectral,
+                subtype,
+                size,
+            } => Some(StarOverride {
+                orbit: *orbit,
+                spectral: *spectral,
+                subtype: *subtype,
+                size: *size,
+            }),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    let gg_list: Vec<_> = constraints
+        .bodies
+        .iter()
+        .filter_map(|c| match c {
+            Constraint::GasGiant {
+                orbit,
+                size,
+                num_satellites,
+                ..
+            } => Some(GasGiantOverride {
+                size: *size,
+                num_satellites: *num_satellites,
+                orbit: *orbit,
+            }),
+            _ => None,
+        })
+        .collect();
+
+    let any_gg_constraint = constraints
+        .bodies
+        .iter()
+        .any(|c| matches!(c, Constraint::GasGiant { .. }));
+
+    let planets: Vec<_> = constraints
+        .bodies
+        .iter()
+        .filter_map(|c| match c {
+            Constraint::Planet {
+                is_mainworld: false,
+                name,
+                orbit,
+                uwp,
+                num_satellites,
+            } => Some(PlanetOverride {
+                name: name.clone(),
+                orbit: *orbit,
+                partial_uwp: uwp.clone(),
+                num_satellites: *num_satellites,
+            }),
+            _ => None,
+        })
+        .collect();
+
+    let moons: Vec<_> = constraints
+        .bodies
+        .iter()
+        .filter_map(|c| match c {
+            Constraint::Moon {
+                name,
+                parent_orbit,
+                uwp,
+            } => Some(MoonOverride {
+                name: name.clone(),
+                parent_orbit: *parent_orbit,
+                partial_uwp: uwp.clone(),
+            }),
+            _ => None,
+        })
+        .collect();
+
+    let belts: Vec<_> = constraints
+        .bodies
+        .iter()
+        .filter_map(|c| match c {
+            Constraint::Belt {
+                name,
+                orbit,
+                uwp,
+                num_satellites,
+            } => Some(BeltOverride {
+                name: name.clone(),
+                orbit: *orbit,
+                partial_uwp: uwp.clone(),
+                num_satellites: *num_satellites,
+            }),
+            _ => None,
+        })
+        .collect();
+
+    let empties: Vec<_> = constraints
+        .bodies
+        .iter()
+        .filter_map(|c| match c {
+            Constraint::Empty { orbit } => Some(*orbit),
+            _ => None,
+        })
+        .collect();
+
+    SystemOverrides {
+        stars,
+        gas_giants: if any_gg_constraint {
+            Some(gg_list)
+        } else {
+            None
+        },
+        planets,
+        belts,
+        empties,
+        moons,
+        // Filled in by generate_from_constraints from the main-world
+        // constraint after collect_overrides returns.
+        main_world_num_satellites: None,
+    }
 }
 
 fn count_open_orbits(system: &System) -> i32 {
@@ -1052,11 +1770,202 @@ mod tests {
 
     #[test_log::test]
     fn test_generate_system() {
-        let main_upp = "A788899-A";
-        let main_world = World::from_upp("Main World", main_upp, false, true).unwrap();
+        let main_uwp = "A788899-A";
+        let main_world = World::from_uwp("Main World", main_uwp, false, true).unwrap();
 
         let system = System::generate_system(main_world);
         println!("{system}");
+    }
+
+    #[test_log::test]
+    fn test_generate_from_constraints_single_mainworld() {
+        let constraints = SystemConstraints::from_main_world("Regina", "A788899-A").unwrap();
+        let system = System::generate_from_constraints(constraints)
+            .expect("single fully-specified mainworld should always generate");
+        println!("{system}");
+    }
+
+    #[test]
+    fn test_generate_from_constraints_rejects_partial_main_world_uwp() {
+        // Partial UWPs are honored for non-main-world Planet/Moon/Belt
+        // constraints, but the main world still needs a fully
+        // specified UWP because its atmosphere/population feed the
+        // primary star's type roll.
+        let cs = SystemConstraints::from_main_world("Regina", "HXXXXXX-X").unwrap();
+        if let Constraint::Planet { uwp: Some(p), .. } = &cs.bodies[0] {
+            assert!(!p.is_complete());
+        } else {
+            panic!("expected planet constraint with uwp");
+        }
+        let result = System::generate_from_constraints(cs);
+        assert!(matches!(result, Err(ref e) if e.iter().any(|err| matches!(err, ConstraintError::UnsupportedYet(_)))));
+    }
+
+    #[test_log::test]
+    fn test_generate_with_planet_constraint_no_uwp() {
+        // A Planet constraint with name + orbit and no UWP should
+        // produce a generated world at that orbit with the requested
+        // name. We use a high orbit (8) to dodge any randomly placed
+        // gas giants / hot-zone blocking that varies with star type.
+        let mut cs = SystemConstraints::from_main_world("Regina", "A788899-A").unwrap();
+        cs.bodies.push(Constraint::Planet {
+            name: Some("Lovia".to_string()),
+            orbit: Some(8),
+            uwp: None,
+            num_satellites: Some(2),
+            is_mainworld: false,
+        });
+
+        let system = System::generate_from_constraints(cs).expect("planet constraint accepted");
+        // Find a world named "Lovia" — should be at orbit 8 if we got
+        // there, but if the orbit was unavailable (occupied / out of
+        // range) the constraint is skipped with a warn rather than an
+        // error.
+        let found = system
+            .orbit_slots
+            .iter()
+            .filter_map(|s| match s {
+                Some(crate::systems::system::OrbitContent::World(w)) if w.name == "Lovia" => {
+                    Some(w.orbit)
+                }
+                _ => None,
+            })
+            .next();
+        // Test passes either if we got Lovia at orbit 8, or if the
+        // generation completed without error (the warn-skip path).
+        // Both are valid; we're really checking that the constraint
+        // doesn't reject the input.
+        if let Some(orbit) = found {
+            assert_eq!(orbit, 8, "Lovia placed but at unexpected orbit");
+        }
+    }
+
+    #[test_log::test]
+    fn test_generate_with_partial_planet_uwp() {
+        // Pin a planet with a partial UWP — port=A, size=8, others wild.
+        let mut cs = SystemConstraints::from_main_world("Regina", "A788899-A").unwrap();
+        cs.bodies.push(Constraint::Planet {
+            name: Some("Lovia".to_string()),
+            orbit: Some(8),
+            uwp: Some(crate::systems::constraint::PartialUwp::parse("A8XXXXX-X").unwrap()),
+            num_satellites: None,
+            is_mainworld: false,
+        });
+        let system = System::generate_from_constraints(cs)
+            .expect("partial Planet UWP should be accepted");
+        // If Lovia got placed, its size must be 8 and port A.
+        let lovia = system.orbit_slots.iter().find_map(|s| match s {
+            Some(crate::systems::system::OrbitContent::World(w)) if w.name == "Lovia" => Some(w),
+            _ => None,
+        });
+        if let Some(w) = lovia {
+            assert_eq!(w.size, 8);
+            assert!(matches!(w.port, crate::trade::PortCode::A));
+        }
+    }
+
+    #[test_log::test]
+    fn test_generate_with_belt_constraint() {
+        let mut cs = SystemConstraints::from_main_world("Regina", "A788899-A").unwrap();
+        cs.bodies.push(Constraint::Belt {
+            name: Some("Asteroid Reach".to_string()),
+            orbit: Some(7),
+            uwp: None,
+            num_satellites: None,
+        });
+        let system = System::generate_from_constraints(cs)
+            .expect("belt constraint should be accepted");
+        let belt = system.orbit_slots.iter().find_map(|s| match s {
+            Some(crate::systems::system::OrbitContent::World(w))
+                if w.name == "Asteroid Reach" =>
+            {
+                Some(w)
+            }
+            _ => None,
+        });
+        if let Some(b) = belt {
+            assert_eq!(b.size, 0, "Belt must always be size 0");
+        }
+    }
+
+    #[test_log::test]
+    fn test_generate_with_empty_constraint() {
+        let mut cs = SystemConstraints::from_main_world("Regina", "A788899-A").unwrap();
+        cs.bodies.push(Constraint::Empty { orbit: 9 });
+        let system = System::generate_from_constraints(cs)
+            .expect("empty constraint should be accepted");
+        // If orbit 9 is within the system, it must be Blocked.
+        if 9_usize < system.orbit_slots.len() {
+            assert!(matches!(
+                system.orbit_slots[9],
+                Some(crate::systems::system::OrbitContent::Blocked)
+            ));
+        }
+    }
+
+    #[test_log::test]
+    fn test_generate_with_moon_constraint_no_uwp() {
+        // A Moon constraint with parent_orbit pointing at the main
+        // world (Regina at A788899-A typically lands at the habitable
+        // zone — orbit varies by star type — so we pick orbit 0 as a
+        // body-agnostic test by using the main world's eventual orbit
+        // from the result, instead of asserting parent here. We just
+        // verify the system generates without error and a moon was
+        // appended somewhere.
+        let mut cs = SystemConstraints::from_main_world("Regina", "A788899-A").unwrap();
+        cs.bodies.push(Constraint::Moon {
+            name: Some("Sulatra".to_string()),
+            parent_orbit: 0,
+            uwp: None,
+        });
+        let system =
+            System::generate_from_constraints(cs).expect("moon constraint should be accepted");
+        // Don't assert placement details — just that generation
+        // completed and the moon was either attached or skipped with
+        // a warn (no error returned).
+        let _ = system;
+    }
+
+    #[test_log::test]
+    fn test_low_tech_main_world_zeroes_lifeless_pop() {
+        // House rule: a TL < 7 main world lacks the life-support tech
+        // to sustain populations on bodies without a real atmosphere
+        // (atmosphere outside 2..=8). Bodies WITH a real atmosphere may
+        // still hold populations even outside the habitable zone. Run
+        // several seeds to cover RNG variance.
+        let cs = SystemConstraints::from_main_world("LowTL", "B564644-4").unwrap();
+        for _ in 0..20 {
+            let system = System::generate_from_constraints(cs.clone())
+                .expect("low-tech system should generate");
+            for slot in system.orbit_slots.iter() {
+                if let Some(OrbitContent::World(w)) = slot
+                    && !w.is_mainworld()
+                {
+                    let real = (2..=8).contains(&w.atmosphere);
+                    if !real {
+                        assert_eq!(
+                            w.get_population(),
+                            0,
+                            "body with atmosphere {} had pop {} despite main TL < 7",
+                            w.atmosphere,
+                            w.get_population()
+                        );
+                    }
+                    for sat in w.satellites.sats.iter() {
+                        let sat_real = (2..=8).contains(&sat.atmosphere);
+                        if !sat_real {
+                            assert_eq!(
+                                sat.get_population(),
+                                0,
+                                "satellite with atmosphere {} had pop {} despite main TL < 7",
+                                sat.atmosphere,
+                                sat.get_population()
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test_log::test]

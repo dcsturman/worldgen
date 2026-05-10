@@ -29,10 +29,20 @@ pub mod tectonics;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
-/// Parsed UWP digits as base-16 numerics: [starport, size, atmo, hydro,
-/// pop, gov, law, tech]. Starport is parsed loosely (A=10, B=11, ..., X=0).
+/// Parsed UWP. `digits` holds the base-16 numerics for size, atmo,
+/// hydro, pop, gov, law, tech (indices 1..=7). Index 0 is also kept
+/// numeric (so the field-mixer keeps working) but the original
+/// starport character is preserved separately so Display can re-emit
+/// the right letter — we accept any class letter here (A–E plus F, G,
+/// H, X, Y) and they don't all map cleanly through hex.
 #[derive(Clone, Copy, Debug)]
-pub struct Uwp(pub [u8; 8]);
+pub struct Uwp {
+    pub digits: [u8; 8],
+    /// Original starport letter (uppercased): one of `A`-`E`, `F`,
+    /// `G`, `H`, `X`, `Y`, or a stray hex digit. Display uses this
+    /// for position 0 instead of `digits[0]`.
+    pub starport: char,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum MapError {
@@ -49,38 +59,59 @@ impl Uwp {
             return Err(MapError::TooShort(uwp.to_string()));
         }
         let mut out = [0u8; 8];
+        let mut starport_char = '?';
         for (i, c) in body.chars().enumerate() {
-            let v = match c {
-                'X' => 0,
-                'A'..='F' => 10 + (c as u8 - b'A'),
-                'a'..='f' => 10 + (c as u8 - b'a'),
-                '0'..='9' => c as u8 - b'0',
-                _ => return Err(MapError::BadDigit(i, c)),
+            let v = if i == 0 {
+                // Spaceport: tolerate any letter. Hex letters keep
+                // their hex value (so A-F still produce 10..=15);
+                // anything else (X, Y, G, H, …) parses to 0 since the
+                // raster doesn't depend on starport class. The
+                // original character is preserved on `starport` so
+                // Display re-emits it verbatim.
+                starport_char = c.to_ascii_uppercase();
+                match c {
+                    'A'..='F' => 10 + (c as u8 - b'A'),
+                    'a'..='f' => 10 + (c as u8 - b'a'),
+                    '0'..='9' => c as u8 - b'0',
+                    _ => 0,
+                }
+            } else {
+                match c {
+                    'X' => 0,
+                    'A'..='F' => 10 + (c as u8 - b'A'),
+                    'a'..='f' => 10 + (c as u8 - b'a'),
+                    '0'..='9' => c as u8 - b'0',
+                    _ => return Err(MapError::BadDigit(i, c)),
+                }
             };
             out[i] = v;
         }
-        Ok(Uwp(out))
+        Ok(Uwp {
+            digits: out,
+            starport: starport_char,
+        })
     }
     pub fn size(&self) -> u8 {
-        self.0[1]
+        self.digits[1]
     }
     pub fn atmosphere(&self) -> u8 {
-        self.0[2]
+        self.digits[2]
     }
     pub fn hydrographics(&self) -> u8 {
-        self.0[3]
+        self.digits[3]
     }
     pub fn population(&self) -> u8 {
-        self.0[4]
+        self.digits[4]
     }
     pub fn tech_level(&self) -> u8 {
-        self.0[7]
+        self.digits[7]
     }
 }
 
 impl std::fmt::Display for Uwp {
-    /// Re-emit canonical UWP string: 7 leading hex digits, dash, then TL.
-    /// Inverse of `parse` for the well-formed cases.
+    /// Re-emit canonical UWP string: starport letter, 6 hex digits,
+    /// dash, then TL. Position 0 uses `self.starport` so
+    /// non-hex starports (Y, G, H, X) render correctly.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let glyph = |d: u8| -> char {
             if d < 10 {
@@ -91,7 +122,8 @@ impl std::fmt::Display for Uwp {
                 '?'
             }
         };
-        for (i, d) in self.0.iter().enumerate() {
+        f.write_fmt(format_args!("{}", self.starport))?;
+        for (i, d) in self.digits.iter().enumerate().skip(1) {
             if i == 7 {
                 f.write_str("-")?;
             }
@@ -104,6 +136,10 @@ impl std::fmt::Display for Uwp {
 pub struct WorldMap {
     pub uwp: Uwp,
     pub seed: u64,
+    /// Optional display name for the world — rendered on the title
+    /// hex card in the upper-left of the map. `None` falls back to no
+    /// name line.
+    pub name: Option<String>,
     pub grid: grid::Grid,
     /// Kept on the map so the rasterizer can re-sample per pixel without
     /// re-deriving the field from the seed. The elevation field internally
@@ -119,9 +155,9 @@ pub struct WorldMap {
 }
 
 /// Generate a complete world map from a UWP and seed.
-pub fn generate(uwp: &str, seed: u64) -> Result<WorldMap, MapError> {
+pub fn generate(uwp: &str, seed: u64, name: Option<&str>) -> Result<WorldMap, MapError> {
     let uwp = Uwp::parse(uwp)?;
-    let mix = uwp.0.iter().enumerate().fold(0u64, |a, (i, b)| {
+    let mix = uwp.digits.iter().enumerate().fold(0u64, |a, (i, b)| {
         a.wrapping_add((*b as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15 ^ (i as u64)))
     });
     let mut rng = ChaCha8Rng::seed_from_u64(seed ^ mix);
@@ -168,6 +204,7 @@ pub fn generate(uwp: &str, seed: u64) -> Result<WorldMap, MapError> {
     let mut map = WorldMap {
         uwp,
         seed,
+        name: name.map(|s| s.to_string()),
         grid,
         elev_field,
         humidity_field,
@@ -204,7 +241,8 @@ mod tests {
     #[test]
     fn parses_canonical_uwp() {
         let u = Uwp::parse("A788899-A").unwrap();
-        assert_eq!(u.0[0], 10); // A
+        assert_eq!(u.digits[0], 10); // A
+        assert_eq!(u.starport, 'A');
         assert_eq!(u.size(), 7);
         assert_eq!(u.atmosphere(), 8);
         assert_eq!(u.hydrographics(), 8);
@@ -213,8 +251,19 @@ mod tests {
     }
 
     #[test]
+    fn preserves_non_hex_starports() {
+        // Y, G, H all parse without erroring and round-trip via Display.
+        for letter in ['Y', 'G', 'H', 'X', 'F'] {
+            let uwp = format!("{letter}788899-A");
+            let u = Uwp::parse(&uwp).unwrap();
+            assert_eq!(u.starport, letter);
+            assert_eq!(format!("{u}"), uwp);
+        }
+    }
+
+    #[test]
     fn end_to_end_generate_runs() {
-        let map = generate("A788899-A", 0xDEADBEEF).unwrap();
+        let map = generate("A788899-A", 0xDEADBEEF, None).unwrap();
         // Same shape as build()
         assert_eq!(map.grid.faces.len(), 20);
         // Some hexes should be water and some land for a Hyd-8 world.
@@ -234,7 +283,7 @@ mod tests {
 
     #[test]
     fn svg_output_is_nonempty_and_well_formed() {
-        let map = generate("A788899-A", 0xCAFEBABE).unwrap();
+        let map = generate("A788899-A", 0xCAFEBABE, None).unwrap();
         let svg = render_svg(&map);
         assert!(svg.starts_with("<svg "));
         assert!(svg.ends_with("</svg>"));
@@ -243,7 +292,7 @@ mod tests {
 
     #[test]
     fn png_output_decodes() {
-        let map = generate("A788899-A", 0xFEEDFACE).unwrap();
+        let map = generate("A788899-A", 0xFEEDFACE, None).unwrap();
         let bytes = render_png(&map).unwrap();
         assert!(bytes.len() > 1000);
         assert_eq!(&bytes[0..8], b"\x89PNG\r\n\x1a\n");
@@ -251,15 +300,15 @@ mod tests {
 
     #[test]
     fn deterministic_for_same_seed() {
-        let a = render_svg(&generate("A788899-A", 1).unwrap());
-        let b = render_svg(&generate("A788899-A", 1).unwrap());
+        let a = render_svg(&generate("A788899-A", 1, None).unwrap());
+        let b = render_svg(&generate("A788899-A", 1, None).unwrap());
         assert_eq!(a, b);
     }
 
     #[test]
     fn different_seed_changes_output() {
-        let a = render_svg(&generate("A788899-A", 1).unwrap());
-        let b = render_svg(&generate("A788899-A", 2).unwrap());
+        let a = render_svg(&generate("A788899-A", 1, None).unwrap());
+        let b = render_svg(&generate("A788899-A", 2, None).unwrap());
         assert_ne!(a, b);
     }
 
@@ -267,7 +316,7 @@ mod tests {
     fn waterworld_is_mostly_ocean() {
         // Hydrographics is the 4th UWP digit (position 3).
         // "A78A899-A" → pos3 = 'A' = 10 (water world).
-        let map = generate("A78A899-A", 1).unwrap();
+        let map = generate("A78A899-A", 1, None).unwrap();
         assert_eq!(map.uwp.hydrographics(), 10);
         let water = map
             .grid
@@ -301,7 +350,7 @@ mod tests {
             ("urban", "A8888AA-A"), // pop A
         ];
         for (name, uwp) in cases {
-            let map = generate(uwp, 1).unwrap();
+            let map = generate(uwp, 1, None).unwrap();
             let svg = render_svg(&map);
             let png = render_png(&map).unwrap();
             std::fs::write(format!("/tmp/worldmap_{name}.svg"), &svg).unwrap();
@@ -335,7 +384,7 @@ mod tests {
     fn census_one(label: &str, uwp: &str) {
         use grid::{SHEET_HEIGHT, SHEET_WIDTH, xy_to_sphere};
 
-        let map = generate(uwp, 1).unwrap();
+        let map = generate(uwp, 1, None).unwrap();
         let tec = map.elev_field.tectonics();
 
         let w = SHEET_WIDTH as u32;
@@ -480,7 +529,7 @@ mod tests {
         use crate::worldmap::colormap;
         use crate::worldmap::grid::{SHEET_HEIGHT, SHEET_WIDTH, xy_to_sphere};
 
-        let map = generate("C886977-8", 1).unwrap();
+        let map = generate("C886977-8", 1, None).unwrap();
         let tec = map.elev_field.tectonics();
         let w = SHEET_WIDTH as u32;
         let h = SHEET_HEIGHT as u32;
@@ -630,7 +679,7 @@ mod tests {
     #[ignore]
     fn audit_render_pixels_against_palette() {
         use crate::worldmap::colormap::LEGEND_PALETTE;
-        let map = generate("C886977-8", 1).unwrap();
+        let map = generate("C886977-8", 1, None).unwrap();
         // Render at SVG resolution so we hit the same pipeline the user sees.
         let w = grid::SHEET_WIDTH as u32;
         let h = grid::SHEET_HEIGHT as u32;
@@ -710,7 +759,7 @@ mod tests {
         // city fallback in `place_cities` keeps them. Sweep many seeds so
         // we catch both the 100%-water and 95-100% branches.
         for seed in 1..=20u64 {
-            let map = generate("A78A799-A", seed).unwrap();
+            let map = generate("A78A799-A", seed, None).unwrap();
             assert_eq!(map.uwp.hydrographics(), 10);
             assert_eq!(map.uwp.population(), 7);
             let cities = map
@@ -737,7 +786,7 @@ mod tests {
         // cities` had no eligible hexes. Pop 7 worlds across many seeds
         // must each place at least one city.
         for seed in 1..=20u64 {
-            let map = generate("A780799-A", seed).unwrap();
+            let map = generate("A780799-A", seed, None).unwrap();
             assert_eq!(map.uwp.hydrographics(), 0);
             assert_eq!(map.uwp.population(), 7);
             let cities = map
@@ -754,7 +803,7 @@ mod tests {
     #[test]
     fn desert_world_is_mostly_dry() {
         // "A780899-A" → pos3 = '0' = 0 (desert world).
-        let map = generate("A780899-A", 1).unwrap();
+        let map = generate("A780899-A", 1, None).unwrap();
         assert_eq!(map.uwp.hydrographics(), 0);
         let water = map
             .grid

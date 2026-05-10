@@ -197,21 +197,21 @@ pub fn string_to_trade_class(code: &str) -> Option<TradeClass> {
 
 // UWP (Universal World Profile) field indices
 /// Index for starport quality in UWP string
-//const UPP_SPACEPORT: usize = 0;
+//const UWP_SPACEPORT: usize = 0;
 /// Index for world size in UWP string
-const UPP_SIZE: usize = 1;
+const UWP_SIZE: usize = 1;
 /// Index for atmosphere type in UWP string
-const UPP_ATMOSPHERE: usize = 2;
+const UWP_ATMOSPHERE: usize = 2;
 /// Index for hydrographics percentage in UWP string
-const UPP_HYDRO: usize = 3;
+const UWP_HYDRO: usize = 3;
 /// Index for population level in UWP string
-const UPP_POPULATION: usize = 4;
+const UWP_POPULATION: usize = 4;
 /// Index for government type in UWP string
-const UPP_GOVERNMENT: usize = 5;
+const UWP_GOVERNMENT: usize = 5;
 /// Index for law level in UWP string
-const UPP_LAW_LEVEL: usize = 6;
+const UWP_LAW_LEVEL: usize = 6;
 /// Index for technology level in UWP string
-const UPP_TECH_LEVEL: usize = 7;
+const UWP_TECH_LEVEL: usize = 7;
 
 /// Converts a Universal World Profile (UWP) to applicable trade classifications
 ///
@@ -220,7 +220,7 @@ const UPP_TECH_LEVEL: usize = 7;
 ///
 /// # Arguments
 ///
-/// * `upp` - Array of 8 characters representing the UWP (e.g., ['A','7','8','8','8','9','9','A'])
+/// * `uwp` - Array of 8 characters representing the UWP (e.g., ['A','7','8','8','8','9','9','A'])
 ///
 /// # Returns
 ///
@@ -233,26 +233,26 @@ const UPP_TECH_LEVEL: usize = 7;
 /// # Examples
 ///
 /// ```
-/// use worldgen::trade::{upp_to_trade_classes, TradeClass};
+/// use worldgen::trade::{uwp_to_trade_classes, TradeClass};
 ///
-/// let upp: Vec<char> = "A788899A".chars().collect();
-/// let trade_classes = upp_to_trade_classes(&upp);
+/// let uwp: Vec<char> = "A788899A".chars().collect();
+/// let trade_classes = uwp_to_trade_classes(&uwp);
 /// // Returns applicable trade classes based on the UWP characteristics
 /// ```
-pub fn upp_to_trade_classes(upp: &[char]) -> Vec<TradeClass> {
+pub fn uwp_to_trade_classes(uwp: &[char]) -> Vec<TradeClass> {
     assert!(
-        upp.len() == 8,
+        uwp.len() == 8,
         "Expected UWP to be 8 characters long, got {}",
-        upp.len()
+        uwp.len()
     );
     let mut trade_classes = Vec::new();
-    let size = upp[UPP_SIZE].to_digit(16).unwrap() as i32;
-    let atmosphere = upp[UPP_ATMOSPHERE].to_digit(16).unwrap() as i32;
-    let hydro = upp[UPP_HYDRO].to_digit(16).unwrap() as i32;
-    let population = upp[UPP_POPULATION].to_digit(16).unwrap() as i32;
-    let government = upp[UPP_GOVERNMENT].to_digit(16).unwrap() as i32;
-    let law_level = upp[UPP_LAW_LEVEL].to_digit(16).unwrap() as i32;
-    let tech_level = upp[UPP_TECH_LEVEL].to_digit(16).unwrap() as i32;
+    let size = uwp[UWP_SIZE].to_digit(16).unwrap() as i32;
+    let atmosphere = uwp[UWP_ATMOSPHERE].to_digit(16).unwrap() as i32;
+    let hydro = uwp[UWP_HYDRO].to_digit(16).unwrap() as i32;
+    let population = uwp[UWP_POPULATION].to_digit(16).unwrap() as i32;
+    let government = uwp[UWP_GOVERNMENT].to_digit(16).unwrap() as i32;
+    let law_level = uwp[UWP_LAW_LEVEL].to_digit(16).unwrap() as i32;
+    let tech_level = uwp[UWP_TECH_LEVEL].to_digit(16).unwrap() as i32;
 
     // Agricultural: Atmosphere 4-9, Hydrographics 4-8, Population 5-7
     if (4..=9).contains(&atmosphere) && (4..=8).contains(&hydro) && (5..=7).contains(&population) {
@@ -386,13 +386,13 @@ impl PortCode {
     ///
     /// # Arguments
     ///
-    /// * `upp` - UWP string starting with the starport code
+    /// * `uwp` - UWP string starting with the starport code
     ///
     /// # Returns
     ///
     /// PortCode enum value, defaults to A if character is not recognized
-    pub fn from_upp(upp: &str) -> PortCode {
-        match upp.chars().next() {
+    pub fn from_uwp(uwp: &str) -> PortCode {
+        match uwp.chars().next() {
             Some('A') => PortCode::A,
             Some('B') => PortCode::B,
             Some('C') => PortCode::C,

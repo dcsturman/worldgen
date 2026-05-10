@@ -240,6 +240,7 @@ fn draw_title_block<R: Renderer + ?Sized>(r: &mut R, map: &WorldMap) {
     r.stroke_polyline(&outline, ink, 1.4);
 
     let label_size = 9.0;
+    let name_size = 12.0;
     let value_size = 13.0;
     let uwp_str = format!("{}", map.uwp);
     // Display seed in decimal — matches the input field, so users can copy
@@ -249,23 +250,42 @@ fn draw_title_block<R: Renderer + ?Sized>(r: &mut R, map: &WorldMap) {
     let scale_str = format!("1 hex ≈ {} km", format_thousands(hex_km));
     // Rough text-centering: subtract ~0.27 × char_count × size.
     let center_x = |s: &str, size: f64| cx - (s.chars().count() as f64) * size * 0.27;
+
+    // Lay out the title-card lines vertically. When a name is
+    // present, push the UWP/seed/scale down so the name lands at the
+    // top of the hex.
+    let has_name = map
+        .name
+        .as_deref()
+        .map(|n| !n.trim().is_empty())
+        .unwrap_or(false);
+    let (name_y, uwp_y, seed_y, scale_y) = if has_name {
+        (cy - 22.0, cy - 6.0, cy + 10.0, cy + 24.0)
+    } else {
+        (cy, cy - 13.0, cy + 5.0, cy + 21.0)
+    };
+
+    if has_name {
+        let name = map.name.as_deref().unwrap_or("");
+        r.fill_text(center_x(name, name_size), name_y, name_size, name, ink);
+    }
     r.fill_text(
         center_x(&uwp_str, value_size),
-        cy - 13.0,
+        uwp_y,
         value_size,
         &uwp_str,
         ink,
     );
     r.fill_text(
         center_x(&seed_str, label_size),
-        cy + 5.0,
+        seed_y,
         label_size,
         &seed_str,
         ink,
     );
     r.fill_text(
         center_x(&scale_str, label_size),
-        cy + 21.0,
+        scale_y,
         label_size,
         &scale_str,
         ink,

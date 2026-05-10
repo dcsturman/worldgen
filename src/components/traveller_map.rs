@@ -590,6 +590,16 @@ pub fn WorldSearch(
     /// UWP in a read-only summary elsewhere.
     #[prop(default = true)]
     show_uwp: bool,
+    /// Optional: when present, the world's "Stellar" string from
+    /// Traveller Map (e.g. "G2 V K2 V") is written here on selection.
+    /// Used by the system generator to autopopulate Star rows.
+    #[prop(optional)]
+    stellar: Option<RwSignal<Option<String>>>,
+    /// Optional: when present, the world's PBG string (3 chars,
+    /// population/belts/gas-giants) is written here on selection. Used
+    /// to autopopulate Belt and GasGiant rows.
+    #[prop(optional)]
+    pbg: Option<RwSignal<Option<String>>>,
 ) -> impl IntoView {
     let (search_results, set_search_results) =
         signal::<Vec<(String, String, String, i32, i32)>>(vec![]);
@@ -712,6 +722,12 @@ pub fn WorldSearch(
                                 None => ZoneClassification::Green,
                             };
                             zone.set(world_zone);
+                            if let Some(s) = stellar {
+                                s.set(world_data.stellar.clone());
+                            }
+                            if let Some(p) = pbg {
+                                p.set(world_data.pbg.clone());
+                            }
                             commit_uwp(world_data.uwp);
                         }
                         Err(err) => {
@@ -812,7 +828,7 @@ pub fn WorldSearch(
         </div>
         <Show when=move || show_uwp>
             <div>
-                <label for=uwp_id.clone()>{format!("{label} UPP:")}</label>
+                <label for=uwp_id.clone()>{format!("{label} UWP:")}</label>
                 <input type="text" id=uwp_id.clone() bind:value=input_uwp on:input=handle_uwp_input />
             </div>
         </Show>

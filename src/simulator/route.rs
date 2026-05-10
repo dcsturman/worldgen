@@ -333,22 +333,22 @@ mod tests {
     use crate::trade::available_goods::Good;
 
     /// Build a `World` from a UWP, set its sector-hex coordinates, and
-    /// derive trade classes from the UWP. We use `from_upp` for the
-    /// stat fields and then walk the UWP through `upp_to_trade_classes`
+    /// derive trade classes from the UWP. We use `from_uwp` for the
+    /// stat fields and then walk the UWP through `uwp_to_trade_classes`
     /// to populate the trade classes the planner reads.
     fn mk_world(name: &str, uwp: &str, x: i32, y: i32) -> World {
-        let mut w = World::from_upp(name, uwp, false, true).expect("from_upp");
+        let mut w = World::from_uwp(name, uwp, false, true).expect("from_uwp");
         w.coordinates = Some((x, y));
         // Derive trade classes from the UWP's 8-character body
         // ("A788899-A" → "A788899A").
         let body: String = uwp.chars().filter(|c| *c != '-').collect();
         let chars: Vec<char> = body.chars().collect();
-        let classes = crate::trade::upp_to_trade_classes(&chars);
+        let classes = crate::trade::uwp_to_trade_classes(&chars);
         // Push them onto the world via gen_trade_classes' equivalent —
         // but gen_trade_classes generates from population/atmosphere.
         // We can't directly set trade_classes (private), so for tests
         // that need them populated we rely on `gen_trade_classes`
-        // matching what `upp_to_trade_classes` would produce.
+        // matching what `uwp_to_trade_classes` would produce.
         // The two routines use the same rules, so this works.
         let _ = classes; // explicit: gen_trade_classes derives the same
         w.gen_trade_classes();

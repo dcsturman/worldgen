@@ -251,6 +251,194 @@ input[type="text"] {
   max-width: 60em;
 }
 
+.generator-intro {
+  max-width: 60em;
+  margin: 0 0 0.8em 0;
+  padding: 0.6em 1em;
+  border-left: 3px solid #4a90c2;
+  background: rgba(74, 144, 194, 0.08);
+  font-family: "Space Mono", sans-serif;
+  font-size: 0.95em;
+  line-height: 1.45;
+}
+
+/* ---- Constraint-row UI for the system generator ---- */
+.constraint-panel {
+  border: 1px solid #ccc;
+  border-radius: 5px;
+  font-family: "Space Mono", sans-serif;
+  font-weight: 400;
+  padding: 0.6em 1em;
+  margin-bottom: 1em;
+  width: fit-content;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4em;
+}
+
+.constraint-table {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3em;
+}
+
+.constraint-row-wrapper {
+  display: flex;
+  flex-direction: column;
+}
+
+.constraint-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4em;
+}
+
+.constraint-row .kind-select {
+  width: 11em;
+  font-family: "Space Mono", sans-serif;
+  flex: 0 0 auto;
+}
+
+.constraint-row .cell-orbit {
+  width: 8em;
+  display: inline-block;
+  box-sizing: border-box;
+  font-family: "Space Mono", sans-serif;
+  flex: 0 0 auto;
+}
+
+.constraint-row .cell-name {
+  width: 11em;
+  display: inline-block;
+  box-sizing: border-box;
+  font-family: "Space Mono", sans-serif;
+  flex: 0 0 auto;
+}
+
+.constraint-row .cell-uwp {
+  width: 11em;
+  display: inline-block;
+  box-sizing: border-box;
+  font-family: "Space Mono", sans-serif;
+  flex: 0 0 auto;
+}
+
+.constraint-row .cell-moons {
+  width: 6em;
+  display: inline-block;
+  box-sizing: border-box;
+  font-family: "Space Mono", sans-serif;
+  flex: 0 0 auto;
+}
+
+/* Sub-cluster inside the cell-uwp slot for the Star row: the spectral
+   type dropdown plus the 0-9 subtype digit, side by side and sized so
+   they fit the same 11em the planet-row UWP input occupies. */
+.constraint-row .cell-uwp.star-class-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25em;
+  padding: 0;
+}
+
+.constraint-row .star-type-select {
+  width: 7.5em;
+  font-family: "Space Mono", sans-serif;
+}
+
+.constraint-row .star-subtype-input {
+  width: 3em;
+  font-family: "Space Mono", sans-serif;
+  text-align: center;
+}
+
+.constraint-row .row-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35em;
+  margin-left: auto;
+}
+
+.map-link {
+  font-family: "Orbitron", sans-serif;
+  font-size: 10pt;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 3px;
+  text-decoration: none;
+  color: #ffffff;
+  background-image: linear-gradient(#42a1ec, #0070c9);
+  border: 1px solid #0077cc;
+  cursor: pointer;
+}
+
+.map-link:hover {
+  background-image: linear-gradient(#51a9ee, #147bcd);
+}
+
+.remove-row-button {
+  width: 1.7em;
+  height: 1.7em;
+  border-radius: 50%;
+  border: 1px solid #999;
+  background: rgba(255, 255, 255, 0.1);
+  color: #ddd;
+  font-size: 12pt;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.remove-row-button:hover {
+  background: rgba(220, 70, 70, 0.6);
+  border-color: #cc4444;
+  color: #fff;
+}
+
+.add-row-button {
+  width: 2em;
+  height: 2em;
+  border-radius: 50%;
+  border: 1px solid #4a90c2;
+  background-image: linear-gradient(#42a1ec, #0070c9);
+  color: white;
+  font-size: 14pt;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  align-self: flex-start;
+  margin-top: 0.1em;
+}
+
+.add-row-button:hover {
+  background-image: linear-gradient(#51a9ee, #147bcd);
+}
+
+.constraint-actions {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 1em;
+  margin-top: 0.4em;
+}
+
+.constraint-error-summary {
+  list-style: disc inside;
+  margin: 0;
+  padding: 0.2em 0 0 0.3em;
+  color: #ff8888;
+  font-size: 0.9em;
+}
+
+.constraint-row-error {
+  color: #ff8888;
+  font-size: 0.85em;
+  margin-left: 11.4em; /* roughly past the kind-select column */
+  padding-top: 0.1em;
+}
+
 .world-text-entry {
   flex-direction: column;
 }

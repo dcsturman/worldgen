@@ -515,7 +515,7 @@ fn recalculate_trade_state(state: &mut TradeState, prev_state: Option<&TradeStat
 
     // Parse origin world from name/UWP, setting coordinates and zone
     let origin_world = if !state.origin_world_name.is_empty() && state.origin_uwp.len() == 9 {
-        match World::from_upp(&state.origin_world_name, &state.origin_uwp, false, false) {
+        match World::from_uwp(&state.origin_world_name, &state.origin_uwp, false, false) {
             Ok(mut world) => {
                 world.gen_trade_classes();
                 // Set coordinates and zone from state
@@ -534,7 +534,7 @@ fn recalculate_trade_state(state: &mut TradeState, prev_state: Option<&TradeStat
 
     // Parse destination world from name/UWP, setting coordinates and zone
     let dest_world = if !state.dest_world_name.is_empty() && state.dest_uwp.len() == 9 {
-        match World::from_upp(&state.dest_world_name, &state.dest_uwp, false, false) {
+        match World::from_uwp(&state.dest_world_name, &state.dest_uwp, false, false) {
             Ok(mut world) => {
                 world.gen_trade_classes();
                 // Set coordinates and zone from state

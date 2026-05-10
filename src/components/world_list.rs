@@ -50,7 +50,7 @@
 //! | Orbit | Orbital Position | Numeric orbit or special designations |
 //! | (Empty) | Indentation | Visual spacing for satellites |
 //! | Name | Object Name | Star, world, or gas giant name |
-//! | UPP | Universal Profile | UWP for worlds, stellar class for stars |
+//! | UWP | Universal Profile | UWP for worlds, stellar class for stars |
 //! | Remarks | Classifications | Trade codes, facilities, special notes |
 //! | Astro Data | Physical Info | Astronomical and orbital characteristics |
 //!
@@ -195,6 +195,7 @@ use crate::systems::system::{
     OrbitContent, OrbitContentStoreFields, StarOrbit, System, SystemStoreFields,
 };
 use crate::systems::world::{Satellites, SatellitesStoreFields, World, WorldStoreFields};
+use crate::util::worldmap_url;
 
 /// Main world list component displaying complete star system information
 ///
@@ -217,7 +218,7 @@ use crate::systems::world::{Satellites, SatellitesStoreFields, World, WorldStore
 /// - **Orbit**: Orbital position or designation
 /// - **(Empty)**: Spacing column for visual hierarchy
 /// - **Name**: Object name (star, world, or gas giant)
-/// - **UPP**: Universal World Profile or stellar classification
+/// - **UWP**: Universal World Profile or stellar classification
 /// - **Remarks**: Trade codes, facilities, and special characteristics
 /// - **Astro Data**: Physical and orbital information
 ///
@@ -263,9 +264,10 @@ pub fn WorldList(#[prop(default = false)] is_companion: bool) -> impl IntoView {
                     <th class="table-entry">"Orbit"</th>
                     <th class="table-entry"></th>
                     <th class="table-entry">"Name"</th>
-                    <th class="table-entry">"UPP"</th>
+                    <th class="table-entry">"UWP"</th>
                     <th class="table-entry">"Remarks"</th>
                     <th class="table-entry">"Astro Data"</th>
+                    <th class="table-entry"></th>
                 </tr>
             </thead>
             <tbody>
@@ -371,7 +373,7 @@ pub fn WorldList(#[prop(default = false)] is_companion: bool) -> impl IntoView {
 /// - **Orbit**: Shows orbital designation (Primary, Far, Companion, or orbit number)
 /// - **(Empty)**: Spacing column for visual alignment
 /// - **Name**: Star name from the system data
-/// - **UPP**: Stellar classification (spectral class, size, etc.)
+/// - **UWP**: Stellar classification (spectral class, size, etc.)
 /// - **Remarks**: Currently empty for stars
 /// - **Astro Data**: Currently empty for stars
 ///
@@ -449,7 +451,7 @@ pub fn StarRow(
 /// - **Orbit**: Orbital position number within the star system
 /// - **Indentation**: Extra column for satellites to show hierarchy
 /// - **Name**: World name (generated or assigned)
-/// - **UPP**: 9-character Universal World Profile string
+/// - **UWP**: 9-character Universal World Profile string
 /// - **Remarks**: Combined facilities and trade classifications
 /// - **Astro Data**: Physical characteristics and orbital mechanics
 ///
@@ -534,6 +536,21 @@ pub fn WorldView(#[prop(into)] world: Field<World>, satellite: bool) -> impl Int
                 <td class="table-entry">
                     {move || world.with(|world| world.get_astro_description())}
                 </td>
+                <td class="table-entry">
+                    {move || world.with(|world| {
+                        // Size 0 = planetoid belt or ring (display "R"
+                        // for satellites); size -1 = small body "S".
+                        // None of these have a surface to map.
+                        if world.size <= 0 {
+                            view! { <span /> }.into_any()
+                        } else {
+                            let href = worldmap_url(&world.name, &world.to_uwp());
+                            view! {
+                                <a class="map-link" href=href target="_blank" title="Open this world's map in a new tab">"Map"</a>
+                            }.into_any()
+                        }
+                    })}
+                </td>
             </tr>
             <SatelliteView satellites=world.satellites() />
         }
@@ -553,13 +570,13 @@ pub fn WorldView(#[prop(into)] world: Field<World>, satellite: bool) -> impl Int
 /// - **Orbit**: Orbital position number within the star system
 /// - **(Empty)**: Spacing column for visual alignment
 /// - **Name**: Gas giant name (usually system name + Roman numeral)
-/// - **UPP**: Gas giant size classification (not full UWP)
+/// - **UWP**: Gas giant size classification (not full UWP)
 /// - **Remarks**: Currently empty for gas giants
 /// - **Astro Data**: Currently empty for gas giants
 ///
 /// ## Size Classification
 ///
-/// The UPP column shows the gas giant size rather than a full Universal
+/// The UWP column shows the gas giant size rather than a full Universal
 /// World Profile, as gas giants use a different classification system
 /// than terrestrial worlds.
 ///

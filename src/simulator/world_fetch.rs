@@ -36,7 +36,7 @@ pub enum FetchError {
     /// HTTP transport failure.
     #[error("HTTP error: {0}")]
     Http(#[from] reqwest::Error),
-    /// TravellerMap returned a UWP that `World::from_upp` rejected.
+    /// TravellerMap returned a UWP that `World::from_uwp` rejected.
     #[error("invalid UWP from TravellerMap: {0}")]
     InvalidUwp(String),
     /// TravellerMap returned JSON we couldn't parse into our schema.
@@ -259,7 +259,7 @@ async fn fetch_one(
         None => return Ok(None),
     };
 
-    let mut world = World::from_upp(&entry.name, &entry.uwp, false, true)
+    let mut world = World::from_uwp(&entry.name, &entry.uwp, false, true)
         .map_err(|e| FetchError::InvalidUwp(format!("{}: {}", entry.uwp, e)))?;
     world.gen_trade_classes();
     world.coordinates = Some((hex_x, hex_y));

@@ -18,17 +18,45 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::JsValue;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen_futures::JsFuture;
-use web_sys::{Blob, BlobPropertyBag, HtmlAnchorElement, Url};
+use web_sys::{Blob, BlobPropertyBag, HtmlAnchorElement, Url, UrlSearchParams};
 
 use crate::worldmap;
 
 const DEFAULT_UWP: &str = "A788899-A";
 const DEFAULT_SEED: u64 = 0xC0FFEE;
 
+/// Pull `?uwp=…&seed=…&name=…` off the current URL.
+///
+/// Returns the parsed values and a flag indicating whether *any* of the
+/// three params were present — used by the cold-start path to decide
+/// whether to auto-render. With no params we keep the original behavior
+/// (blank canvas until the user clicks Regenerate); with any param
+/// supplied (the typical "open from system view" case) we render
+/// immediately so the new tab isn't useless.
+fn read_query_params() -> (Option<String>, Option<u64>, Option<String>, bool) {
+    let Some(window) = web_sys::window() else {
+        return (None, None, None, false);
+    };
+    let Ok(search) = window.location().search() else {
+        return (None, None, None, false);
+    };
+    let Ok(params) = UrlSearchParams::new_with_str(&search) else {
+        return (None, None, None, false);
+    };
+    let uwp = params.get("uwp");
+    let seed = params.get("seed").and_then(|s| s.parse::<u64>().ok());
+    let name = params.get("name");
+    let any = uwp.is_some() || seed.is_some() || name.is_some();
+    (uwp, seed, name, any)
+}
+
 #[component]
 pub fn WorldMap() -> impl IntoView {
-    let uwp = RwSignal::new(DEFAULT_UWP.to_string());
-    let seed = RwSignal::new(DEFAULT_SEED);
+    let (qp_uwp, qp_seed, qp_name, has_query_params) = read_query_params();
+
+    let uwp = RwSignal::new(qp_uwp.unwrap_or_else(|| DEFAULT_UWP.to_string()));
+    let seed = RwSignal::new(qp_seed.unwrap_or(DEFAULT_SEED));
+    let world_name = RwSignal::new(qp_name);
     let error = RwSignal::new(None::<String>);
     // Default the legend visible — the key is core to reading the map and
     // many users won't think to look for it.
@@ -39,24 +67,28 @@ pub fn WorldMap() -> impl IntoView {
     // 1-2s WASM compute). The user edits both freely, then clicks the
     // Regenerate button, which bumps this counter and triggers a single
     // render with the current input values. We deliberately do NOT fire
-    // on cold start: showing up to a 1-2s WASM compute the moment a user
-    // navigates to the page is jarring — they should pay that cost only
-    // when they actually ask for a map.
+    // on cold start *unless* the URL supplied query params: arriving with
+    // ?uwp=…&seed=… means the user came in from a "Map" link and expects
+    // the map immediately, but a bare /worldmap visit stays blank so a
+    // 1-2s WASM compute doesn't blindside them.
     let regen = RwSignal::new(0u32);
     let pending_render = RwSignal::new(false);
 
     let svg_html = RwSignal::new(String::new());
 
-    // Watch the regen counter. Skips the cold-start tick (prev=None) so
-    // landing on the page is instant; fires only when the Regenerate
-    // button bumps the counter. Reads uwp/seed at fire time so editing
-    // the inputs doesn't trigger a render — only the button does.
+    // Watch the regen counter. Cold-start fires only when query params
+    // hydrated the inputs (`has_query_params`); otherwise the first tick
+    // is skipped and the map stays blank until the Regenerate button
+    // bumps the counter. Reads uwp/seed at fire time so editing the
+    // inputs doesn't trigger a render — only the button does.
     Effect::new(move |prev: Option<u32>| {
         let cur = regen.get();
         let changed = matches!(prev, Some(p) if p != cur);
-        if changed {
+        let cold_with_params = prev.is_none() && has_query_params;
+        if changed || cold_with_params {
             let uwp_str = uwp.get_untracked();
             let seed_v = seed.get_untracked();
+            let name_v = world_name.get_untracked();
             spawn_local(async move {
                 pending_render.set(true);
                 if uwp_str.chars().filter(|c| *c != '-').count() < 8 {
@@ -66,7 +98,7 @@ pub fn WorldMap() -> impl IntoView {
                     return;
                 }
                 yield_to_browser().await;
-                let map = match worldmap::generate(&uwp_str, seed_v) {
+                let map = match worldmap::generate(&uwp_str, seed_v, name_v.as_deref()) {
                     Ok(m) => m,
                     Err(e) => {
                         error.set(Some(e.to_string()));
@@ -109,10 +141,11 @@ pub fn WorldMap() -> impl IntoView {
     let download_png = move |_| {
         let uwp_now = uwp.get();
         let seed_now = seed.get();
+        let name_now = world_name.get();
         spawn_local(async move {
             pending_render.set(true);
             yield_to_browser().await;
-            let result = match worldmap::generate(&uwp_now, seed_now) {
+            let result = match worldmap::generate(&uwp_now, seed_now, name_now.as_deref()) {
                 Ok(map) => {
                     yield_to_browser().await;
                     worldmap::render_png(&map)
@@ -146,7 +179,12 @@ pub fn WorldMap() -> impl IntoView {
 
     view! {
         <div class:App>
-            <h1>"World Map Generator"</h1>
+            <h1>
+                {move || match world_name.get() {
+                    Some(n) if !n.is_empty() => format!("World Map: {n}"),
+                    _ => "World Map Generator".to_string(),
+                }}
+            </h1>
             <div class="d-print-none key-region world-entry-form">
                 <label>
                     "UWP "

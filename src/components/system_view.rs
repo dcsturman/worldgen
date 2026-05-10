@@ -96,7 +96,6 @@
 //! - Print-friendly formatting for hard copy generation
 //! - Bootstrap-compatible responsive layout
 
-use leptos::context::Provider;
 use leptos::prelude::*;
 use reactive_stores::{Store, Subfield};
 
@@ -498,50 +497,10 @@ pub fn SystemPreamble() -> impl IntoView {
 /// sections, with proper spacing and hierarchical organization.
 #[component]
 pub fn SystemMain(#[prop(default = false)] is_companion: bool) -> impl IntoView {
-    let system = expect_context::<Store<System>>();
-
     view! {
         <div>
             <WorldList is_companion=is_companion />
             <br />
-            {move || {
-                if let Some(secondary) = system.secondary().get() {
-                    let secondary = Store::new(*secondary);
-                    view! {
-                        {system.read().name.clone()}
-                        "'s secondary star "
-                        {secondary.name().get()}
-                        :
-                        <br />
-                        <Provider value=secondary>
-                            <SystemMain is_companion=true />
-                        </Provider>
-                        <br />
-                    }
-                        .into_any()
-                } else {
-                    ().into_any()
-                }
-            }}
-            {move || {
-                if let Some(tertiary) = system.tertiary().get() {
-                    let tertiary = Store::new(*tertiary);
-                    view! {
-                        {system.read().name.clone()}
-                        "'s tertiary star "
-                        {tertiary.name().get()}
-                        :
-                        <br />
-                        <Provider value=tertiary>
-                            <SystemMain is_companion=true />
-                        </Provider>
-                        <br />
-                    }
-                        .into_any()
-                } else {
-                    ().into_any()
-                }
-            }}
         </div>
     }
 }

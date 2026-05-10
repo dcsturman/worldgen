@@ -19,7 +19,7 @@ use crate::components::captains_log_instructions::INSTRUCTIONS;
 use crate::simulator::types::{
     Action, Date, SimulationParams, SimulationResult, SimulationStep, WorldRef,
 };
-use crate::trade::{TradeClass, ZoneClassification, upp_to_trade_classes};
+use crate::trade::{TradeClass, ZoneClassification, uwp_to_trade_classes};
 
 /// Build the full prompt string from a completed simulation.
 ///
@@ -709,12 +709,12 @@ fn trade_classes_for(uwp: &str) -> Vec<&'static str> {
     if chars.len() < 9 || chars[7] != '-' {
         return Vec::new();
     }
-    // upp_to_trade_classes wants 8 chars: starport + 6 stat digits +
+    // uwp_to_trade_classes wants 8 chars: starport + 6 stat digits +
     // tech-level. Skip the dash at index 7.
-    let upp: [char; 8] = [
+    let uwp: [char; 8] = [
         chars[0], chars[1], chars[2], chars[3], chars[4], chars[5], chars[6], chars[8],
     ];
-    upp_to_trade_classes(&upp)
+    uwp_to_trade_classes(&uwp)
         .into_iter()
         .map(|tc| match tc {
             TradeClass::Agricultural => "Agricultural",

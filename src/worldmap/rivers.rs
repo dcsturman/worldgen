@@ -350,11 +350,22 @@ fn trace_rivers(
             .map(|s| meander_polyline(&s, &warp, elev_field, sea_level))
             .filter(|s| s.len() >= 2)
             .collect();
-        if meandered.is_empty() {
+        // Clip to the icosahedron silhouette. The river polyline lives in
+        // equirectangular (x, y) — `sphere_to_xy` puts high-latitude
+        // samples near y=0/y=SHEET_HEIGHT, but the polar-cap triangles
+        // converge to single-point apices there, so equirectangular
+        // points easily land in the page-background gaps between
+        // adjacent triangles. Without this step rivers visibly run
+        // through blank space at the top/bottom of the sheet.
+        let clipped: Vec<Vec<(f64, f64)>> = meandered
+            .into_iter()
+            .flat_map(|s| clip_polyline_to_silhouette(&s, faces))
+            .collect();
+        if clipped.is_empty() {
             continue;
         }
         rivers.push(RiverPath {
-            strokes: meandered,
+            strokes: clipped,
             mouth_drainage: last_land_drain,
         });
     }
@@ -572,13 +583,76 @@ fn project_path_to_strokes(
     strokes
 }
 
+/// Walk a meandered polyline and split it on every exit from / re-entry
+/// into the icosahedron silhouette. Returns 0+ contiguous sub-polylines,
+/// each entirely inside the silhouette. Points outside are dropped — we
+/// don't binary-search for the exact boundary crossing, which means a
+/// river ends up to ~one meander step short of the icosahedron edge in
+/// the worst case (visually invisible at TRIANGLE_SIDE = 200).
+fn clip_polyline_to_silhouette(poly: &[(f64, f64)], faces: &[Face]) -> Vec<Vec<(f64, f64)>> {
+    let mut result = Vec::new();
+    let mut current: Vec<(f64, f64)> = Vec::new();
+    for &p in poly {
+        if point_in_any_face(faces, p.0, p.1) {
+            current.push(p);
+        } else if current.len() >= 2 {
+            result.push(std::mem::take(&mut current));
+        } else {
+            current.clear();
+        }
+    }
+    if current.len() >= 2 {
+        result.push(current);
+    }
+    result
+}
+
+/// True if (x, y) lies inside any face's unfolded triangle. Mirrors the
+/// rasterizer's silhouette test (`raster::point_in_silhouette`) but
+/// reads `Face::unfolded_positions` directly so the rivers module
+/// doesn't need to depend on raster's `BoundedTri` representation.
+fn point_in_any_face(faces: &[Face], x: f64, y: f64) -> bool {
+    for face in faces {
+        for tri in &face.unfolded_positions {
+            let xmin = tri[0].0.min(tri[1].0).min(tri[2].0);
+            let xmax = tri[0].0.max(tri[1].0).max(tri[2].0);
+            if x < xmin || x > xmax {
+                continue;
+            }
+            let ymin = tri[0].1.min(tri[1].1).min(tri[2].1);
+            let ymax = tri[0].1.max(tri[1].1).max(tri[2].1);
+            if y < ymin || y > ymax {
+                continue;
+            }
+            if point_in_triangle_2d(tri, x, y) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn point_in_triangle_2d(tri: &[(f64, f64); 3], x: f64, y: f64) -> bool {
+    let (x0, y0) = tri[0];
+    let (x1, y1) = tri[1];
+    let (x2, y2) = tri[2];
+    let denom = (y1 - y2) * (x0 - x2) + (x2 - x1) * (y0 - y2);
+    if denom.abs() < 1e-12 {
+        return false;
+    }
+    let a = ((y1 - y2) * (x - x2) + (x2 - x1) * (y - y2)) / denom;
+    let b = ((y2 - y0) * (x - x2) + (x0 - x2) * (y - y2)) / denom;
+    let c = 1.0 - a - b;
+    a >= -1e-9 && b >= -1e-9 && c >= -1e-9
+}
+
 #[cfg(test)]
 mod tests {
     use crate::worldmap::{biome::Biome, generate};
 
     #[test]
     fn garden_world_has_rivers() {
-        let map = generate("A788899-A", 0xDEADBEEF).unwrap();
+        let map = generate("A788899-A", 0xDEADBEEF, None).unwrap();
         let n = map.rivers.len();
         assert!(
             n >= 1,
@@ -600,7 +674,7 @@ mod tests {
         // wavy lines a user might see on a Mars-like map come from
         // hillshade or tectonic shading, never from this module.
         for seed in 1..=10u64 {
-            let map = generate("A780799-A", seed).unwrap();
+            let map = generate("A780799-A", seed, None).unwrap();
             assert_eq!(map.uwp.hydrographics(), 0);
             assert!(
                 map.rivers.is_empty(),
@@ -612,7 +686,7 @@ mod tests {
 
     #[test]
     fn waterworld_has_no_rivers() {
-        let map = generate("A78A899-A", 1).unwrap();
+        let map = generate("A78A899-A", 1, None).unwrap();
         // Sanity: it's actually a water world.
         let land = map
             .grid
@@ -632,8 +706,42 @@ mod tests {
     }
 
     #[test]
+    fn rivers_stay_within_icosahedron_silhouette() {
+        // Regression: equirectangular `sphere_to_xy` puts high-latitude
+        // points at the top/bottom of the sheet where the polar-cap
+        // triangles converge to single apices, leaving large gaps
+        // between adjacent triangles. Without `clip_polyline_to_silhouette`
+        // those gaps catch river polylines and the renderer draws them
+        // through pure page background. Run several seeds — the bug
+        // bites only on worlds that happen to have a river head near a
+        // pole.
+        // First entry is the bug reproducer the user reported (Iocaste
+        // Y75212C-0, seed 607644472) — rivers crossed the page-background
+        // gaps near the north polar cap.
+        let cases: &[(&str, u64)] = &[
+            ("Y75212C-0", 607_644_472),
+            ("A788899-A", 0xCAFE),
+            ("A788899-A", 0xDEAD_BEEF),
+            ("A788899-A", 0x12345678),
+        ];
+        for &(uwp, seed) in cases {
+            let map = super::super::generate(uwp, seed, None).unwrap();
+            for river in &map.rivers {
+                for stroke in &river.strokes {
+                    for &(x, y) in stroke {
+                        assert!(
+                            super::point_in_any_face(&map.grid.faces, x, y),
+                            "river point ({x:.2}, {y:.2}) outside silhouette (uwp={uwp}, seed={seed})"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn rivers_stay_within_sheet_bounds() {
-        let map = generate("A788899-A", 0xCAFE).unwrap();
+        let map = generate("A788899-A", 0xCAFE, None).unwrap();
         let w = super::super::grid::SHEET_WIDTH;
         let h = super::super::grid::SHEET_HEIGHT;
         // Allow modest slack for seam-wrapped copies (which can be at -ve x).
@@ -666,7 +774,7 @@ mod tests {
             ("ice", "A300077-A", 1),
         ];
         for &(name, uwp, seed) in cases {
-            let map = generate(uwp, seed).unwrap();
+            let map = generate(uwp, seed, None).unwrap();
             let mut reach = 0;
             let mut inland = 0;
             for r in &map.rivers {

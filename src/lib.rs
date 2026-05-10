@@ -29,7 +29,7 @@ pub mod util;
 pub mod worldmap;
 
 /// Default UWP (Universal World Profile) used for initial world generation
-pub const INITIAL_UPP: &str = "A788899-A";
+pub const INITIAL_UWP: &str = "A788899-A";
 
 /// Default name for the initial main world
 pub const INITIAL_NAME: &str = "Main World";

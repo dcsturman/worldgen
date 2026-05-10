@@ -12,6 +12,7 @@ use std::fmt::Display;
 use log::debug;
 
 use crate::systems::astro::AstroData;
+use crate::systems::constraint::PartialUwp;
 use crate::systems::has_satellites::HasSatellites;
 use crate::systems::name_tables::{gen_moon_name, gen_planet_name};
 use crate::systems::system::{Star, StarType};
@@ -139,6 +140,11 @@ impl World {
         self.population
     }
 
+    /// Whether this world was flagged as the main world for the system.
+    pub fn is_mainworld(&self) -> bool {
+        self.is_mainworld
+    }
+
     /// Returns the law level of the world
     pub fn get_law_level(&self) -> i32 {
         self.law_level
@@ -212,25 +218,25 @@ impl World {
     /// # Arguments
     ///
     /// * `name` - The name of the world
-    /// * `upp` - The Traveller UWP string
+    /// * `uwp` - The Traveller UWP string
     /// * `is_satellite` - Whether this world is a satellite of another body used to just record in the returned world. It does not
     ///   impact parsing of the UWP.
     /// * `is_mainworld` - Whether this is the main world of the system used to just record in the returned world. It does not
     ///   impact parsing of the UWP.
-    pub fn from_upp(
+    pub fn from_uwp(
         name: &str,
-        upp: &str,
+        uwp: &str,
         is_satellite: bool,
         is_mainworld: bool,
     ) -> Result<World, Box<dyn std::error::Error>> {
-        let port = PortCode::from_upp(upp);
-        let size = i32::from_str_radix(&upp[1..2], 16)?;
-        let atmosphere = i32::from_str_radix(&upp[2..3], 16)?;
-        let hydro = i32::from_str_radix(&upp[3..4], 16)?;
-        let population = i32::from_str_radix(&upp[4..5], 16)?;
-        let government = i32::from_str_radix(&upp[5..6], 16)?;
-        let law_level = i32::from_str_radix(&upp[6..7], 16)?;
-        let tech_level = i32::from_str_radix(&upp[8..9], 16)?;
+        let port = PortCode::from_uwp(uwp);
+        let size = i32::from_str_radix(&uwp[1..2], 16)?;
+        let atmosphere = i32::from_str_radix(&uwp[2..3], 16)?;
+        let hydro = i32::from_str_radix(&uwp[3..4], 16)?;
+        let population = i32::from_str_radix(&uwp[4..5], 16)?;
+        let government = i32::from_str_radix(&uwp[5..6], 16)?;
+        let law_level = i32::from_str_radix(&uwp[6..7], 16)?;
+        let tech_level = i32::from_str_radix(&uwp[8..9], 16)?;
         let mut world = World::new(
             name.to_string(),
             0,
@@ -357,16 +363,7 @@ impl World {
             (roll_1d6() - 3 + main_world.law_level).max(0)
         };
 
-        let tech_level = if population <= 0 {
-            0
-        } else if population > 0
-            && ![5, 6, 8].contains(&self.atmosphere)
-            && main_world.tech_level <= 7
-        {
-            7
-        } else {
-            (main_world.tech_level - 1).max(0)
-        };
+        let tech_level = subordinate_tech_level(population, self.atmosphere, main_world);
 
         let roll = roll_1d6()
             + match population {
@@ -513,70 +510,374 @@ impl World {
         self.astro_data.get_astro_description(self)
     }
 
-    pub fn generate(star: &Star, orbit: usize, main_world: &World) -> World {
-        let mut modifier = if orbit == 0 {
-            -5
-        } else if orbit == 1 {
-            -4
-        } else if orbit == 2 {
-            -2
-        } else {
-            0
+    /// Constraint-aware version of [`World::generate`]: every UWP
+    /// column is either taken from `partial` (if specified) or rolled
+    /// using the same per-orbit / per-zone modifier table the legacy
+    /// `generate` path uses. Already-resolved digits flow into the
+    /// rolls for later digits, so e.g. user-specified size feeds the
+    /// hydrographics roll exactly the way fully-rolled size would.
+    ///
+    /// Pass `partial = None` and `name = None` to recreate the
+    /// classic "everything rolled" behavior — `generate` itself is
+    /// just a thin wrapper.
+    #[allow(clippy::too_many_arguments)]
+    pub fn generate_with_partial(
+        star: &Star,
+        orbit: usize,
+        main_world: &World,
+        partial: Option<&PartialUwp>,
+        name: Option<&str>,
+        is_satellite: bool,
+        is_mainworld: bool,
+    ) -> World {
+        let signed_orbit = orbit as i32;
+
+        // Size
+        let size = match partial.and_then(|p| p.size) {
+            Some(s) => s as i32,
+            None => {
+                let mut modifier = if orbit == 0 {
+                    -5
+                } else if orbit == 1 {
+                    -4
+                } else if orbit == 2 {
+                    -2
+                } else {
+                    0
+                };
+                if star.star_type == StarType::M {
+                    modifier -= 2;
+                }
+                (roll_2d6() - 2 + modifier).min(0)
+            }
         };
 
-        if star.star_type == StarType::M {
-            modifier -= 2;
-        }
-
-        let size = (roll_2d6() - 2 + modifier).min(0);
-
-        let roll = roll_2d6();
-        let signed_orbit = orbit as i32;
-        let mut atmosphere = (roll_2d6() - 7
-            + size
-            + if signed_orbit <= get_zone(star).inner {
-                -2
-            } else {
-                0
+        // Atmosphere
+        let atmosphere = match partial.and_then(|p| p.atmosphere) {
+            Some(a) => a as i32,
+            None => {
+                let roll = roll_2d6();
+                let mut atm = (roll_2d6() - 7
+                    + size
+                    + if signed_orbit <= get_zone(star).inner {
+                        -2
+                    } else {
+                        0
+                    }
+                    + if signed_orbit > get_zone(star).habitable {
+                        -2
+                    } else {
+                        0
+                    })
+                .clamp(0, 10);
+                if roll == 12 && signed_orbit > get_zone(star).habitable + 1 {
+                    atm = 10;
+                }
+                atm
             }
-            + if signed_orbit > get_zone(star).habitable {
-                -2
-            } else {
-                0
-            })
-        .clamp(0, 10);
+        };
 
-        // Special case for a type A atmosphere. Possible if 2 zones out
-        // or more from the habitable zone.
-        if roll == 12 && signed_orbit > get_zone(star).habitable + 1 {
-            atmosphere = 10;
-        }
-
-        let mut hydro = (roll_2d6() - 7
-            + size
-            + if signed_orbit > get_zone(star).habitable {
-                -4
-            } else {
-                0
+        // Hydro
+        let hydro = match partial.and_then(|p| p.hydro) {
+            Some(h) => h as i32,
+            None => {
+                let mut h = (roll_2d6() - 7
+                    + size
+                    + if signed_orbit > get_zone(star).habitable {
+                        -4
+                    } else {
+                        0
+                    }
+                    + if atmosphere <= 1 || atmosphere >= 10 {
+                        -4
+                    } else {
+                        0
+                    })
+                .clamp(0, 10);
+                if size <= 0 || signed_orbit <= get_zone(star).inner {
+                    h = 0;
+                }
+                h
             }
-            + if atmosphere <= 1 || atmosphere >= 10 {
-                -4
-            } else {
-                0
-            })
-        .clamp(0, 10);
-        if size <= 0 || signed_orbit <= get_zone(star).inner {
-            hydro = 0;
-        }
+        };
 
-        let population = (roll_2d6() - 2
-            + if signed_orbit <= get_zone(star).inner {
+        // Population
+        let population = match partial.and_then(|p| p.population) {
+            Some(p) => p as i32,
+            None if force_lifeless(main_world, atmosphere) => 0,
+            None => (roll_2d6() - 2
+                + if signed_orbit <= get_zone(star).inner {
+                    -5
+                } else {
+                    0
+                }
+                + if signed_orbit > get_zone(star).habitable {
+                    -5
+                } else {
+                    0
+                }
+                + if ![5, 6, 8].contains(&atmosphere) {
+                    -2
+                } else {
+                    0
+                })
+            .clamp(0, main_world.get_population() - 1),
+        };
+
+        let world_name = name
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "Unknown".to_string());
+        let mut world = World::new(
+            world_name,
+            orbit,
+            orbit,
+            size,
+            atmosphere,
+            hydro,
+            population,
+            is_satellite,
+            is_mainworld,
+        );
+        if name.is_none() {
+            world.gen_name(&main_world.name, orbit);
+        }
+        if let Some(p) = partial {
+            world.gen_subordinate_stats_with_partial(main_world, p);
+        } else {
+            world.gen_subordinate_stats(main_world);
+        }
+        world.gen_trade_classes();
+        world.gen_subordinate_facilities(&get_zone(star), orbit, main_world);
+        world
+    }
+
+    /// Constraint-aware version of [`World::gen_subordinate_stats`]:
+    /// each of port / government / law / tech is either taken from
+    /// `partial` (if specified) or rolled using the same logic as the
+    /// classic call.
+    pub fn gen_subordinate_stats_with_partial(
+        &mut self,
+        main_world: &World,
+        partial: &PartialUwp,
+    ) {
+        let population = self.get_population();
+
+        let government = match partial.government {
+            Some(g) => g as i32,
+            None => {
+                let modifier = if main_world.government == 6 {
+                    population
+                } else if main_world.government >= 7 {
+                    1
+                } else {
+                    0
+                };
+                if population <= 0 {
+                    0
+                } else {
+                    match roll_1d6() + modifier {
+                        1 => 0,
+                        2 => 1,
+                        3 => 2,
+                        4 => 3,
+                        _ => 6,
+                    }
+                }
+            }
+        };
+
+        let law_level = match partial.law {
+            Some(l) => l as i32,
+            None => {
+                if population <= 0 {
+                    0
+                } else {
+                    (roll_1d6() - 3 + main_world.law_level).max(0)
+                }
+            }
+        };
+
+        let tech_level = match partial.tech {
+            Some(t) => t as i32,
+            None => subordinate_tech_level(population, self.atmosphere, main_world),
+        };
+
+        let port = match partial.port {
+            Some(p) => p,
+            None => {
+                let roll = roll_1d6()
+                    + match population {
+                        0 => -3,
+                        1 => -2,
+                        2..=5 => 0,
+                        _ => 2,
+                    };
+                match roll {
+                    -2..=2 => PortCode::Y,
+                    3 => PortCode::H,
+                    4..=5 => PortCode::G,
+                    _ => PortCode::F,
+                }
+            }
+        };
+
+        self.set_subordinate_stats(port, government, law_level, tech_level, Vec::new());
+    }
+
+    pub fn generate(star: &Star, orbit: usize, main_world: &World) -> World {
+        Self::generate_with_partial(star, orbit, main_world, None, None, false, false)
+    }
+}
+
+/// A "real atmosphere" — Traveller atmosphere code 2..=8 — is one that
+/// can sustain a population without continuous life-support tech. 0–1
+/// require vacc suits, A+ require sealed habitats / corrosion handling,
+/// and 9 (dense, tainted) is technically breathable with a filter but
+/// the user's threshold for the population rule is "> 1 and < 9".
+pub(crate) fn has_real_atmosphere(atmosphere: i32) -> bool {
+    (2..=8).contains(&atmosphere)
+}
+
+/// House rule: a TL < 7 main world lacks the life-support tech to
+/// sustain populations on bodies without a real atmosphere, so any
+/// unconstrained such body is forced empty. The override is the partial
+/// UWP — if the user pinned a population (constraint `Planet`/`Belt`/
+/// `Moon` with an explicit pop digit), they've stated a reason and we
+/// keep it. Used by both planet and satellite generators.
+pub(crate) fn force_lifeless(main_world: &World, atmosphere: i32) -> bool {
+    !has_real_atmosphere(atmosphere) && main_world.tech_level < 7
+}
+
+/// Subordinate-world tech level rule. Population 0 always yields TL 0.
+/// Otherwise the cap is main-world TL minus one (Book 6, p.24), with one
+/// house exception: a populated body without a real atmosphere in a
+/// TL-7 system stays at TL 7, because TL 7 is the floor for the life
+/// support / vacc-suits / fusion plants such a body relies on — bumping
+/// it to TL 6 would imply it can't function. Higher-TL systems don't
+/// need the exception (TL ≥ 7 is already met after subtracting one),
+/// and lower-TL systems should already have had the population zeroed
+/// out by the caller via [`force_lifeless`].
+pub(crate) fn subordinate_tech_level(
+    population: i32,
+    atmosphere: i32,
+    main_world: &World,
+) -> i32 {
+    if population <= 0 {
+        0
+    } else if !has_real_atmosphere(atmosphere) && main_world.tech_level == 7 {
+        7
+    } else {
+        (main_world.tech_level - 1).max(0)
+    }
+}
+
+/// Construct a satellite (`is_satellite = true`) at a chosen orbit
+/// around a parent body, honoring a partial UWP. The caller decides
+/// the satellite's size — World parents use `parent.size - 1d6`,
+/// GasGiant parents use their own `2d6-6`/`2d6-4` rolls — and just
+/// passes the resolved size in. Wild columns roll using the same
+/// per-zone modifiers the random satellite generator uses; specified
+/// columns flow into rolls for later columns just as in
+/// [`World::generate_with_partial`].
+///
+/// Size 0 produces a Ring System with the standard `Y` starport and
+/// zero atmo/hydro/pop unless those columns are explicitly pinned.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_partial_satellite(
+    star: &Star,
+    parent_position_in_system: usize,
+    sat_orbit: usize,
+    size: i32,
+    system_zones: &ZoneTable,
+    main_world: &World,
+    partial: Option<&PartialUwp>,
+    name: Option<&str>,
+) -> World {
+    if size == 0 {
+        let atmosphere = partial
+            .and_then(|p| p.atmosphere)
+            .map(|a| a as i32)
+            .unwrap_or(0);
+        let hydro = partial.and_then(|p| p.hydro).map(|h| h as i32).unwrap_or(0);
+        let population = partial
+            .and_then(|p| p.population)
+            .map(|p| p as i32)
+            .unwrap_or(0);
+        let sat_name = name
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "Ring System".to_string());
+        let mut ring = World::new(
+            sat_name,
+            sat_orbit,
+            parent_position_in_system,
+            0,
+            atmosphere,
+            hydro,
+            population,
+            true,
+            false,
+        );
+        let port = partial.and_then(|p| p.port).unwrap_or(PortCode::Y);
+        ring.set_port(port);
+        ring.compute_astro_data(star);
+        return ring;
+    }
+
+    let atmosphere = match partial.and_then(|p| p.atmosphere) {
+        Some(a) => a as i32,
+        None => {
+            let roll = roll_2d6();
+            let mut atm = (roll - 7
+                + size
+                + if sat_orbit as i32 <= system_zones.inner
+                    || sat_orbit as i32 > system_zones.habitable
+                {
+                    -4
+                } else {
+                    0
+                })
+            .clamp(0, 10);
+            if size <= 1 {
+                atm = 0;
+            }
+            if roll == 12 && sat_orbit as i32 > system_zones.habitable {
+                atm = 10;
+            }
+            atm
+        }
+    };
+
+    let hydro = match partial.and_then(|p| p.hydro) {
+        Some(h) => h as i32,
+        None => {
+            let mut h = (roll_2d6() - 7
+                + size
+                + if sat_orbit as i32 > system_zones.habitable {
+                    -4
+                } else {
+                    0
+                }
+                + if atmosphere <= 1 || atmosphere >= 10 {
+                    -4
+                } else {
+                    0
+                })
+            .clamp(0, 10);
+            if size <= 0 || sat_orbit as i32 <= system_zones.inner {
+                h = 0;
+            }
+            h
+        }
+    };
+
+    let population = match partial.and_then(|p| p.population) {
+        Some(p) => p as i32,
+        None if force_lifeless(main_world, atmosphere) => 0,
+        None => (roll_2d6() - 2
+            + if sat_orbit as i32 <= system_zones.inner {
                 -5
-            } else {
-                0
-            }
-            + if signed_orbit > get_zone(star).habitable {
-                -5
+            } else if sat_orbit as i32 > system_zones.habitable {
+                -4
             } else {
                 0
             }
@@ -585,25 +886,30 @@ impl World {
             } else {
                 0
             })
-        .clamp(0, main_world.get_population() - 1);
+        .clamp(0, 10),
+    };
 
-        let mut world = World::new(
-            "Unknown".to_string(),
-            orbit,
-            orbit,
-            size,
-            atmosphere,
-            hydro,
-            population,
-            false,
-            false,
-        );
-        world.gen_name(&main_world.name, orbit);
-        world.gen_subordinate_stats(main_world);
-        world.gen_trade_classes();
-        world.gen_subordinate_facilities(&get_zone(star), orbit, main_world);
-        world
+    let sat_name = name.map(|n| n.to_string()).unwrap_or_else(gen_moon_name);
+    let mut satellite = World::new(
+        sat_name,
+        sat_orbit,
+        parent_position_in_system,
+        size,
+        atmosphere,
+        hydro,
+        population,
+        true,
+        false,
+    );
+    if let Some(p) = partial {
+        satellite.gen_subordinate_stats_with_partial(main_world, p);
+    } else {
+        satellite.gen_subordinate_stats(main_world);
     }
+    satellite.gen_trade_classes();
+    satellite.gen_subordinate_facilities(system_zones, sat_orbit, main_world);
+    satellite.compute_astro_data(star);
+    satellite
 }
 
 /// Implements Display for World.  Used extensively in displaying the output from the app.
@@ -759,20 +1065,24 @@ impl HasSatellites for World {
             hydro = 0;
         }
 
-        let population = (roll_2d6() - 2
-            + if orbit as i32 <= system_zones.inner {
-                -5
-            } else if orbit as i32 > system_zones.habitable {
-                -4
-            } else {
-                0
-            }
-            + if ![5, 6, 8].contains(&atmosphere) {
-                -2
-            } else {
-                0
-            })
-        .clamp(0, 10);
+        let population = if force_lifeless(main_world, atmosphere) {
+            0
+        } else {
+            (roll_2d6() - 2
+                + if orbit as i32 <= system_zones.inner {
+                    -5
+                } else if orbit as i32 > system_zones.habitable {
+                    -4
+                } else {
+                    0
+                }
+                + if ![5, 6, 8].contains(&atmosphere) {
+                    -2
+                } else {
+                    0
+                })
+            .clamp(0, 10)
+        };
 
         let satellite_name = gen_moon_name();
         let mut satellite = World::new(
@@ -805,5 +1115,85 @@ impl Display for Facility {
             Facility::Colony => write!(f, "Colony"),
             Facility::Lab => write!(f, "Lab"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn main_with_tl(tl: i32) -> World {
+        let mut w = World::new(
+            "Main".to_string(),
+            0,
+            0,
+            8,
+            7,
+            8,
+            8,
+            false,
+            true,
+        );
+        w.set_subordinate_stats(PortCode::A, 9, 9, tl, Vec::new());
+        w
+    }
+
+    #[test]
+    fn real_atmosphere_range() {
+        for atm in 2..=8 {
+            assert!(has_real_atmosphere(atm), "atmosphere {atm} should be real");
+        }
+        for atm in [0, 1, 9, 10, 12, 15] {
+            assert!(
+                !has_real_atmosphere(atm),
+                "atmosphere {atm} should not be real"
+            );
+        }
+    }
+
+    #[test]
+    fn lifeless_low_tech_system_forces_empty() {
+        // Main TL < 7 + lifeless atmosphere = no population.
+        let main = main_with_tl(4);
+        assert!(force_lifeless(&main, 0)); // vacuum
+        assert!(force_lifeless(&main, 10)); // exotic
+        assert!(force_lifeless(&main, 9)); // dense tainted (just outside threshold)
+        // Real atmosphere keeps its population even in low-TL system.
+        assert!(!force_lifeless(&main, 5));
+        assert!(!force_lifeless(&main, 8));
+    }
+
+    #[test]
+    fn tl7_system_does_not_force_empty() {
+        let main = main_with_tl(7);
+        assert!(!force_lifeless(&main, 0));
+        assert!(!force_lifeless(&main, 10));
+    }
+
+    #[test]
+    fn tl7_lifeless_subordinate_keeps_tl7() {
+        // Main TL == 7 and atmosphere is non-real: subordinate stays
+        // at 7 instead of falling to TL 6.
+        let main = main_with_tl(7);
+        assert_eq!(subordinate_tech_level(5, 0, &main), 7);
+        assert_eq!(subordinate_tech_level(5, 10, &main), 7);
+        // Real atmosphere falls to main - 1.
+        assert_eq!(subordinate_tech_level(5, 6, &main), 6);
+    }
+
+    #[test]
+    fn higher_tl_subordinate_uses_main_minus_one_everywhere() {
+        let main = main_with_tl(12);
+        assert_eq!(subordinate_tech_level(5, 0, &main), 11);
+        assert_eq!(subordinate_tech_level(5, 6, &main), 11);
+        assert_eq!(subordinate_tech_level(5, 10, &main), 11);
+    }
+
+    #[test]
+    fn empty_population_collapses_tl_to_zero() {
+        let main = main_with_tl(7);
+        assert_eq!(subordinate_tech_level(0, 0, &main), 0);
+        let main = main_with_tl(12);
+        assert_eq!(subordinate_tech_level(0, 6, &main), 0);
     }
 }

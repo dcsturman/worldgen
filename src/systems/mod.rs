@@ -27,11 +27,12 @@
 //! use worldgen::systems::{system::System, world::World};
 //!
 //! // Generate a complete system from a main world UWP
-//! let main_world = World::from_upp("Regina".to_string(), "A788899-A", false, true).unwrap();
+//! let main_world = World::from_uwp("Regina".to_string(), "A788899-A", false, true).unwrap();
 //! let system = System::generate_system(main_world);
 //! ```
 
 pub mod astro;
+pub mod constraint;
 pub mod gas_giant;
 pub mod has_satellites;
 pub mod name_tables;

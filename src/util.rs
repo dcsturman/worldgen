@@ -254,3 +254,42 @@ pub fn offset_to_cube(col: i32, row: i32) -> (i32, i32, i32) {
     let y = -x - z;
     (x, y, z)
 }
+
+/// Build a `/worldmap?…` URL that opens a deterministic per-world map.
+///
+/// The seed is derived from `name + uwp` so the same world always opens
+/// to the same surface map across sessions. Used by the system view's
+/// per-world "Map" link. The hash is truncated to u32 so the displayed
+/// seed string stays short (≤10 decimal digits) — full u64 hashes
+/// overflow the on-map seed badge.
+pub fn worldmap_url(name: &str, uwp: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    name.hash(&mut h);
+    uwp.hash(&mut h);
+    let seed = h.finish() as u32 as u64;
+    let n = if name.is_empty() { "World" } else { name };
+    format!(
+        "/worldmap?uwp={}&seed={}&name={}",
+        urlencode_minimal(uwp),
+        seed,
+        urlencode_minimal(n)
+    )
+}
+
+/// Tiny URL encoder — covers the few characters our names/UWPs realistically
+/// use (space, &, ?, #). Full RFC 3986 is overkill given our alphabet.
+fn urlencode_minimal(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '~' {
+            out.push(c);
+        } else {
+            for b in c.to_string().bytes() {
+                out.push_str(&format!("%{b:02X}"));
+            }
+        }
+    }
+    out
+}
