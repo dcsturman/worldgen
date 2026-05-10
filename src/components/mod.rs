@@ -123,6 +123,7 @@ pub mod help_tooltip;
 pub mod selector;
 pub mod ship_simulator;
 pub mod system_generator;
+pub mod system_map;
 pub mod system_view;
 pub mod tooltip_docs;
 pub mod trade_computer;

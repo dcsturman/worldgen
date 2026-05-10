@@ -42,7 +42,7 @@ use crate::systems::constraint::{Constraint, ConstraintError, PartialUwp, System
 use crate::systems::gas_giant::{GasGiant, GasGiantSize};
 use crate::systems::has_satellites::HasSatellites;
 use crate::systems::name_tables::gen_star_system_name;
-use crate::systems::system_tables::get_zone;
+use crate::systems::system_tables::{get_orbital_distance, get_zone};
 use crate::systems::world::World;
 use crate::util::{roll_1d6, roll_2d6, roll_10};
 
@@ -1298,12 +1298,17 @@ impl Display for System {
         {
             writeln!(
                 f,
-                "\n{:<7}{:<24}{:<12}{:<18}",
-                "Orbit", "Name", "UWP", "Remarks"
+                "\n{:>11}  {:<7}{:<24}{:<12}{:<18}",
+                "Dist (Mkm)", "Orbit", "Name", "UWP", "Remarks"
             )?;
         }
 
-        for body in self.orbit_slots.iter() {
+        for (idx, body) in self.orbit_slots.iter().enumerate() {
+            // Distance in millions of km from the table; displayed as
+            // a leading column on every populated orbit slot. Satellite
+            // rows printed by World/GasGiant Display recurse with their
+            // own indented format and are not prefixed here.
+            let dist = get_orbital_distance(idx as i32);
             match body {
                 Some(OrbitContent::Secondary) => {
                     if let Some(secondary) = &self.secondary
@@ -1311,8 +1316,8 @@ impl Display for System {
                     {
                         writeln!(
                             f,
-                            "{:<7}{:<24}{:<12}",
-                            orbit, secondary.name, secondary.star
+                            "{:>11.1}  {:<7}{:<24}{:<12}",
+                            dist, orbit, secondary.name, secondary.star
                         )?;
                     }
                 }
@@ -1320,13 +1325,19 @@ impl Display for System {
                     if let Some(tertiary) = &self.tertiary
                         && let StarOrbit::System(orbit) = tertiary.orbit
                     {
-                        writeln!(f, "{:<7}{:<24}{:<12}", orbit, tertiary.name, tertiary.star)?;
+                        writeln!(
+                            f,
+                            "{:>11.1}  {:<7}{:<24}{:<12}",
+                            dist, orbit, tertiary.name, tertiary.star
+                        )?;
                     }
                 }
                 Some(OrbitContent::World(world)) => {
+                    write!(f, "{:>11.1}  ", dist)?;
                     writeln!(f, "{world}")?;
                 }
                 Some(OrbitContent::GasGiant(gas_giant)) => {
+                    write!(f, "{:>11.1}  ", dist)?;
                     writeln!(f, "{gas_giant}")?;
                 }
                 Some(OrbitContent::Blocked) | None => {}
@@ -1600,7 +1611,7 @@ fn gen_stars(world_mod: i32, companions_possible: bool, overrides: &SystemOverri
 /// constraints become a non-empty `Some(Vec)` so the random-count
 /// branch in `gen_gas_giants` is suppressed.
 fn collect_overrides(constraints: &SystemConstraints) -> SystemOverrides {
-    let stars = constraints
+    let mut stars: Vec<StarOverride> = constraints
         .bodies
         .iter()
         .filter_map(|c| match c {
@@ -1617,7 +1628,22 @@ fn collect_overrides(constraints: &SystemConstraints) -> SystemOverrides {
             }),
             _ => None,
         })
-        .collect::<Vec<_>>();
+        .collect();
+    // `generate_from_overrides` treats `stars[0]` as the primary, then
+    // `stars[1]` as the secondary, etc. — and the primary's `orbit`
+    // override is *ignored* (a primary is always `StarOrbit::Primary`).
+    // So a row that says "I'm the secondary at orbit 6" must not land
+    // at `stars[0]`, or its orbit spec is silently discarded.
+    //
+    // Stable-sort the rows so the most-primary-looking one comes first:
+    // explicit `Primary` first, then `Auto` (no orbit specified), then
+    // anything with a concrete orbit (`System(_)` or `Far`) — those are
+    // unambiguously companions and belong further down.
+    stars.sort_by_key(|s| match s.orbit {
+        Some(StarOrbit::Primary) => 0,
+        None => 1,
+        Some(StarOrbit::System(_)) | Some(StarOrbit::Far) => 2,
+    });
 
     let gg_list: Vec<_> = constraints
         .bodies

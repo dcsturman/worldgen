@@ -99,6 +99,7 @@
 use leptos::prelude::*;
 use reactive_stores::{Store, Subfield};
 
+use crate::components::system_map::SystemMap;
 use crate::components::world_list::WorldList;
 use crate::systems::has_satellites::HasSatellites;
 use crate::systems::system::{OrbitContent, StarOrbit, System, SystemStoreFields};
@@ -185,6 +186,7 @@ pub fn SystemView() -> impl IntoView {
             <br />
             <br />
             <SystemMain />
+            <SystemMap />
         </div>
     }
 }

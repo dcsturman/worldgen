@@ -200,7 +200,7 @@ pub(crate) fn get_solar_mass(star: &Star) -> f32 {
 /// # Returns
 ///
 /// Distance from star in millions of kilometers
-pub(crate) fn get_orbital_distance(orbit: i32) -> f32 {
+pub fn get_orbital_distance(orbit: i32) -> f32 {
     ORBITAL_DISTANCE[orbit as usize]
 }
 

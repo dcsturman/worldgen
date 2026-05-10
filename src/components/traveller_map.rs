@@ -604,6 +604,13 @@ pub fn WorldSearch(
     let (search_results, set_search_results) =
         signal::<Vec<(String, String, String, i32, i32)>>(vec![]);
     let (is_loading, set_is_loading) = signal(false);
+    // The query string that `search_results` corresponds to. Updated
+    // when the autocomplete fetch completes. `handle_selection` only
+    // trusts the cached `search_results` when this matches the current
+    // input — otherwise the cache is stale (typing faster than the
+    // network, or a prior fetch resolved last) and a fresh lookup is
+    // fired instead.
+    let (last_resolved_query, set_last_resolved_query) = signal::<String>(String::new());
 
     // Separate input signals that don't trigger server updates
     // These are only committed to the external signals on Enter or dropdown selection
@@ -682,70 +689,23 @@ pub fn WorldSearch(
         }
     };
 
-    // Handle commit from the input — fires on `change` (blur or Enter).
-    //
-    // Three paths, in order of preference:
-    //   1. The input matches the dropdown's formatted string
-    //      "Name (Sector) UWP" → look up that exact result.
-    //   2. The input is a bare name that case-insensitively matches a
-    //      result's world name → take that result.
-    //   3. The user typed something that drew matches but didn't pick
-    //      one → take the first result in the dropdown.
-    //
-    // Paths 2 and 3 fix the "type Glisten, blur away" bug where the
-    // bare name used to be committed with no UWP / coords / zone.
-    let handle_selection = move |_| {
-        let current_input = input_name.get();
-        if current_input.trim().is_empty() {
-            return;
-        }
-        let results = search_results.get();
-
-        // Path 1: parens-formatted dropdown string.
-        let parens_pick = current_input
-            .find(" (")
-            .and_then(|paren_start| {
-                current_input
-                    .find(") ")
-                    .map(|paren_end| (paren_start, paren_end))
-            })
-            .and_then(|(start, end)| {
-                let world_name = &current_input[..start];
-                let sector_name = &current_input[start + 2..end];
-                results
-                    .iter()
-                    .find(|(n, s, ..)| n == world_name && s == sector_name)
-                    .cloned()
-            });
-
-        // Paths 2/3: bare name typed in; prefer an exact (case-insensitive)
-        // name match, then fall back to the first result.
-        let pick = parens_pick.or_else(|| {
-            let typed = current_input.trim();
-            results
-                .iter()
-                .find(|(n, ..)| n.eq_ignore_ascii_case(typed))
-                .cloned()
-                .or_else(|| results.first().cloned())
-        });
-
-        let Some((search_name, result_sector, world_uwp, hex_x, hex_y)) = pick else {
-            // Nothing in the dropdown to pick from — leave the bare
-            // input committed but clear downstream state so the rest
-            // of the UI doesn't pretend we know which world it is.
-            coords.set(None);
-            if let Some(s) = sector {
-                s.set(String::new());
-            }
-            return;
-        };
-
-        let hex_string = format!("{:02}{:02}", hex_x, hex_y);
-        commit_name(search_name.clone());
+    // Given a picked world from a search response, write everything
+    // downstream: name, sector, coords, then asynchronously fetch the
+    // detailed world data (zone, stellar, pbg, full UWP) and write
+    // those too. Used by both the cached path and the fresh-fetch
+    // fallback in `handle_selection`.
+    let commit_world = move |search_name: String,
+                             result_sector: String,
+                             world_uwp: String,
+                             hex_x: i32,
+                             hex_y: i32| {
+        commit_name(search_name);
         if let Some(s) = sector {
             s.set(result_sector.clone());
         }
-        let sector_for_fetch = result_sector.clone();
+        coords.set(Some((hex_x, hex_y)));
+        let hex_string = format!("{:02}{:02}", hex_x, hex_y);
+        let sector_for_fetch = result_sector;
         wasm_bindgen_futures::spawn_local(async move {
             match fetch_data_world(&sector_for_fetch, &hex_string).await {
                 Ok(world_data) => {
@@ -772,7 +732,115 @@ pub fn WorldSearch(
                 }
             }
         });
-        coords.set(Some((hex_x, hex_y)));
+    };
+
+    // Clear the downstream state (coords/zone/sector) when the typed
+    // input maps to no known world. Leaves the raw text in the name
+    // field so the user can see what they entered.
+    let clear_downstream = move || {
+        coords.set(None);
+        if let Some(s) = sector {
+            s.set(String::new());
+        }
+    };
+
+    // Pick the best entry from a result list given a typed bare name:
+    // exact (case-insensitive) match preferred, else first hit.
+    fn pick_from(
+        results: &[(String, String, String, i32, i32)],
+        typed: &str,
+    ) -> Option<(String, String, String, i32, i32)> {
+        results
+            .iter()
+            .find(|(n, ..)| n.eq_ignore_ascii_case(typed))
+            .cloned()
+            .or_else(|| results.first().cloned())
+    }
+
+    // Handle commit from the input — fires on `change` (blur or Enter).
+    //
+    // Logic:
+    //   1. Dropdown click → input is "Name (Sector) UWP". Look up the
+    //      exact entry in the cached search results (which is what
+    //      built the dropdown). Fall through on a cache miss.
+    //   2. Bare typed name + cache is aligned with that name
+    //      (`last_resolved_query` matches) → pick from the cache.
+    //   3. Otherwise → cache is stale or empty for this input. Fire a
+    //      fresh lookup against TravellerMap for the exact text and
+    //      commit on its result.
+    //
+    // The third path is the one that fixes the symptom where typing a
+    // valid world and blurring before the autocomplete fetched would
+    // leave just the bare name in the box with no UWP/coords/zone.
+    let handle_selection = move |_| {
+        let current_input = input_name.get();
+        if current_input.trim().is_empty() {
+            return;
+        }
+
+        // Path 1: dropdown's formatted "Name (Sector) UWP" string.
+        let parens = current_input.find(" (").and_then(|start| {
+            current_input.find(") ").map(|end| {
+                (
+                    current_input[..start].to_string(),
+                    current_input[start + 2..end].to_string(),
+                )
+            })
+        });
+
+        let typed_name = if let Some((world_name, sector_name)) = parens {
+            let results = search_results.get();
+            if let Some(hit) = results
+                .iter()
+                .find(|(n, s, ..)| n == &world_name && s == &sector_name)
+                .cloned()
+            {
+                commit_world(hit.0, hit.1, hit.2, hit.3, hit.4);
+                return;
+            }
+            // Dropdown formatted string but the cache rotated out from
+            // under us — strip to the bare name and continue.
+            world_name
+        } else {
+            current_input.trim().to_string()
+        };
+
+        // Path 2: bare name + cache aligned.
+        if last_resolved_query.get_untracked() == typed_name
+            && let Some(hit) = pick_from(&search_results.get(), &typed_name)
+        {
+            commit_world(hit.0, hit.1, hit.2, hit.3, hit.4);
+            return;
+        }
+
+        // Path 3: fresh, definitive lookup. Spawns one extra HTTP call
+        // on commit, which is the price of not trusting a possibly
+        // stale autocomplete cache.
+        let typed_for_fetch = typed_name.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let url = format!("https://travellermap.com/api/search?q={typed_for_fetch}");
+            match fetch_search_results(&url).await {
+                Ok(response) => {
+                    let results: Vec<(String, String, String, i32, i32)> = response
+                        .results
+                        .items
+                        .into_iter()
+                        .filter_map(|item| {
+                            item.world
+                                .map(|w| (w.name, w.sector, w.uwp, w.hex_x as i32, w.hex_y as i32))
+                        })
+                        .collect();
+                    match pick_from(&results, &typed_for_fetch) {
+                        Some(hit) => commit_world(hit.0, hit.1, hit.2, hit.3, hit.4),
+                        None => clear_downstream(),
+                    }
+                }
+                Err(e) => {
+                    log::error!("On-commit lookup failed: {e:?}");
+                    clear_downstream();
+                }
+            }
+        });
     };
 
     // Debounced search function - watch the input_name signal for changes
@@ -784,6 +852,9 @@ pub fn WorldSearch(
         if search_enabled.get() && query.len() >= 2 {
             set_is_loading.set(true);
             let url = format!("https://travellermap.com/api/search?q={query}");
+            // The async block needs to know what query it was fired
+            // for so it can stamp `last_resolved_query` correctly.
+            let query_for_resolve = query.clone();
 
             wasm_bindgen_futures::spawn_local(async move {
                 match fetch_search_results(&url).await {
@@ -807,6 +878,7 @@ pub fn WorldSearch(
                         }
 
                         set_search_results.set(world_results);
+                        set_last_resolved_query.set(query_for_resolve);
                         set_is_loading.set(false);
                     }
                     Err(err) => {
@@ -817,6 +889,7 @@ pub fn WorldSearch(
             });
         } else {
             set_search_results.set(vec![]);
+            set_last_resolved_query.set(query);
         }
     });
 
