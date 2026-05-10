@@ -36,7 +36,14 @@
       gtag('config', 'G-L26P5SCYR2');
     </script>
     
-    <link data-trunk rel="rust" data-bin="main" />
+    <!-- wasm-opt's default invocation rejects bulk-memory ops (memory.copy /
+         memory.fill) that recent rustc emits for &[u8] copies. Pass the
+         feature flag explicitly so wasm-opt can validate + optimize the
+         module. The Cargo release profile already does the heavy lifting
+         (opt-level=z, lto=fat) — wasm-opt just trims another ~5-10%. -->
+    <link data-trunk rel="rust" data-bin="main"
+          data-wasm-opt="z"
+          data-wasm-opt-params="--enable-bulk-memory --enable-nontrapping-float-to-int" />
     <link data-trunk rel="css" href="style.css" />
     <link data-trunk rel="copy-file" href="public/css/modal.css" />
     <link data-trunk rel="css" href="public/css/modal.css" />

@@ -1,7 +1,7 @@
 FROM rust:latest AS base
 RUN rustup update
 RUN curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash && \
-    cargo binstall -y trunk cargo-chef
+    cargo binstall -y trunk
 RUN rustup target add wasm32-unknown-unknown
 
 FROM base AS build-wasm
@@ -23,14 +23,22 @@ ENV RUSTFLAGS='--cfg getrandom_backend="wasm_js"'
 COPY src ./src/
 COPY assets ./assets/
 
-# Build with debug symbols for better error messages (not minified)
-RUN trunk build
-
-FROM base AS planner
-WORKDIR /app
-COPY Cargo.toml Cargo.lock ./
-RUN cargo install cargo-chef
-RUN cargo chef prepare --recipe-path recipe.json
+# Release build is required: Cloud Run caps responses at 32 MiB per request,
+# and a debug-mode wasm easily exceeds that with debug symbols (~36 MB →
+# request truncated → browser sees an empty BufferSource and refuses to
+# instantiate). Release builds with LTO drop to ~5–8 MB.
+#
+# Cache mounts persist cargo's downloaded crate index, source registry,
+# and the per-stage target/ directory in the BuildKit daemon across
+# rebuilds. With these in place, a source-only change skips dep
+# recompilation entirely (cargo's incremental cache lives inside
+# target/). The mounts don't export with --cache-to=type=registry, so
+# the *first* build on a fresh CI runner is no faster — the win is for
+# subsequent local builds.
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/web/target \
+    trunk build --release
 
 FROM base AS build-server
 
@@ -53,23 +61,24 @@ WORKDIR /server
 
 COPY Cargo.toml Cargo.lock ./
 
-# Copy the recipe from planner
-COPY --from=planner /app/recipe.json recipe.json
-
-# Cook dependencies (gets cached)
-RUN MUSL_TARGET=$(cat /tmp/musl_target) && \
-    cargo chef cook --release --bin server --features backend --recipe-path recipe.json --target "$MUSL_TARGET"
-
-# Copy source code (invalidates cache). assets/ is included for the same
-# reason as the WASM stage: the lib's PNG renderer bakes in the bundled
-# DejaVu Sans via include_bytes! at compile time.
+# Copy source code. assets/ is included for the same reason as the WASM
+# stage: the lib's PNG renderer bakes in the bundled DejaVu Sans via
+# include_bytes! at compile time.
 COPY src ./src/
 COPY assets ./assets/
 
-# Build the server binary
-RUN MUSL_TARGET=$(cat /tmp/musl_target) && \
+# Build the server binary. Same cache-mount story as the wasm stage —
+# /server/target holds cargo's incremental cache; the cargo registry +
+# git mounts skip re-downloading the dep tree on every build. The final
+# binary is copied OUT of the cache mount (to /server/server) before
+# the layer commits — anything still inside /server/target after the
+# RUN finishes is mount-only and not visible to later stages.
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/server/target \
+    MUSL_TARGET=$(cat /tmp/musl_target) && \
     cargo build --release --bin server --features backend --target "$MUSL_TARGET" && \
-    cp "/server/target/$MUSL_TARGET/release/server" /server/target/release/server
+    cp "/server/target/$MUSL_TARGET/release/server" /server/server
 
 FROM nginx:1.27-alpine
 
@@ -85,7 +94,7 @@ COPY nginx.conf /etc/nginx/nginx.conf
 COPY --from=build-wasm /web/dist/ /usr/share/nginx/html/
 
 # Copy server binary
-COPY --from=build-server /server/target/release/server /usr/local/bin/server
+COPY --from=build-server /server/server /usr/local/bin/server
 
 # Copy supervisor config
 COPY supervisord.conf /etc/supervisord.conf

@@ -66,6 +66,20 @@ jsonwebtoken = { version = "10", default-features = false, features = ["use_pem"
 # it adds no new C deps.
 gcp_auth = { version = "0.12", optional = true }
 
+# Release profile is tuned for wasm bundle size — Cloud Run caps each
+# response at 32 MiB (wire size), and nginx gzip then takes us another
+# ~3-4× down on top of these settings. opt-level = "z" trades a few
+# percent of speed for noticeably smaller output; lto = "fat" + a single
+# codegen unit lets the linker drop unused code aggressively across the
+# whole crate graph; strip removes debug symbols (the dominant bloat in
+# the previous 36 MB debug build); panic = "abort" elides the unwinder.
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+
 [[bin]]
 name = "main"
 path = "src/bin/main.rs"
