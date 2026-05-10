@@ -111,6 +111,20 @@ pub struct SimulationParams {
 
     /// Whether illegal goods are allowed in market generation.
     pub illegal_goods: bool,
+
+    /// Skill level of the (adversarial) planetary broker every world's
+    /// merchants are assumed to bring to the table. Higher values squeeze
+    /// the player's margins on both buy and sell DMs and amplify
+    /// trade-scam losses. Default 2 matches the legacy hard-coded value;
+    /// the form exposes it as "System broker skill" so the user can
+    /// crank it up to model dealing with sharp-eyed traders or down for
+    /// frontier rubes.
+    #[serde(default = "default_planetary_broker_skill")]
+    pub planetary_broker_skill: i16,
+}
+
+fn default_planetary_broker_skill() -> i16 {
+    2
 }
 
 /// Per-step record. Streamed to the UI as the simulation runs.

@@ -34,11 +34,6 @@ pub const ABORT_OVERFLOW_DAYS: i64 = 100;
 /// Days per (Imperial) week.
 pub const DAYS_PER_WEEK: u32 = 7;
 
-/// Constant skill assumed for the planet's broker on every transaction.
-/// Replaces the player's separate seller-broker skill that earlier versions
-/// of the simulator carried.
-pub const PLANETARY_BROKER_SKILL: i16 = 2;
-
 /// Sum-and-leadership threshold for avoiding an incident: a 2d6 roll plus
 /// the captain's leadership plus port/zone/law modifiers must reach this
 /// to dodge.

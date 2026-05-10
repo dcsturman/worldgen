@@ -451,7 +451,9 @@ impl System {
         let star_type = override_
             .spectral
             .unwrap_or_else(|| gen_companion_star_type(companion_type_roll));
-        let subtype = override_.subtype.unwrap_or_else(|| roll_10() as StarSubType);
+        let subtype = override_
+            .subtype
+            .unwrap_or_else(|| roll_10() as StarSubType);
         let star_size = override_
             .size
             .unwrap_or_else(|| gen_companion_star_size(companion_size_roll));
@@ -645,9 +647,7 @@ impl System {
             let pinned_orbit: Option<usize> = overrides
                 .and_then(|list| list.get(placed_idx).and_then(|o| o.orbit))
                 .and_then(|o| if o >= 0 { Some(o as usize) } else { None })
-                .filter(|o| {
-                    viable_outer_orbits.contains(o) || viable_inner_orbits.contains(o)
-                });
+                .filter(|o| viable_outer_orbits.contains(o) || viable_inner_orbits.contains(o));
 
             let orbit = if let Some(o) = pinned_orbit {
                 viable_outer_orbits.retain(|x| *x != o);
@@ -807,8 +807,7 @@ impl System {
 
         let zone_table = get_zone(&self.star);
         for i in 0..self.get_max_orbits() {
-            let claimed_by_constraints =
-                moon_constraints_per_orbit.get(&i).copied().unwrap_or(0);
+            let claimed_by_constraints = moon_constraints_per_orbit.get(&i).copied().unwrap_or(0);
             match &mut self.orbit_slots[i] {
                 Some(OrbitContent::World(world)) => {
                     let target = planet_moon_overrides
@@ -928,10 +927,7 @@ impl System {
                     // Planet constraint earlier — don't overwrite.
                     // Fall back to whichever empty orbit is left.
                     let empty_orbits = self.get_unused_orbits();
-                    let pos = empty_orbits
-                        .first()
-                        .copied()
-                        .unwrap_or(habitable as usize);
+                    let pos = empty_orbits.first().copied().unwrap_or(habitable as usize);
                     main_world.position_in_system = pos;
                     main_world.orbit = pos;
                     main_world.compute_astro_data(&self.star);
@@ -1142,7 +1138,11 @@ impl System {
             // Decide the satellite's size: user override > parent-
             // specific roll. We resolve this BEFORE generating the
             // satellite orbit because is-ring affects the orbit roll.
-            let size_override = m.partial_uwp.as_ref().and_then(|p| p.size).map(|s| s as i32);
+            let size_override = m
+                .partial_uwp
+                .as_ref()
+                .and_then(|p| p.size)
+                .map(|s| s as i32);
 
             match &mut self.orbit_slots[parent_idx] {
                 Some(OrbitContent::World(parent)) => {
@@ -1489,11 +1489,7 @@ fn empty_orbits_near_companion(system: &mut System, orbit: usize) {
     system.set_orbit_slot(orbit + 2, OrbitContent::Blocked);
 }
 
-fn gen_stars(
-    world_mod: i32,
-    companions_possible: bool,
-    overrides: &SystemOverrides,
-) -> System {
+fn gen_stars(world_mod: i32, companions_possible: bool, overrides: &SystemOverrides) -> System {
     // If the user supplied any Star constraints, the count of those is
     // authoritative — we generate exactly that many stars. Otherwise
     // fall back to the random count (or 1 for non-primary systems).
@@ -1798,7 +1794,9 @@ mod tests {
             panic!("expected planet constraint with uwp");
         }
         let result = System::generate_from_constraints(cs);
-        assert!(matches!(result, Err(ref e) if e.iter().any(|err| matches!(err, ConstraintError::UnsupportedYet(_)))));
+        assert!(
+            matches!(result, Err(ref e) if e.iter().any(|err| matches!(err, ConstraintError::UnsupportedYet(_))))
+        );
     }
 
     #[test_log::test]
@@ -1851,8 +1849,8 @@ mod tests {
             num_satellites: None,
             is_mainworld: false,
         });
-        let system = System::generate_from_constraints(cs)
-            .expect("partial Planet UWP should be accepted");
+        let system =
+            System::generate_from_constraints(cs).expect("partial Planet UWP should be accepted");
         // If Lovia got placed, its size must be 8 and port A.
         let lovia = system.orbit_slots.iter().find_map(|s| match s {
             Some(crate::systems::system::OrbitContent::World(w)) if w.name == "Lovia" => Some(w),
@@ -1873,12 +1871,10 @@ mod tests {
             uwp: None,
             num_satellites: None,
         });
-        let system = System::generate_from_constraints(cs)
-            .expect("belt constraint should be accepted");
+        let system =
+            System::generate_from_constraints(cs).expect("belt constraint should be accepted");
         let belt = system.orbit_slots.iter().find_map(|s| match s {
-            Some(crate::systems::system::OrbitContent::World(w))
-                if w.name == "Asteroid Reach" =>
-            {
+            Some(crate::systems::system::OrbitContent::World(w)) if w.name == "Asteroid Reach" => {
                 Some(w)
             }
             _ => None,
@@ -1892,8 +1888,8 @@ mod tests {
     fn test_generate_with_empty_constraint() {
         let mut cs = SystemConstraints::from_main_world("Regina", "A788899-A").unwrap();
         cs.bodies.push(Constraint::Empty { orbit: 9 });
-        let system = System::generate_from_constraints(cs)
-            .expect("empty constraint should be accepted");
+        let system =
+            System::generate_from_constraints(cs).expect("empty constraint should be accepted");
         // If orbit 9 is within the system, it must be Blocked.
         if 9_usize < system.orbit_slots.len() {
             assert!(matches!(

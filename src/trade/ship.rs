@@ -41,7 +41,8 @@ pub const CREW_LIFE_SUPPORT_PER_MEMBER: i64 = 1_000;
 /// Note on terminology: `broker_skill` is the **Ship Broker skill** — the
 /// skill of the broker aboard *this* ship (the player's broker). The
 /// counterparty broker on the planet is treated separately (see
-/// `simulator::economy::PLANETARY_BROKER_SKILL`). Never refer to this
+/// `simulator::types::SimulationParams::planetary_broker_skill`, which the
+/// simulator UI exposes as "System broker skill"). Never refer to this
 /// field as the "Player Broker skill".
 ///
 /// `leadership_skill` and `weapons` are only consumed by the simulator;

@@ -431,6 +431,9 @@ pub fn ShipSimulator() -> impl IntoView {
     let crew_size = RwSignal::new(4i32);
 
     // Voyage
+    // Adversarial broker skill assumed for the planet's merchants on
+    // every transaction. Default 2 reproduces the legacy constant.
+    let planetary_broker_skill = RwSignal::new(2i16);
     let starting_budget = RwSignal::new(500_000i64);
     // Dates entered as "DDD-YYYY" strings (matching `Date::format`).
     let start_date_text = RwSignal::new("001-1105".to_string());
@@ -474,6 +477,7 @@ pub fn ShipSimulator() -> impl IntoView {
             && (-3..=5).contains(&steward_skill.get())
             && (0..=5).contains(&leadership_skill.get())
             && (0..=24).contains(&weapons.get())
+            && (-3..=5).contains(&planetary_broker_skill.get())
             && {
                 match (
                     parse_ddd_yyyy(&start_date_text.read()),
@@ -538,6 +542,7 @@ pub fn ShipSimulator() -> impl IntoView {
             target_completion_date: parse_ddd_yyyy(&target_date_text.get_untracked())
                 .unwrap_or_else(|| Date::new(90, 1105)),
             illegal_goods: illegal_goods.get_untracked(),
+            planetary_broker_skill: planetary_broker_skill.get_untracked(),
         };
 
         last_params.set(Some(params.clone()));
@@ -578,6 +583,7 @@ pub fn ShipSimulator() -> impl IntoView {
                 start_date_text=start_date_text
                 target_date_text=target_date_text
                 illegal_goods=illegal_goods
+                planetary_broker_skill=planetary_broker_skill
                 home_name=home_name
                 home_sector=home_sector
                 home_coords=home_coords
@@ -656,6 +662,7 @@ fn SimForm(
     start_date_text: RwSignal<String>,
     target_date_text: RwSignal<String>,
     illegal_goods: RwSignal<bool>,
+    planetary_broker_skill: RwSignal<i16>,
     home_name: RwSignal<String>,
     home_sector: RwSignal<String>,
     home_coords: RwSignal<Option<(i32, i32)>>,
@@ -984,6 +991,23 @@ fn SimForm(
                             prop:checked=move || illegal_goods.get()
                             on:change=move |ev| {
                                 illegal_goods.set(event_target_checked(&ev));
+                            }
+                        />
+                    </label>
+                    <label>
+                        <span class="sim-label-row">
+                            "System broker skill"
+                            <HelpTooltip text=docs::SYSTEM_BROKER_SKILL />
+                        </span>
+                        <input
+                            type="number"
+                            min="-3"
+                            max="5"
+                            prop:value=move || planetary_broker_skill.get()
+                            on:input=move |ev| {
+                                if let Ok(v) = event_target_value(&ev).parse::<i16>() {
+                                    planetary_broker_skill.set(v);
+                                }
                             }
                         />
                     </label>

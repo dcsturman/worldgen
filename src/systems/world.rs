@@ -655,11 +655,7 @@ impl World {
     /// each of port / government / law / tech is either taken from
     /// `partial` (if specified) or rolled using the same logic as the
     /// classic call.
-    pub fn gen_subordinate_stats_with_partial(
-        &mut self,
-        main_world: &World,
-        partial: &PartialUwp,
-    ) {
+    pub fn gen_subordinate_stats_with_partial(&mut self, main_world: &World, partial: &PartialUwp) {
         let population = self.get_population();
 
         let government = match partial.government {
@@ -757,11 +753,7 @@ pub(crate) fn force_lifeless(main_world: &World, atmosphere: i32) -> bool {
 /// need the exception (TL ≥ 7 is already met after subtracting one),
 /// and lower-TL systems should already have had the population zeroed
 /// out by the caller via [`force_lifeless`].
-pub(crate) fn subordinate_tech_level(
-    population: i32,
-    atmosphere: i32,
-    main_world: &World,
-) -> i32 {
+pub(crate) fn subordinate_tech_level(population: i32, atmosphere: i32, main_world: &World) -> i32 {
     if population <= 0 {
         0
     } else if !has_real_atmosphere(atmosphere) && main_world.tech_level == 7 {
@@ -1123,17 +1115,7 @@ mod tests {
     use super::*;
 
     fn main_with_tl(tl: i32) -> World {
-        let mut w = World::new(
-            "Main".to_string(),
-            0,
-            0,
-            8,
-            7,
-            8,
-            8,
-            false,
-            true,
-        );
+        let mut w = World::new("Main".to_string(), 0, 0, 8, 7, 8, 8, false, true);
         w.set_subordinate_stats(PortCode::A, 9, 9, tl, Vec::new());
         w
     }

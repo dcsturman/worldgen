@@ -10,7 +10,7 @@
 use crate::simulator::economy::{
     self, ABORT_OVERFLOW_DAYS, ACCIDENT_CR_PER_STEP, DAYS_IN_PORT, DAYS_PER_JUMP, DAYS_PER_WEEK,
     GOV_FINE_CR_PER_STEP, INCIDENT_AVOID_THRESHOLD, NATURAL_INCIDENT_ROLL, PERIOD_DAYS,
-    PLANETARY_BROKER_SKILL, TRADE_SCAM_CR_PER_STEP,
+    TRADE_SCAM_CR_PER_STEP,
 };
 use crate::simulator::incidents::{
     avoidance_modifier, incident_table_modifier, pirate_cargo, rescue_eta_days, roll_1d3, roll_1d6,
@@ -215,14 +215,14 @@ pub async fn run_simulation(
         market.price_goods_to_buy(
             &current_world.get_trade_classes(),
             params.ship.broker_skill,
-            PLANETARY_BROKER_SKILL,
+            params.planetary_broker_skill,
         );
 
         // (6) SELL phase: price what's already in the manifest at this
         // world; sell anything that beats its buy_cost, hold the rest.
         manifest.trade_goods.price_goods_to_sell(
             Some(current_world.get_trade_classes()),
-            PLANETARY_BROKER_SKILL,
+            params.planetary_broker_skill,
             params.ship.broker_skill,
         );
         for good in manifest.trade_goods.goods.iter_mut() {
@@ -375,7 +375,7 @@ pub async fn run_simulation(
         let next_classes = next.world.get_trade_classes();
         market.price_goods_to_sell(
             Some(next_classes.clone()),
-            PLANETARY_BROKER_SKILL,
+            params.planetary_broker_skill,
             params.ship.broker_skill,
         );
         let fuel_for_jump = (next.distance as i64) * params.fuel_cost_per_parsec;
@@ -1033,6 +1033,7 @@ mod tests {
             start_date: crate::simulator::types::Date::new(0, 1105),
             target_completion_date: crate::simulator::types::Date::new(100, 1105),
             illegal_goods: false,
+            planetary_broker_skill: 2,
         };
         assert!(pax_reserve_estimate(&params) > 0);
     }
@@ -1121,6 +1122,7 @@ mod tests {
             start_date: crate::simulator::types::Date::new(1, 1105),
             target_completion_date: crate::simulator::types::Date::new(180, 1105),
             illegal_goods: false,
+            planetary_broker_skill: 2,
         };
         let mut cache = WorldCache::new();
         let mut step_count = 0;
@@ -1180,6 +1182,7 @@ mod tests {
             start_date: crate::simulator::types::Date::new(1, 1105),
             target_completion_date: crate::simulator::types::Date::new(31, 1105),
             illegal_goods: false,
+            planetary_broker_skill: 2,
         };
         let mut cache = WorldCache::new();
         let result = run_simulation(params, &mut cache, |s| {

@@ -86,9 +86,9 @@ struct ConstraintRow {
     parent_orbit: RwSignal<String>,
     /// "Auto" (None — backend rolls), "Primary", or "System" (specific orbit number).
     star_orbit_kind: RwSignal<String>,
-    star_type: RwSignal<String>,    // "" for auto, else one of O/B/A/F/G/K/M
+    star_type: RwSignal<String>, // "" for auto, else one of O/B/A/F/G/K/M
     star_subtype: RwSignal<String>, // "" for auto, else "0".."9"
-    star_size: RwSignal<String>,    // "" for auto, else Ia/Ib/II/III/IV/V/VI/D
+    star_size: RwSignal<String>, // "" for auto, else Ia/Ib/II/III/IV/V/VI/D
     /// Gas-giant size dropdown: "Auto" / "Small" / "Large".
     gg_size: RwSignal<String>,
 }
@@ -131,9 +131,10 @@ fn row_to_constraint(row: &ConstraintRow) -> Result<Option<Constraint>, String> 
                 "Primary" => Some(StarOrbit::Primary),
                 "System" => {
                     let s = row.orbit.get();
-                    let n = s.trim().parse::<usize>().map_err(|_| {
-                        format!("orbit must be a non-negative integer (got '{s}')")
-                    })?;
+                    let n = s
+                        .trim()
+                        .parse::<usize>()
+                        .map_err(|_| format!("orbit must be a non-negative integer (got '{s}')"))?;
                     Some(StarOrbit::System(n))
                 }
                 other => return Err(format!("unknown star orbit kind '{other}'")),
@@ -195,7 +196,9 @@ fn row_to_constraint(row: &ConstraintRow) -> Result<Option<Constraint>, String> 
                 format!("parent orbit is required and must be an integer (got '{parent_str}')")
             })?;
             if parent_orbit < 0 {
-                return Err(format!("parent orbit must be non-negative (got {parent_orbit})"));
+                return Err(format!(
+                    "parent orbit must be non-negative (got {parent_orbit})"
+                ));
             }
             let uwp = parse_opt_uwp(&row.uwp.get())?;
             Ok(Some(Constraint::Moon {
@@ -435,10 +438,7 @@ pub fn World() -> impl IntoView {
         }
 
         let stars = stellar.as_deref().map(parse_stellar).unwrap_or_default();
-        let (_, _belts, giants) = pbg
-            .as_deref()
-            .and_then(parse_pbg)
-            .unwrap_or((0, 0, 0));
+        let (_, _belts, giants) = pbg.as_deref().and_then(parse_pbg).unwrap_or((0, 0, 0));
         let n = tm_name.get_untracked();
         let u = tm_uwp.get_untracked();
 
@@ -915,4 +915,3 @@ mod tests {
         assert_eq!(p, (11, 2, 3));
     }
 }
-

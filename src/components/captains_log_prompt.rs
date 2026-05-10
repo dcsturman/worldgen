@@ -44,13 +44,19 @@ pub fn build_prompt(
     let visits = coalesce_visits(steps);
     out.push_str("\n== PORT VISITS (chronological) ==\n");
     for (idx, v) in visits.iter().enumerate() {
+        let is_voyage_start = idx == 0 && world_eq(&v.world, &params.home_world);
         let label = if idx == visits.len() - 1 && idx > 0 && world_eq(&v.world, &params.home_world)
         {
             format!("--- Visit {} (return home) ---", idx + 1)
+        } else if is_voyage_start {
+            format!(
+                "--- Visit {} (HOME PORT — voyage starts here, ship is already in port) ---",
+                idx + 1
+            )
         } else {
             format!("--- Visit {} ---", idx + 1)
         };
-        write_visit(&mut out, &label, v);
+        write_visit(&mut out, &label, v, is_voyage_start);
     }
 
     out.push_str("\n== END VOYAGE DATA ==\n\nNow write the captain's log.\n");
@@ -479,7 +485,7 @@ fn coalesce_visits(steps: &[SimulationStep]) -> Vec<Visit<'_>> {
 // Per-visit rendering
 // ---------------------------------------------------------------------
 
-fn write_visit(out: &mut String, label: &str, v: &Visit<'_>) {
+fn write_visit(out: &mut String, label: &str, v: &Visit<'_>, is_voyage_start: bool) {
     let _ = writeln!(out, "\n{label}");
 
     let _ = writeln!(
@@ -496,13 +502,30 @@ fn write_visit(out: &mut String, label: &str, v: &Visit<'_>) {
     if !tcs.is_empty() {
         let _ = writeln!(out, "Trade classes: {}", tcs.join(", "));
     }
-    let _ = writeln!(out, "Arrived: {}", v.arrived.format());
-    let _ = writeln!(out, "Departed: {}", v.departed.format());
-    let _ = writeln!(
-        out,
-        "Days at port: {}",
-        v.arrived.days_until(v.departed).max(0)
-    );
+    if is_voyage_start {
+        // Home port: the ship begins the voyage already docked here, so
+        // there's no "Arrived" event. Frame the date as the launch day
+        // and remind the writer not to invent an inbound jump.
+        let _ = writeln!(
+            out,
+            "Voyage launch date (already in port at start): {}",
+            v.arrived.format()
+        );
+        let _ = writeln!(out, "Jumped outbound: {}", v.departed.format());
+        let _ = writeln!(
+            out,
+            "Days in port at launch: {}",
+            v.arrived.days_until(v.departed).max(0)
+        );
+    } else {
+        let _ = writeln!(out, "Arrived: {}", v.arrived.format());
+        let _ = writeln!(out, "Departed: {}", v.departed.format());
+        let _ = writeln!(
+            out,
+            "Days at port: {}",
+            v.arrived.days_until(v.departed).max(0)
+        );
+    }
 
     if let Some(arr) = &v.inbound_arrival {
         let _ = writeln!(
@@ -818,6 +841,7 @@ mod tests {
             start_date: Date::new(91, 1108),
             target_completion_date: Date::new(180, 1108),
             illegal_goods: false,
+            planetary_broker_skill: 2,
         };
         let result = SimulationResult {
             final_budget: 612_400,
@@ -853,6 +877,7 @@ mod tests {
             start_date: Date::new(91, 1108),
             target_completion_date: Date::new(180, 1108),
             illegal_goods: false,
+            planetary_broker_skill: 2,
         };
         let result = SimulationResult {
             final_budget: 0,

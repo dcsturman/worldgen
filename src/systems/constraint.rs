@@ -231,7 +231,15 @@ impl SystemConstraints {
         let main_world_count = self
             .bodies
             .iter()
-            .filter(|c| matches!(c, Constraint::Planet { is_mainworld: true, .. }))
+            .filter(|c| {
+                matches!(
+                    c,
+                    Constraint::Planet {
+                        is_mainworld: true,
+                        ..
+                    }
+                )
+            })
             .count();
         if main_world_count > 1 {
             errors.push(ConstraintError::MultipleMainWorlds(main_world_count));
@@ -240,15 +248,9 @@ impl SystemConstraints {
         let mut seen_orbits = std::collections::BTreeSet::new();
         for c in &self.bodies {
             let orbit = match c {
-                Constraint::Planet {
-                    orbit: Some(o), ..
-                } => Some(*o),
-                Constraint::GasGiant {
-                    orbit: Some(o), ..
-                } => Some(*o),
-                Constraint::Belt {
-                    orbit: Some(o), ..
-                } => Some(*o),
+                Constraint::Planet { orbit: Some(o), .. } => Some(*o),
+                Constraint::GasGiant { orbit: Some(o), .. } => Some(*o),
+                Constraint::Belt { orbit: Some(o), .. } => Some(*o),
                 Constraint::Empty { orbit } => Some(*orbit),
                 _ => None,
             };
@@ -277,9 +279,15 @@ impl SystemConstraints {
     }
 
     pub fn main_world(&self) -> Option<&Constraint> {
-        self.bodies
-            .iter()
-            .find(|c| matches!(c, Constraint::Planet { is_mainworld: true, .. }))
+        self.bodies.iter().find(|c| {
+            matches!(
+                c,
+                Constraint::Planet {
+                    is_mainworld: true,
+                    ..
+                }
+            )
+        })
     }
 }
 
@@ -331,7 +339,10 @@ impl std::fmt::Display for ConstraintError {
                 write!(f, "orbit {orbit} is illegal: {reason}")
             }
             ConstraintError::MoonMissingParent(o) => {
-                write!(f, "moon constraint references non-existent parent orbit {o}")
+                write!(
+                    f,
+                    "moon constraint references non-existent parent orbit {o}"
+                )
             }
             ConstraintError::UnsupportedYet(s) => write!(f, "not yet supported: {s}"),
         }
@@ -404,9 +415,10 @@ mod tests {
             ],
         };
         let errs = cs.validate();
-        assert!(errs
-            .iter()
-            .any(|e| matches!(e, ConstraintError::MultipleMainWorlds(_))));
+        assert!(
+            errs.iter()
+                .any(|e| matches!(e, ConstraintError::MultipleMainWorlds(_)))
+        );
     }
 
     #[test]
@@ -429,9 +441,10 @@ mod tests {
             ],
         };
         let errs = cs.validate();
-        assert!(errs
-            .iter()
-            .any(|e| matches!(e, ConstraintError::DuplicateOrbit(3))));
+        assert!(
+            errs.iter()
+                .any(|e| matches!(e, ConstraintError::DuplicateOrbit(3)))
+        );
     }
 
     #[test]
@@ -447,9 +460,10 @@ mod tests {
             }],
         };
         let errs = cs.validate();
-        assert!(errs
-            .iter()
-            .any(|e| matches!(e, ConstraintError::ContradictoryUwp(_))));
+        assert!(
+            errs.iter()
+                .any(|e| matches!(e, ConstraintError::ContradictoryUwp(_)))
+        );
     }
 
     #[test]

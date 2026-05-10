@@ -50,6 +50,54 @@ pub struct Plate {
     /// Angular velocity vector (rad / arbitrary-time, direction = rotation
     /// axis). Used to compute boundary motion at any point.
     pub velocity: [f64; 3],
+    /// Long-axis direction for anisotropic Voronoi. A unit tangent vector
+    /// at `seed` (perpendicular to `seed`). The plate extends farther
+    /// along this axis than across it.
+    pub stretch_axis: [f64; 3],
+    /// Aspect ratio along `stretch_axis`: 1.0 = isotropic (round plate);
+    /// >1 = elongated. Earth's real plates range up to roughly 2.5–3.
+    pub aspect: f64,
+}
+
+impl Plate {
+    /// "Proximity" used by the Voronoi nearest-neighbor search. Higher =
+    /// closer. For an isotropic plate (`aspect == 1.0`) this collapses to
+    /// `cos(angle(seed, p))` — identical to the old `dot(seed, p)` metric.
+    /// For `aspect > 1.0` distance along `stretch_axis` is shrunk by
+    /// `1/aspect`, so the plate annexes more area in that direction and
+    /// becomes elongated.
+    pub fn proximity(&self, p: &[f64; 3]) -> f64 {
+        let cos_theta = (self.seed[0] * p[0] + self.seed[1] * p[1] + self.seed[2] * p[2])
+            .clamp(-1.0, 1.0);
+        if self.aspect <= 1.0 + 1e-6 {
+            return cos_theta;
+        }
+        let theta = cos_theta.acos();
+        if theta < 1e-9 {
+            return 1.0;
+        }
+        // Tangent direction from seed toward p, in the tangent plane at seed.
+        let perp_raw = [
+            p[0] - cos_theta * self.seed[0],
+            p[1] - cos_theta * self.seed[1],
+            p[2] - cos_theta * self.seed[2],
+        ];
+        let m = (perp_raw[0] * perp_raw[0]
+            + perp_raw[1] * perp_raw[1]
+            + perp_raw[2] * perp_raw[2])
+            .sqrt();
+        if m < 1e-9 {
+            return 1.0;
+        }
+        let perp = [perp_raw[0] / m, perp_raw[1] / m, perp_raw[2] / m];
+        let along = perp[0] * self.stretch_axis[0]
+            + perp[1] * self.stretch_axis[1]
+            + perp[2] * self.stretch_axis[2];
+        let across_sq = (1.0 - along * along).max(0.0);
+        let inv = 1.0 / self.aspect;
+        let eff_theta = theta * (along * along * inv * inv + across_sq).sqrt();
+        eff_theta.cos()
+    }
 }
 
 /// Tectonic field. Sampled by the elevation pipeline to produce continental
@@ -74,6 +122,12 @@ const WARP_AMPLITUDE: f64 = 0.10;
 /// interior bias. Small — just enough to fractal up coastlines without
 /// drowning the plate-driven structure.
 const WOBBLE_AMPLITUDE: f64 = 0.06;
+/// Aspect-ratio range for anisotropic Voronoi: each plate gets a random
+/// `aspect ∈ [STRETCH_MIN, STRETCH_MAX]` and a random tangent stretch
+/// axis. `1.0` = isotropic (round); higher values produce long-skinny
+/// plates like the Eurasian. Earth's real plates rarely exceed ~3:1.
+const STRETCH_MIN: f64 = 1.0;
+const STRETCH_MAX: f64 = 2.4;
 
 impl TectonicField {
     pub fn from_uwp(uwp: &Uwp, seed: u64) -> Self {
@@ -117,6 +171,26 @@ impl TectonicField {
             let s = 0.5 / m;
             let velocity = [vx * s, vy * s, vz * s];
 
+            // Anisotropic stretch: pick a random direction, project onto
+            // the tangent plane at `seed_pos`, normalize. Fall back to a
+            // canonical tangent if the random vector happens to land
+            // parallel to seed (vanishingly rare with f64).
+            let raw_axis = [
+                rng.random_range(-1.0..1.0),
+                rng.random_range(-1.0..1.0),
+                rng.random_range(-1.0..1.0),
+            ];
+            let mut stretch_axis = normalize(&project_to_tangent(&raw_axis, &seed_pos));
+            if stretch_axis == [0.0, 0.0, 0.0] {
+                let alt = if seed_pos[2].abs() < 0.9 {
+                    [0.0, 0.0, 1.0]
+                } else {
+                    [1.0, 0.0, 0.0]
+                };
+                stretch_axis = normalize(&project_to_tangent(&alt, &seed_pos));
+            }
+            let aspect: f64 = rng.random_range(STRETCH_MIN..=STRETCH_MAX);
+
             plates.push(Plate {
                 id: k as u8,
                 kind: if cont {
@@ -126,6 +200,8 @@ impl TectonicField {
                 },
                 seed: seed_pos,
                 velocity,
+                stretch_axis,
+                aspect,
             });
         }
 
@@ -168,8 +244,9 @@ impl TectonicField {
         [q[0] / m, q[1] / m, q[2] / m]
     }
 
-    /// Return (nearest_idx, second_idx, dot_nearest, dot_second). Plates sorted
-    /// by descending seed·sphere_pos (greater dot = smaller angular distance).
+    /// Return (nearest_idx, second_idx, prox_nearest, prox_second). Plates
+    /// sorted by descending `Plate::proximity` (anisotropic cos-distance —
+    /// for an isotropic plate this is exactly `seed·p`).
     fn two_nearest(&self, p: &[f64; 3]) -> Option<(usize, usize, f64, f64)> {
         if self.plates.len() < 2 {
             return None;
@@ -177,7 +254,7 @@ impl TectonicField {
         let mut best = (-2.0_f64, usize::MAX);
         let mut second = (-2.0_f64, usize::MAX);
         for (i, plate) in self.plates.iter().enumerate() {
-            let d = plate.seed[0] * p[0] + plate.seed[1] * p[1] + plate.seed[2] * p[2];
+            let d = plate.proximity(p);
             if d > best.0 {
                 second = best;
                 best = (d, i);
@@ -279,8 +356,7 @@ impl TectonicField {
         let warped = self.warp_sphere(sphere_pos);
         let mut best = (-2.0_f64, u8::MAX);
         for plate in &self.plates {
-            let d =
-                plate.seed[0] * warped[0] + plate.seed[1] * warped[1] + plate.seed[2] * warped[2];
+            let d = plate.proximity(&warped);
             if d > best.0 {
                 best = (d, plate.id);
             }
