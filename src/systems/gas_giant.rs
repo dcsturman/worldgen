@@ -44,7 +44,16 @@ use crate::systems::system_tables::ZoneTable;
 use crate::systems::world::{Satellites, World, force_lifeless};
 use crate::trade::PortCode;
 use crate::util::{arabic_to_roman, roll_1d6, roll_2d6};
+use rand::Rng;
 use std::fmt::Display;
+
+/// Small gas giant radius range, in kilometres. Matches the user-facing
+/// classification: "Small gas giants are 20,000 km to less than 60,000 km".
+const SMALL_GG_RADIUS_KM: std::ops::Range<u32> = 20_000..60_000;
+/// Large gas giant radius range, in kilometres. Spec says "at least
+/// 60,000 km"; we cap at 100,000 km so the renderer has a bounded
+/// upper bound to map to pixel size. (Jupiter is ~70,000 km.)
+const LARGE_GG_RADIUS_KM: std::ops::RangeInclusive<u32> = 60_000..=100_000;
 
 /// Represents a gas giant in a solar system
 ///
@@ -57,6 +66,12 @@ pub struct GasGiant {
     pub name: String,
     /// Size classification affecting satellite generation
     pub size: GasGiantSize,
+    /// Equatorial radius in kilometres. Rolled at construction time inside
+    /// the band implied by `size` (`Small`: 20,000..60,000; `Large`:
+    /// 60,000..=100,000). Used by the system-map renderer to size the
+    /// gas giant's disc relative to other bodies; satellite generation
+    /// continues to use the `size` enum.
+    pub radius_km: u32,
     /// Collection of satellite worlds orbiting this gas giant
     satellites: Satellites,
     /// Orbital position within the star system
@@ -91,9 +106,15 @@ impl GasGiant {
     ///
     /// New `GasGiant` instance ready for further configuration
     pub fn new(size: GasGiantSize, orbit: usize) -> GasGiant {
+        let mut rng = rand::rng();
+        let radius_km = match size {
+            GasGiantSize::Small => rng.random_range(SMALL_GG_RADIUS_KM),
+            GasGiantSize::Large => rng.random_range(LARGE_GG_RADIUS_KM),
+        };
         GasGiant {
             name: "".to_string(),
             size,
+            radius_km,
             satellites: Satellites { sats: Vec::new() },
             orbit,
         }
@@ -120,6 +141,13 @@ impl GasGiant {
     /// gas_giant.gen_name("Sol", 4);
     /// // Result: either a proper name like "Jupiter" or "Sol V"
     /// ```
+    /// Borrow the gas giant's satellite list. Exposed so renderers and
+    /// other read-only consumers can iterate moons without going
+    /// through the mutating `HasSatellites` accessor.
+    pub fn satellites(&self) -> &[World] {
+        &self.satellites.sats
+    }
+
     pub fn gen_name(&mut self, system_name: &str, orbit: usize) {
         // Gas giants with more than 100,000 residents in their system get a name.
         // i.e. if you're not just a remote outpost with mining, etc, you get a name.
