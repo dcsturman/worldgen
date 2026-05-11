@@ -1644,6 +1644,17 @@ fn collect_overrides(constraints: &SystemConstraints) -> SystemOverrides {
         None => 1,
         Some(StarOrbit::System(_)) | Some(StarOrbit::Far) => 2,
     });
+    // If the user supplied only companion stars (every row has a
+    // concrete System/Far orbit), there's no row claiming the primary
+    // slot — and silently demoting one of them would lose its orbit
+    // spec. Insert a default (fully auto-rolled) primary so the
+    // user's companions stay companions.
+    if stars
+        .first()
+        .is_some_and(|s| matches!(s.orbit, Some(StarOrbit::System(_)) | Some(StarOrbit::Far)))
+    {
+        stars.insert(0, StarOverride::default());
+    }
 
     let gg_list: Vec<_> = constraints
         .bodies
@@ -1805,6 +1816,43 @@ mod tests {
         let system = System::generate_from_constraints(constraints)
             .expect("single fully-specified mainworld should always generate");
         println!("{system}");
+    }
+
+    #[test]
+    fn test_generate_with_three_star_overrides() {
+        // Mirrors what the constraint UI builds when picking Noricum
+        // (Trojan Reach) from Traveller Map: Stellar = "G2 V M9 V M6 V"
+        // → three Star rows, the first marked Primary, the rest Auto.
+        // The system must come back with all three stars wired in.
+        let mut cs = SystemConstraints::from_main_world("Noricum", "D8867BB-1").unwrap();
+        cs.bodies.push(Constraint::Star {
+            orbit: Some(StarOrbit::Primary),
+            spectral: Some(StarType::G),
+            subtype: Some(2),
+            size: Some(StarSize::V),
+        });
+        cs.bodies.push(Constraint::Star {
+            orbit: None,
+            spectral: Some(StarType::M),
+            subtype: Some(9),
+            size: Some(StarSize::V),
+        });
+        cs.bodies.push(Constraint::Star {
+            orbit: None,
+            spectral: Some(StarType::M),
+            subtype: Some(6),
+            size: Some(StarSize::V),
+        });
+        let system = System::generate_from_constraints(cs).expect("three stars must generate");
+        assert!(
+            system.secondary.is_some(),
+            "secondary star missing — only primary loaded"
+        );
+        assert!(
+            system.tertiary.is_some(),
+            "tertiary star missing — only two stars loaded"
+        );
+        assert_eq!(system.star.star_type, StarType::G);
     }
 
     #[test]

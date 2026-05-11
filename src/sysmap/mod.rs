@@ -35,7 +35,8 @@ use rand::rngs::SmallRng;
 use tiny_skia::{Color as SkColor, FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
 
 use crate::systems::gas_giant::GasGiant;
-use crate::systems::system::{OrbitContent, Star, System};
+use crate::systems::system::{OrbitContent, Star, StarOrbit, System};
+use crate::systems::system_tables::get_zone;
 use crate::systems::world::World;
 
 use colors::*;
@@ -63,8 +64,11 @@ pub fn render_png(system: &System) -> Result<Vec<u8>, String> {
     let min_orbit = min_orbit_radius_for(central_r);
 
     draw_orbit_rings(&mut pm, system, max_orbit, min_orbit);
+    draw_jump_shadows(&mut pm, system, max_orbit, min_orbit);
     draw_star(&mut pm, &system.star, central_r);
     draw_bodies(&mut pm, system, max_orbit, min_orbit);
+    draw_companion_subsystems(&mut pm, system, max_orbit, min_orbit);
+    draw_far_companions(&mut pm, system);
     draw_header(&mut pm, system);
     draw_legend(&mut pm, system);
 
@@ -259,7 +263,7 @@ fn draw_orbit_rings(pm: &mut Pixmap, system: &System, max_orbit: usize, min_orbi
     // outer=red. Each ring is rendered in two passes — a wide, very
     // translucent halo for the soft "glow" feel from the inspiration
     // art, and a sharper line on top to anchor the eye.
-    let zones = crate::systems::system_tables::get_zone(&system.star);
+    let zones = get_zone(&system.star);
     for (orbit, slot) in system.orbit_slots.iter().enumerate() {
         // Skip both genuinely empty (None) and intentionally Blocked
         // slots: the ring should only appear where there's an actual
@@ -292,6 +296,55 @@ fn draw_orbit_rings(pm: &mut Pixmap, system: &System, max_orbit: usize, min_orbi
             1.0,
         );
     }
+}
+
+/// Mark each star's 100-diameter jump shadow with a faint grey
+/// ellipse. The central star's shadow is concentric with the orbit
+/// rings; a companion star at `StarOrbit::System(N)` gets its own
+/// shadow drawn around its placed position. Far companions are
+/// shadow-drawn over in `draw_far_companions` since they live in a
+/// separate part of the canvas.
+///
+/// Gas giants and rocky worlds don't get a shadow — their 100D
+/// values are tiny relative to orbit spacing (verified: a 100,000-km
+/// gas giant has a 20-Mkm shadow, while the smallest orbit gap is
+/// ~30 Mkm).
+fn draw_jump_shadows(pm: &mut Pixmap, system: &System, max_orbit: usize, min_orbit: f32) {
+    // Central star's shadow.
+    let r_px = mkm_to_pixel_radius(jump_shadow_mkm(&system.star), max_orbit, min_orbit);
+    stroke_ellipse(pm, STAR_CX, STAR_CY, r_px, r_px * TILT_RATIO, JUMP_SHADOW, 1.0);
+    draw_shadow_label(pm, STAR_CX, STAR_CY, r_px);
+
+    // Each in-orbit companion's shadow, drawn around its position.
+    for (orbit, slot) in system.orbit_slots.iter().enumerate() {
+        let companion = match slot {
+            Some(OrbitContent::Secondary) => system.secondary.as_deref(),
+            Some(OrbitContent::Tertiary) => system.tertiary.as_deref(),
+            _ => continue,
+        };
+        let Some(companion) = companion else { continue };
+        let ring_r = orbit_radius_px(orbit, max_orbit, min_orbit);
+        let theta = body_angle_rad(orbit);
+        let (cx, cy) = body_position(ring_r, theta);
+        // Companion shadow in *primary's* pixel scale — its 100D in
+        // Mkm goes through the same Mkm→pixel mapping the primary
+        // orbits use.
+        let shadow_r = mkm_to_pixel_radius(jump_shadow_mkm(&companion.star), max_orbit, min_orbit);
+        stroke_ellipse(pm, cx, cy, shadow_r, shadow_r * TILT_RATIO, JUMP_SHADOW, 1.0);
+        draw_shadow_label(pm, cx, cy, shadow_r);
+    }
+}
+
+/// Anchor the "Jump Shadow" text to the top of the shadow ellipse,
+/// just above the ring so it sits over the dark background rather
+/// than across an orbit ring or a body. `cy_minus_ry` is the top
+/// edge of the tilted ellipse.
+fn draw_shadow_label(pm: &mut Pixmap, cx: f32, cy: f32, r_px: f32) {
+    let label = "Jump Shadow";
+    let size = 10.0;
+    let width = text_width(label, size);
+    let y = cy - r_px * TILT_RATIO - 3.0;
+    fill_text(pm, cx - width * 0.5, y, size, label, (JUMP_SHADOW.0, JUMP_SHADOW.1, JUMP_SHADOW.2));
 }
 
 fn draw_star(pm: &mut Pixmap, star: &Star, radius: f32) {
@@ -394,6 +447,169 @@ fn draw_companion_star(pm: &mut Pixmap, star: &Star, name: &str, cx: f32, cy: f3
     fill_circle(pm, cx, cy, radius * 1.5, (r, g, b, 90));
     fill_circle(pm, cx, cy, radius, (r, g, b, 255));
     draw_label(pm, cx + radius + 4.0, cy + 4.0, name);
+}
+
+/// For each `Secondary`/`Tertiary` slot that exists on the primary's
+/// orbit list, render a miniature version of the companion's own
+/// orbit system right next to the companion star marker. This is how
+/// the user sees that the companion is itself a system, not just a
+/// lone star.
+fn draw_companion_subsystems(
+    pm: &mut Pixmap,
+    system: &System,
+    max_orbit: usize,
+    min_orbit: f32,
+) {
+    for (orbit, slot) in system.orbit_slots.iter().enumerate() {
+        let companion = match slot {
+            Some(OrbitContent::Secondary) => system.secondary.as_deref(),
+            Some(OrbitContent::Tertiary) => system.tertiary.as_deref(),
+            _ => continue,
+        };
+        let Some(companion) = companion else { continue };
+        let ring_r = orbit_radius_px(orbit, max_orbit, min_orbit);
+        let theta = body_angle_rad(orbit);
+        let (cx, cy) = body_position(ring_r, theta);
+        draw_inline_subsystem(pm, companion, cx, cy, 70.0);
+    }
+}
+
+/// `Far` companions don't appear in the primary's `orbit_slots`, so
+/// the main draw loop never sees them. Render them in the bottom
+/// strip of the canvas with their own central star and a full
+/// inline subsystem.
+fn draw_far_companions(pm: &mut Pixmap, system: &System) {
+    let mut far_slot: Option<(f32, f32)> = None;
+    let slots = [(360.0, 770.0), (1080.0, 770.0)];
+    let mut slot_idx = 0;
+    let mut take_slot = |far_slot: &mut Option<(f32, f32)>| -> Option<(f32, f32)> {
+        if slot_idx >= slots.len() {
+            return None;
+        }
+        *far_slot = Some(slots[slot_idx]);
+        slot_idx += 1;
+        *far_slot
+    };
+
+    let mut draw_far = |pm: &mut Pixmap, comp: &System, role: &str| {
+        let Some((cx, cy)) = take_slot(&mut far_slot) else {
+            return;
+        };
+        let r = star_radius_px(comp.star.size);
+        let (sr, sg, sb) = star_color(comp.star.star_type);
+        fill_circle(pm, cx, cy, r * 2.4, (sr, sg, sb, 24));
+        fill_circle(pm, cx, cy, r * 1.5, (sr, sg, sb, 90));
+        fill_circle(pm, cx, cy, r, (sr, sg, sb, 255));
+        draw_label(pm, cx + r + 4.0, cy + 4.0, &format!("{} ({}, {})", comp.name, role, comp.star));
+        draw_inline_subsystem(pm, comp, cx, cy, 110.0);
+    };
+
+    if let Some(sec) = system.secondary.as_deref()
+        && sec.orbit == StarOrbit::Far
+    {
+        draw_far(pm, sec, "Far");
+    }
+    if let Some(ter) = system.tertiary.as_deref()
+        && ter.orbit == StarOrbit::Far
+    {
+        draw_far(pm, ter, "Far");
+    }
+}
+
+/// Draw a miniature version of `companion`'s orbit rings and bodies
+/// centred on `(cx, cy)`, with the outermost orbit at `max_radius_px`
+/// from the centre. The companion's central star is NOT drawn here —
+/// the caller draws it (either as a `draw_companion_star` for an
+/// in-orbit secondary, or as a free-standing disc for a `Far`
+/// companion).
+fn draw_inline_subsystem(
+    pm: &mut Pixmap,
+    companion: &System,
+    cx: f32,
+    cy: f32,
+    max_radius_px: f32,
+) {
+    let max_orb = companion
+        .orbit_slots
+        .iter()
+        .enumerate()
+        .filter_map(|(i, s)| s.as_ref().map(|_| i))
+        .max();
+    let Some(max_orb) = max_orb else {
+        return;
+    };
+    if max_orb == 0 {
+        return;
+    }
+    let star_r = star_radius_px(companion.star.size);
+    let min_radius_px = (star_r + 4.0).max(8.0);
+    if min_radius_px >= max_radius_px {
+        return;
+    }
+
+    let zones = get_zone(&companion.star);
+
+    // Orbit rings.
+    for (o, slot) in companion.orbit_slots.iter().enumerate() {
+        match slot {
+            None | Some(OrbitContent::Blocked) => continue,
+            _ => {}
+        }
+        let t = o as f32 / max_orb as f32;
+        let r = min_radius_px + t * (max_radius_px - min_radius_px);
+        let (cr, cg, cb) = zone_color(o, zones.inner, zones.habitable);
+        stroke_ellipse(pm, cx, cy, r, r * TILT_RATIO, (cr, cg, cb, 28), 2.5);
+        stroke_ellipse(pm, cx, cy, r, r * TILT_RATIO, (cr, cg, cb, 170), 0.6);
+    }
+
+    // Bodies.
+    for (o, slot) in companion.orbit_slots.iter().enumerate() {
+        let Some(content) = slot else { continue };
+        let t = o as f32 / max_orb as f32;
+        let r = min_radius_px + t * (max_radius_px - min_radius_px);
+        let theta = body_angle_rad(o);
+        let bx = cx + r * theta.cos();
+        let by = cy + r * theta.sin() * TILT_RATIO;
+        match content {
+            OrbitContent::World(w) => {
+                if is_belt(w) {
+                    // Tiny belt scatter — fewer samples than the main
+                    // belts so it doesn't dominate the small canvas.
+                    let seed = (0x9E37_79B9_u64)
+                        .wrapping_mul(o as u64 + 1)
+                        .wrapping_add(0xABCD_1234);
+                    let mut rng = SmallRng::seed_from_u64(seed);
+                    for _ in 0..200 {
+                        let phi: f32 = rng.random_range(0.0..std::f32::consts::TAU);
+                        let dr: f32 = rng.random_range(-2.5..2.5);
+                        let rr = r + dr;
+                        let x = cx + rr * phi.cos();
+                        let y = cy + rr * phi.sin() * TILT_RATIO;
+                        let tone = if rng.random_bool(0.55) {
+                            BELT_TONE_A
+                        } else {
+                            BELT_TONE_B
+                        };
+                        fill_circle(pm, x, y, 0.7, (tone.0, tone.1, tone.2, 180));
+                    }
+                } else {
+                    let wr = (world_radius_px(w.size) * 0.5).max(1.0);
+                    fill_circle(pm, bx, by, wr, (WORLD_DISC.0, WORLD_DISC.1, WORLD_DISC.2, 255));
+                }
+            }
+            OrbitContent::GasGiant(gg) => {
+                let gr = (gas_giant_radius_px(gg) * 0.55).max(2.0);
+                fill_circle(
+                    pm,
+                    bx,
+                    by,
+                    gr,
+                    (GAS_GIANT_DISC.0, GAS_GIANT_DISC.1, GAS_GIANT_DISC.2, 255),
+                );
+            }
+            _ => {}
+        }
+    }
 }
 
 fn draw_moons(pm: &mut Pixmap, moons: &[World], parent_cx: f32, parent_cy: f32, parent_r: f32) {
@@ -532,6 +748,26 @@ fn draw_legend(pm: &mut Pixmap, system: &System) {
             break;
         }
     }
+    // Far companions don't appear in `orbit_slots` (they aren't at
+    // any orbital position), so they'd otherwise be invisible in the
+    // legend. List them at the bottom of the System Objects column.
+    for companion in [system.secondary.as_deref(), system.tertiary.as_deref()]
+        .into_iter()
+        .flatten()
+    {
+        if companion.orbit != StarOrbit::Far {
+            continue;
+        }
+        let row = format!("{}  (Star, Far)", companion.name);
+        fill_text(pm, x_label, y, 12.0, &row, LABEL);
+        let dist_str = "Far";
+        let dw = text_width(dist_str, 12.0);
+        fill_text(pm, x_dist + 60.0 - dw, y, 12.0, dist_str, LABEL_DIM);
+        y += line_h;
+        if y > CANVAS_H - 24.0 {
+            break;
+        }
+    }
 }
 
 fn format_mkm(d: f32) -> String {
@@ -560,6 +796,41 @@ mod tests {
         assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
         // Optional dump for human inspection: SYSMAP_DUMP=/tmp/foo.png
         if let Ok(path) = std::env::var("SYSMAP_DUMP") {
+            std::fs::write(&path, &bytes).expect("dump");
+        }
+    }
+
+    #[test]
+    fn renders_noricum_three_star_system() {
+        use crate::systems::constraint::{Constraint, SystemConstraints};
+        use crate::systems::system::{StarOrbit, StarSize, StarType};
+        let mut cs = SystemConstraints::from_main_world("Noricum", "D8867BB-1").unwrap();
+        cs.bodies.push(Constraint::Star {
+            orbit: Some(StarOrbit::Primary),
+            spectral: Some(StarType::G),
+            subtype: Some(2),
+            size: Some(StarSize::V),
+        });
+        cs.bodies.push(Constraint::Star {
+            // Pin secondary to a System orbit so the test isn't flaky
+            // on the random companion-orbit roll.
+            orbit: Some(StarOrbit::System(8)),
+            spectral: Some(StarType::M),
+            subtype: Some(9),
+            size: Some(StarSize::V),
+        });
+        cs.bodies.push(Constraint::Star {
+            // Force tertiary to Far so we exercise the far-companion
+            // render slot.
+            orbit: Some(StarOrbit::Far),
+            spectral: Some(StarType::M),
+            subtype: Some(6),
+            size: Some(StarSize::V),
+        });
+        let sys = System::generate_from_constraints(cs).expect("generated");
+        let bytes = render_png(&sys).expect("render");
+        assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
+        if let Ok(path) = std::env::var("SYSMAP_DUMP_NORICUM") {
             std::fs::write(&path, &bytes).expect("dump");
         }
     }

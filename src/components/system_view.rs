@@ -497,12 +497,60 @@ pub fn SystemPreamble() -> impl IntoView {
 ///
 /// Leptos view containing the orbital body listings and any companion star
 /// sections, with proper spacing and hierarchical organization.
+/// Main system content component.
+///
+/// When `system_override` is provided, it replaces the
+/// `Store<System>` in context for this subtree — used by the
+/// recursive companion-subsystem render below so the nested
+/// WorldList sees the companion's orbits/planets instead of the
+/// primary's.
 #[component]
-pub fn SystemMain(#[prop(default = false)] is_companion: bool) -> impl IntoView {
+pub fn SystemMain(
+    #[prop(default = false)] is_companion: bool,
+    #[prop(optional)] system_override: Option<Store<System>>,
+) -> impl IntoView {
+    if let Some(s) = system_override {
+        provide_context(s);
+    }
+    let system = expect_context::<Store<System>>();
+
     view! {
         <div>
             <WorldList is_companion=is_companion />
             <br />
+            // Recursively render any secondary/tertiary star that has
+            // its own planetary subsystem (Far orbit or System(N)).
+            // Contact-binary companions (StarOrbit::Primary) share the
+            // primary's orbits and are already shown as a row in the
+            // primary's WorldList, so they're skipped here.
+            {move || render_companion_subsystem(system.secondary().get(), "Secondary")}
+            {move || render_companion_subsystem(system.tertiary().get(), "Tertiary")}
         </div>
     }
+}
+
+/// If `companion` has its own orbits (Far or System(N)), render a
+/// labelled subsection containing the recursive SystemMain for that
+/// subsystem. Returns nothing for contact-binary companions or absent
+/// stars.
+fn render_companion_subsystem(
+    companion: Option<Box<System>>,
+    role: &'static str,
+) -> impl IntoView {
+    let Some(companion) = companion else {
+        return ().into_any();
+    };
+    if !matches!(companion.orbit, StarOrbit::Far | StarOrbit::System(_)) {
+        return ().into_any();
+    }
+    let name = companion.name.clone();
+    let star_str = companion.star.to_string();
+    let companion_store = Store::new(*companion);
+    view! {
+        <div class="companion-subsystem">
+            <h3>{format!("{role} Star: {name} ({star_str})")}</h3>
+            <SystemMain is_companion=true system_override=companion_store />
+        </div>
+    }
+    .into_any()
 }

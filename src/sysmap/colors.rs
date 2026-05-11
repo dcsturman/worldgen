@@ -30,6 +30,11 @@ pub const BG: (u8, u8, u8) = (4, 6, 14);
 /// main system orbits are coloured by stellar zone via [`zone_color`].
 pub const ORBIT_RING: (u8, u8, u8, u8) = (180, 200, 230, 100);
 
+/// Light-grey ring used to mark a star's 100-diameter jump shadow —
+/// the "no-jump" volume around each star. Transparent enough that
+/// it doesn't fight the zone-coloured orbit rings underneath.
+pub const JUMP_SHADOW: (u8, u8, u8, u8) = (190, 190, 200, 110);
+
 /// Inner zone (and hot/inside) — cool electric blue. The convention
 /// here is *visual*, not physical: inner=close-and-busy reads as a
 /// cool blue, matching the inspiration art.

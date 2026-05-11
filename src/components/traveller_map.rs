@@ -655,14 +655,6 @@ pub fn WorldSearch(
         }
     };
 
-    let handle_name_input = move |_| {
-        let current_input = input_name.get();
-        // If the field is empty, commit it to clear the destination
-        if current_input.is_empty() {
-            commit_name(current_input);
-        }
-    };
-
     let handle_name_keydown = move |ev: web_sys::KeyboardEvent| {
         // Safely get the key using Reflect to avoid JavaScript exceptions
         let key = match web_sys::js_sys::Reflect::get(&ev, &"key".into()) {
@@ -757,7 +749,21 @@ pub fn WorldSearch(
             .or_else(|| results.first().cloned())
     }
 
-    // Handle commit from the input — fires on `change` (blur or Enter).
+    // The bare name of the world most recently committed by `do_commit`.
+    // Used to detect & suppress the duplicate `change` fire that
+    // follows a dropdown click: after path 1 picks (and disambiguates
+    // via sector) the right world, `commit_name` resets the input to
+    // the bare name. The subsequent `change` event would then run
+    // `do_commit` again with the bare name and — for ambiguous names
+    // like "Noricum" that exist in multiple sectors — would pick the
+    // *wrong* entry via `pick_from`'s first-match fallback.
+    let last_committed_name: StoredValue<String> = StoredValue::new(String::new());
+
+    // Commit logic. Takes the current input text as a parameter
+    // (rather than reading the signal) so it can be called from both
+    // `on:change` (blur/Enter) and `on:input` (Firefox doesn't fire
+    // `change` for datalist selections — only `input` — so we have
+    // to catch the dropdown-click case from there).
     //
     // Logic:
     //   1. Dropdown click → input is "Name (Sector) UWP". Look up the
@@ -768,12 +774,7 @@ pub fn WorldSearch(
     //   3. Otherwise → cache is stale or empty for this input. Fire a
     //      fresh lookup against TravellerMap for the exact text and
     //      commit on its result.
-    //
-    // The third path is the one that fixes the symptom where typing a
-    // valid world and blurring before the autocomplete fetched would
-    // leave just the bare name in the box with no UWP/coords/zone.
-    let handle_selection = move |_| {
-        let current_input = input_name.get();
+    let do_commit = move |current_input: String| {
         if current_input.trim().is_empty() {
             return;
         }
@@ -795,6 +796,7 @@ pub fn WorldSearch(
                 .find(|(n, s, ..)| n == &world_name && s == &sector_name)
                 .cloned()
             {
+                last_committed_name.set_value(hit.0.clone());
                 commit_world(hit.0, hit.1, hit.2, hit.3, hit.4);
                 return;
             }
@@ -805,10 +807,22 @@ pub fn WorldSearch(
             current_input.trim().to_string()
         };
 
+        // Bare-name dedup: suppress the duplicate `change`-event
+        // commit that follows a dropdown click. Once path 1 (or any
+        // prior commit) has set `last_committed_name`, the very next
+        // bare-name commit that matches it is treated as a re-fire of
+        // the same user action and skipped. Any subsequent edit clears
+        // the guard implicitly — a later path-2/3 commit will set its
+        // own `last_committed_name` and the cycle restarts.
+        if last_committed_name.get_value() == typed_name {
+            return;
+        }
+
         // Path 2: bare name + cache aligned.
         if last_resolved_query.get_untracked() == typed_name
             && let Some(hit) = pick_from(&search_results.get(), &typed_name)
         {
+            last_committed_name.set_value(hit.0.clone());
             commit_world(hit.0, hit.1, hit.2, hit.3, hit.4);
             return;
         }
@@ -831,7 +845,10 @@ pub fn WorldSearch(
                         })
                         .collect();
                     match pick_from(&results, &typed_for_fetch) {
-                        Some(hit) => commit_world(hit.0, hit.1, hit.2, hit.3, hit.4),
+                        Some(hit) => {
+                            last_committed_name.set_value(hit.0.clone());
+                            commit_world(hit.0, hit.1, hit.2, hit.3, hit.4);
+                        }
                         None => clear_downstream(),
                     }
                 }
@@ -841,6 +858,30 @@ pub fn WorldSearch(
                 }
             }
         });
+    };
+
+    let handle_selection = move |_| do_commit(input_name.get());
+
+    let handle_name_input = move |ev: web_sys::Event| {
+        let new_val = event_target_value(&ev);
+        // If the field is empty, commit it to clear the destination.
+        if new_val.is_empty() {
+            commit_name(new_val);
+            return;
+        }
+        // Firefox doesn't fire `change` for datalist selections (only
+        // `input`), so a click on a dropdown option never reaches
+        // `handle_selection` until the user finally blurs. Detect the
+        // dropdown's "Name (Sector) UWP" pattern here and commit
+        // immediately so the input doesn't appear stuck on the
+        // formatted string. `bind:value` and our handler both fire on
+        // the same `input` event and their relative order is
+        // unspecified, so we set `input_name` explicitly before
+        // committing rather than trusting it's already in sync.
+        if new_val.contains(" (") && new_val.contains(") ") {
+            input_name.set(new_val.clone());
+            do_commit(new_val);
+        }
     };
 
     // Debounced search function - watch the input_name signal for changes

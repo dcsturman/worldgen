@@ -129,6 +129,7 @@ fn row_to_constraint(row: &ConstraintRow) -> Result<Option<Constraint>, String> 
             let orbit = match row.star_orbit_kind.get().as_str() {
                 "Auto" => None,
                 "Primary" => Some(StarOrbit::Primary),
+                "Far" => Some(StarOrbit::Far),
                 "System" => {
                     let s = row.orbit.get();
                     let n = s
@@ -501,19 +502,45 @@ pub fn World() -> impl IntoView {
         rows.update(|rs| rs.push(ConstraintRow::new(id, RowKind::Planet)));
     };
 
-    let remove_row = move |id: u32| {
-        rows.update(|rs| rs.retain(|r| r.id != id));
-        // Drop any orphaned per-row error attached to this row, otherwise
-        // `any_row_errors` stays true after the row that produced the
-        // error is gone and Generate stays disabled. If that empties the
-        // per-row error list, also clear the global "fix per-row errors
-        // above" banner — it's the only message `do_generate` writes
-        // while row errors exist, so wiping `global_errors` here is
-        // safe.
+    // Drop the per-row error for `id` (and the global "fix per-row
+    // errors above" banner if no per-row errors remain). Used by
+    // `remove_row` and by `revalidate_row` below when a row's inputs
+    // become valid again.
+    let clear_row_error = move |id: u32| {
         row_errors.update(|errs| errs.retain(|(rid, _)| *rid != id));
         if row_errors.with(Vec::is_empty) {
             global_errors.set(vec![]);
         }
+    };
+
+    // Re-validate one row after the user edits any of its inputs.
+    //   - Valid now → clear the row's error (so Generate re-enables
+    //     and the red message disappears).
+    //   - Still invalid → if the row already had an error, refresh the
+    //     message (so a partial fix shows a helpful new error). We
+    //     deliberately *don't* surface a new error mid-typing if the
+    //     row didn't have one yet; that would surprise the user.
+    //     Generate still produces fresh errors as it always did.
+    let revalidate_row = move |id: u32| {
+        let row_opt = rows.with_untracked(|rs| rs.iter().find(|r| r.id == id).copied());
+        let Some(row) = row_opt else {
+            return;
+        };
+        match row_to_constraint(&row) {
+            Ok(_) => clear_row_error(id),
+            Err(msg) => {
+                row_errors.update(|errs| {
+                    if let Some(entry) = errs.iter_mut().find(|(rid, _)| *rid == id) {
+                        entry.1 = msg;
+                    }
+                });
+            }
+        }
+    };
+
+    let remove_row = move |id: u32| {
+        rows.update(|rs| rs.retain(|r| r.id != id));
+        clear_row_error(id);
     };
 
     let do_generate = move || {
@@ -600,6 +627,7 @@ pub fn World() -> impl IntoView {
                             row=row
                             row_errors=row_errors
                             on_remove=Callback::new(move |id: u32| remove_row(id))
+                            on_edit=Callback::new(move |id: u32| revalidate_row(id))
                         />
                     </For>
                 </div>
@@ -643,11 +671,23 @@ fn ConstraintRowView(
     row: ConstraintRow,
     row_errors: RwSignal<Vec<(u32, String)>>,
     on_remove: Callback<u32>,
+    on_edit: Callback<u32>,
 ) -> impl IntoView {
     let kind = row.kind;
     let id = row.id;
 
     let remove = move |_| on_remove.run(id);
+
+    // Re-validate the row whenever any of its inputs fire `input` or
+    // `change`. Both events bubble in HTML, so a single pair of
+    // listeners on the wrapper `<div>` catches edits from every text
+    // input and dropdown rendered inside. We use this bubble-listener
+    // instead of an Effect subscribed to row signals because the
+    // signal-Effect approach ran in a microtask that could fire
+    // *after* `do_generate` set the row's error, silently swallowing
+    // it. Synchronous DOM-event handlers don't race with
+    // `do_generate`.
+    let trigger_revalidate = move |_: web_sys::Event| on_edit.run(id);
 
     let row_error_text = Signal::derive(move || {
         row_errors
@@ -678,7 +718,9 @@ fn ConstraintRowView(
     };
 
     view! {
-        <div class="constraint-row-wrapper">
+        <div class="constraint-row-wrapper"
+            on:input=trigger_revalidate
+            on:change=trigger_revalidate>
             <div class="constraint-row">
                 {kind_select}
                 {move || render_kind_inputs(row)}
@@ -823,6 +865,7 @@ fn StarInputs(row: ConstraintRow) -> impl IntoView {
             <option value="Auto" selected=move || orbit_kind.get() == "Auto">"Auto"</option>
             <option value="Primary" selected=move || orbit_kind.get() == "Primary">"Primary"</option>
             <option value="System" selected=move || orbit_kind.get() == "System">"Orbit #"</option>
+            <option value="Far" selected=move || orbit_kind.get() == "Far">"Far"</option>
         </select>
         // Always reserve the orbit-number cell so star rows align with
         // planet rows; disable it when orbit-kind isn't a specific orbit.
@@ -889,6 +932,22 @@ mod tests {
         assert!(matches!(s[0].size, StarSize::II));
         assert_eq!(s[0].subtype, Some(4));
         assert!(matches!(s[2].size, StarSize::V));
+    }
+
+    #[test]
+    fn parse_stellar_noricum_three_stars() {
+        // Exact stellar string Traveller Map returns for Noricum
+        // (Trojan Reach 2018). User reported only the primary was
+        // loading; this test catches a regression in parsing.
+        let s = parse_stellar("G2 V M9 V M6 V");
+        assert_eq!(s.len(), 3);
+        assert!(matches!(s[0].spectral, StarType::G));
+        assert_eq!(s[0].subtype, Some(2));
+        assert!(matches!(s[0].size, StarSize::V));
+        assert!(matches!(s[1].spectral, StarType::M));
+        assert_eq!(s[1].subtype, Some(9));
+        assert!(matches!(s[2].spectral, StarType::M));
+        assert_eq!(s[2].subtype, Some(6));
     }
 
     #[test]
