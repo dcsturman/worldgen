@@ -57,15 +57,32 @@ pub fn render_png(system: &System) -> Result<Vec<u8>, String> {
     paint_background(&mut pm);
 
     let max_orbit = max_populated_orbit(system).unwrap_or(0);
-    // The central star's drawn radius drives the inner-orbit floor:
-    // a Ia supergiant pushes the closest orbit ring outward; a tiny D
-    // dwarf lets the rings draw in close.
-    let central_r = star_radius_px(system.star.size);
-    let min_orbit = min_orbit_radius_for(central_r);
+    // Lay out the central "contact" cluster (primary + any companions
+    // whose orbit is `StarOrbit::Primary`). The cluster's effective
+    // half-width drives the inner-orbit floor — a binary's two discs
+    // push the closest orbit ring outward more than a lone primary
+    // would.
+    let cluster = central_cluster(system);
+    let min_orbit = min_orbit_radius_for(cluster.half_width());
 
     draw_orbit_rings(&mut pm, system, max_orbit, min_orbit);
-    draw_jump_shadows(&mut pm, system, max_orbit, min_orbit);
-    draw_star(&mut pm, &system.star, central_r);
+    draw_jump_shadows(&mut pm, system, max_orbit, min_orbit, &cluster);
+    for member in &cluster.members {
+        draw_star(&mut pm, member.star, member.cx, member.cy, member.radius);
+        if cluster.members.len() > 1 {
+            // For a multi-star contact group, label each star with its
+            // own name so the user can tell them apart. The primary's
+            // name is already in the header so we skip its label.
+            if !member.is_primary {
+                draw_label(
+                    &mut pm,
+                    member.cx + member.radius + 4.0,
+                    member.cy + member.radius + 12.0,
+                    member.name,
+                );
+            }
+        }
+    }
     draw_bodies(&mut pm, system, max_orbit, min_orbit);
     draw_companion_subsystems(&mut pm, system, max_orbit, min_orbit);
     draw_far_companions(&mut pm, system);
@@ -309,11 +326,35 @@ fn draw_orbit_rings(pm: &mut Pixmap, system: &System, max_orbit: usize, min_orbi
 /// values are tiny relative to orbit spacing (verified: a 100,000-km
 /// gas giant has a 20-Mkm shadow, while the smallest orbit gap is
 /// ~30 Mkm).
-fn draw_jump_shadows(pm: &mut Pixmap, system: &System, max_orbit: usize, min_orbit: f32) {
-    // Central star's shadow.
-    let r_px = mkm_to_pixel_radius(jump_shadow_mkm(&system.star), max_orbit, min_orbit);
-    stroke_ellipse(pm, STAR_CX, STAR_CY, r_px, r_px * TILT_RATIO, JUMP_SHADOW, 1.0);
-    draw_shadow_label(pm, STAR_CX, STAR_CY, r_px);
+fn draw_jump_shadows(
+    pm: &mut Pixmap,
+    system: &System,
+    max_orbit: usize,
+    min_orbit: f32,
+    cluster: &CentralCluster<'_>,
+) {
+    // Shadow per central-cluster star. For a single-star system this
+    // is one ellipse around the canvas centre. For a contact binary
+    // each star gets its own shadow ellipse — they typically overlap,
+    // and the overlap reads correctly as "this region is double-locked
+    // out".
+    for (idx, member) in cluster.members.iter().enumerate() {
+        let r_px = mkm_to_pixel_radius(jump_shadow_mkm(member.star), max_orbit, min_orbit);
+        stroke_ellipse(
+            pm,
+            member.cx,
+            member.cy,
+            r_px,
+            r_px * TILT_RATIO,
+            JUMP_SHADOW,
+            1.0,
+        );
+        // Only label the primary's shadow to avoid stacking the same
+        // text on overlapping ellipses.
+        if idx == 0 {
+            draw_shadow_label(pm, member.cx, member.cy, r_px);
+        }
+    }
 
     // Each in-orbit companion's shadow, drawn around its position.
     for (orbit, slot) in system.orbit_slots.iter().enumerate() {
@@ -347,14 +388,98 @@ fn draw_shadow_label(pm: &mut Pixmap, cx: f32, cy: f32, r_px: f32) {
     fill_text(pm, cx - width * 0.5, y, size, label, (JUMP_SHADOW.0, JUMP_SHADOW.1, JUMP_SHADOW.2));
 }
 
-fn draw_star(pm: &mut Pixmap, star: &Star, radius: f32) {
+fn draw_star(pm: &mut Pixmap, star: &Star, cx: f32, cy: f32, radius: f32) {
     let (r, g, b) = star_color(star.star_type);
     // Soft halo: three concentric translucent discs of decreasing
     // alpha. Cheap glow effect; reads correctly against the dark bg.
-    fill_circle(pm, STAR_CX, STAR_CY, radius * 2.6, (r, g, b, 18));
-    fill_circle(pm, STAR_CX, STAR_CY, radius * 1.7, (r, g, b, 36));
-    fill_circle(pm, STAR_CX, STAR_CY, radius * 1.2, (r, g, b, 80));
-    fill_circle(pm, STAR_CX, STAR_CY, radius, (r, g, b, 255));
+    fill_circle(pm, cx, cy, radius * 2.6, (r, g, b, 18));
+    fill_circle(pm, cx, cy, radius * 1.7, (r, g, b, 36));
+    fill_circle(pm, cx, cy, radius * 1.2, (r, g, b, 80));
+    fill_circle(pm, cx, cy, radius, (r, g, b, 255));
+}
+
+/// One star within the central contact-orbit cluster (primary + any
+/// `StarOrbit::Primary` companions).
+struct ClusterMember<'a> {
+    star: &'a Star,
+    name: &'a str,
+    cx: f32,
+    cy: f32,
+    radius: f32,
+    is_primary: bool,
+}
+
+struct CentralCluster<'a> {
+    members: Vec<ClusterMember<'a>>,
+}
+
+impl CentralCluster<'_> {
+    /// Maximum distance from `STAR_CX` to any star's outer edge — used
+    /// to push orbit rings past the entire cluster.
+    fn half_width(&self) -> f32 {
+        self.members
+            .iter()
+            .map(|m| (m.cx - STAR_CX).abs() + m.radius)
+            .fold(0.0_f32, f32::max)
+    }
+}
+
+/// Collect the primary plus any `StarOrbit::Primary` companions and
+/// lay them out horizontally so they touch (slight overlap for the
+/// contact-binary look). Single-star systems return a one-member
+/// cluster at the canvas centre, preserving the old behaviour.
+fn central_cluster(system: &System) -> CentralCluster<'_> {
+    let mut stars: Vec<(&Star, &str, bool)> =
+        vec![(&system.star, system.name.as_str(), true)];
+    if let Some(sec) = system.secondary.as_deref()
+        && sec.orbit == StarOrbit::Primary
+    {
+        stars.push((&sec.star, sec.name.as_str(), false));
+    }
+    if let Some(ter) = system.tertiary.as_deref()
+        && ter.orbit == StarOrbit::Primary
+    {
+        stars.push((&ter.star, ter.name.as_str(), false));
+    }
+
+    let radii: Vec<f32> = stars.iter().map(|(s, _, _)| star_radius_px(s.size)).collect();
+    let n = stars.len();
+
+    if n == 1 {
+        return CentralCluster {
+            members: vec![ClusterMember {
+                star: stars[0].0,
+                name: stars[0].1,
+                cx: STAR_CX,
+                cy: STAR_CY,
+                radius: radii[0],
+                is_primary: true,
+            }],
+        };
+    }
+
+    // Place adjacent stars at distance `(r_a + r_b) * 0.85` — slight
+    // overlap so the discs look like a contact pair rather than two
+    // separated bodies.
+    let mut centers: Vec<f32> = vec![0.0; n];
+    for i in 1..n {
+        centers[i] = centers[i - 1] + (radii[i - 1] + radii[i]) * 0.85;
+    }
+    let span = centers[n - 1];
+    let offset = STAR_CX - span / 2.0;
+    let members = stars
+        .into_iter()
+        .enumerate()
+        .map(|(i, (star, name, is_primary))| ClusterMember {
+            star,
+            name,
+            cx: centers[i] + offset,
+            cy: STAR_CY,
+            radius: radii[i],
+            is_primary,
+        })
+        .collect();
+    CentralCluster { members }
 }
 
 fn draw_bodies(pm: &mut Pixmap, system: &System, max_orbit: usize, min_orbit: f32) {
@@ -748,19 +873,21 @@ fn draw_legend(pm: &mut Pixmap, system: &System) {
             break;
         }
     }
-    // Far companions don't appear in `orbit_slots` (they aren't at
-    // any orbital position), so they'd otherwise be invisible in the
-    // legend. List them at the bottom of the System Objects column.
+    // Companions that aren't at an orbital position — `Primary`
+    // (contact binary) and `Far` — don't appear in `orbit_slots`, so
+    // they'd otherwise be invisible in the legend. Append them so the
+    // user can see every star the system contains.
     for companion in [system.secondary.as_deref(), system.tertiary.as_deref()]
         .into_iter()
         .flatten()
     {
-        if companion.orbit != StarOrbit::Far {
-            continue;
-        }
-        let row = format!("{}  (Star, Far)", companion.name);
+        let (orbit_label, dist_str): (&str, &str) = match companion.orbit {
+            StarOrbit::Far => ("Far", "Far"),
+            StarOrbit::Primary => ("Contact", "—"),
+            _ => continue,
+        };
+        let row = format!("{}  (Star, {orbit_label})", companion.name);
         fill_text(pm, x_label, y, 12.0, &row, LABEL);
-        let dist_str = "Far";
         let dw = text_width(dist_str, 12.0);
         fill_text(pm, x_dist + 60.0 - dw, y, 12.0, dist_str, LABEL_DIM);
         y += line_h;
@@ -796,6 +923,32 @@ mod tests {
         assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
         // Optional dump for human inspection: SYSMAP_DUMP=/tmp/foo.png
         if let Ok(path) = std::env::var("SYSMAP_DUMP") {
+            std::fs::write(&path, &bytes).expect("dump");
+        }
+    }
+
+    #[test]
+    fn renders_contact_binary() {
+        use crate::systems::constraint::{Constraint, SystemConstraints};
+        use crate::systems::system::{StarOrbit, StarSize, StarType};
+        let mut cs = SystemConstraints::from_main_world("Binar", "A788899-A").unwrap();
+        cs.bodies.push(Constraint::Star {
+            orbit: Some(StarOrbit::Primary),
+            spectral: Some(StarType::G),
+            subtype: Some(2),
+            size: Some(StarSize::V),
+        });
+        cs.bodies.push(Constraint::Star {
+            orbit: Some(StarOrbit::Primary),
+            spectral: Some(StarType::K),
+            subtype: Some(5),
+            size: Some(StarSize::V),
+        });
+        let sys = System::generate_from_constraints(cs).expect("generated");
+        assert!(sys.secondary.is_some());
+        assert_eq!(sys.secondary.as_ref().unwrap().orbit, StarOrbit::Primary);
+        let bytes = render_png(&sys).expect("render");
+        if let Ok(path) = std::env::var("SYSMAP_DUMP_BINARY") {
             std::fs::write(&path, &bytes).expect("dump");
         }
     }
