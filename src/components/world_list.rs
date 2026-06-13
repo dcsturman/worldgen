@@ -267,7 +267,7 @@ pub fn WorldList(#[prop(default = false)] is_companion: bool) -> impl IntoView {
                     <th class="table-entry">"UWP"</th>
                     <th class="table-entry">"Remarks"</th>
                     <th class="table-entry">"Astro Data"</th>
-                    <th class="table-entry"></th>
+                    <th class="table-entry d-print-none"></th>
                 </tr>
             </thead>
             <tbody>
@@ -536,7 +536,7 @@ pub fn WorldView(#[prop(into)] world: Field<World>, satellite: bool) -> impl Int
                 <td class="table-entry">
                     {move || world.with(|world| world.get_astro_description())}
                 </td>
-                <td class="table-entry">
+                <td class="table-entry d-print-none">
                     {move || world.with(|world| {
                         // Size 0 = planetoid belt or ring (display "R"
                         // for satellites); size -1 = small body "S".
