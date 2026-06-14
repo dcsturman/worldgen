@@ -26,6 +26,7 @@ use tokio::sync::{Mutex, RwLock};
 use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
 
 use worldgen::backend::captains_log_server;
+use worldgen::backend::http_server;
 use worldgen::backend::server::TradeServer;
 use worldgen::backend::simulator_server;
 
@@ -96,7 +97,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let listener = TcpListener::bind(&addr).await?;
     log::info!(
-        "Listening on: {} (trade: /ws/trade, simulator: /ws/simulator, captains-log: /ws/captains-log)",
+        "Listening on: {} (trade: /ws/trade, simulator: /ws/simulator, captains-log: /ws/captains-log, system image: /system)",
         addr
     );
 
@@ -126,9 +127,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     Ok(())
 }
 
-/// Dispatch one accepted TCP stream to either the trade-tool handler,
-/// the simulator handler, or the captain's-log handler based on the
-/// WebSocket request URI.
+/// Dispatch one accepted TCP stream to either the trade-tool WebSocket
+/// handler, the simulator WebSocket handler, the captain's-log WebSocket
+/// handler, or the HTTP `/system` endpoint — depending on the request
+/// shape.
+///
+/// We can't blindly call `accept_hdr_async` anymore because the same
+/// port now also serves plain HTTP (for the system-image API). Instead
+/// we peek the first kilobyte of the stream and look for an
+/// `Upgrade: websocket` header; if absent, the request is treated as
+/// plain HTTP and dispatched to `http_server::handle_http`.
 async fn dispatch(
     stream: tokio::net::TcpStream,
     peer_addr: SocketAddr,
@@ -136,35 +144,70 @@ async fn dispatch(
     captains_log_project: Arc<String>,
     captains_log_global_limiter: Arc<Mutex<Option<Instant>>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Capture the request URI during the handshake.
-    let captured_path: Arc<RwLock<String>> = Arc::new(RwLock::new(String::new()));
-    let path_writer = captured_path.clone();
-    #[allow(clippy::result_large_err)]
-    let copy_path = move |req: &Request, response: Response| -> Result<Response, _> {
-        let path = req.uri().path().to_string();
-        if let Ok(mut g) = path_writer.try_write() {
-            *g = path;
+    if is_websocket_upgrade(&stream).await {
+        // Capture the request URI during the handshake.
+        let captured_path: Arc<RwLock<String>> = Arc::new(RwLock::new(String::new()));
+        let path_writer = captured_path.clone();
+        #[allow(clippy::result_large_err)]
+        let copy_path = move |req: &Request, response: Response| -> Result<Response, _> {
+            let path = req.uri().path().to_string();
+            if let Ok(mut g) = path_writer.try_write() {
+                *g = path;
+            }
+            Ok(response)
+        };
+
+        let ws_stream = tokio_tungstenite::accept_hdr_async(stream, copy_path).await?;
+        let path = captured_path.read().await.clone();
+        log::info!("WS connection from {} requested path {}", peer_addr, path);
+
+        if path.starts_with("/ws/simulator") {
+            simulator_server::handle_simulator_ws(ws_stream).await?;
+        } else if path.starts_with("/ws/captains-log") {
+            captains_log_server::handle_captains_log_ws(
+                ws_stream,
+                peer_addr,
+                captains_log_project,
+                captains_log_global_limiter,
+            )
+            .await;
+        } else {
+            // Default to trade — preserves the legacy bare-`/` behaviour.
+            trade_server.handle_one_ws(ws_stream, peer_addr).await?;
         }
-        Ok(response)
-    };
-
-    let ws_stream = tokio_tungstenite::accept_hdr_async(stream, copy_path).await?;
-    let path = captured_path.read().await.clone();
-    log::info!("connection from {} requested path {}", peer_addr, path);
-
-    if path.starts_with("/ws/simulator") {
-        simulator_server::handle_simulator_ws(ws_stream).await?;
-    } else if path.starts_with("/ws/captains-log") {
-        captains_log_server::handle_captains_log_ws(
-            ws_stream,
-            peer_addr,
-            captains_log_project,
-            captains_log_global_limiter,
-        )
-        .await;
     } else {
-        // Default to trade — preserves the legacy bare-`/` behaviour.
-        trade_server.handle_one_ws(ws_stream, peer_addr).await?;
+        http_server::handle_http(stream, peer_addr).await?;
     }
     Ok(())
+}
+
+/// Peek the first kilobyte of an inbound TCP stream and decide whether
+/// the request is a WebSocket upgrade. The HTTP/1.1 contract says that
+/// upgrades carry an `Upgrade: websocket` header (case-insensitive) and
+/// the headers always finish within the first few hundred bytes for our
+/// callers, so a single peek is sufficient.
+///
+/// `peek` returns the data without consuming it from the socket buffer,
+/// so subsequent code reading the stream sees the full request.
+async fn is_websocket_upgrade(stream: &tokio::net::TcpStream) -> bool {
+    let mut buf = vec![0u8; 1024];
+    // Up to ~250 ms for the first bytes — the client always sends the
+    // request line + headers immediately, so a short wait is plenty.
+    let n = match tokio::time::timeout(
+        std::time::Duration::from_millis(250),
+        stream.peek(&mut buf),
+    )
+    .await
+    {
+        Ok(Ok(n)) => n,
+        _ => return false,
+    };
+    if n == 0 {
+        return false;
+    }
+    let head = String::from_utf8_lossy(&buf[..n]);
+    // The header field name is case-insensitive; the value "websocket"
+    // is always lowercase per RFC 6455 §4.1.
+    head.lines()
+        .any(|line| line.to_ascii_lowercase().starts_with("upgrade: websocket"))
 }

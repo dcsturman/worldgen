@@ -199,6 +199,58 @@ is just a `Vec<Constraint>` you can push directly into. Variants:
   not a bug. **Pin your `worldgen` dependency by commit SHA** (or `tag =`
   if tags exist) if you need stable images across worldgen updates.
 
+## HTTP endpoint (for non-Rust callers)
+
+If you can't link worldgen as a Rust crate — e.g. a browser client like
+Traveller Map's web frontend — the backend server exposes the same
+flow over HTTP. One endpoint, no auth, permissive CORS.
+
+```
+GET <base>/system
+  ?sector=<string>     required  sector name (used only for the seed)
+  &hex=<CCRR>          required  4-digit string; "2018" → hex_x=20, hex_y=18
+  &name=<string>       required  main-world name
+  &uwp=<9-char>        required  full UWP, e.g. "D8867BB-1"
+  &pbg=<3-char>        optional  PBG digits; char[1]=belts, char[2]=giants
+  &stellar=<string>    optional  e.g. "G2 V M9 V M6 V"; empty → roll
+  &worlds=<int>        optional  system W digit; planet count = max(W - 1 - belts - giants, 0)
+  &scale=<float>       optional  pixel scale, default 2.0, must be finite and >= 1.0
+```
+
+Response:
+- `200 image/png` — the system map (default 3200×1800 at `scale=2.0`).
+- `400 text/plain` — missing or malformed required parameter.
+- `422 text/plain` — `build_constraints` rejected the inputs (invalid /
+  partial / contradictory UWP). Body is the constraint error reason.
+- `500 text/plain` — render failure (scale out of range, tiny-skia OOM).
+
+CORS: `Access-Control-Allow-Origin: *`, `Access-Control-Allow-Methods:
+GET, HEAD, OPTIONS`, `Access-Control-Allow-Headers: *`. OPTIONS preflight
+returns `204 No Content` with the same headers.
+
+Determinism contract is the same as the library: same
+`(sector, hex, name, uwp, pbg, stellar, worlds, scale)` always yields
+byte-identical PNG bytes. `scale` never feeds any RNG.
+
+Example:
+```
+http://<host>:<port>/system?sector=Trojan+Reach&hex=2018&name=Noricum&uwp=D8867BB-1&pbg=804&stellar=G2+V+M9+V+M6+V&worlds=14
+```
+
+Where to point the client:
+- **Local dev (this repo's `./scripts/run-backend.sh`):**
+  `http://127.0.0.1:8081/system`
+- **Deployed (Cloud Run):** same path on the deployed hostname, served
+  on the same port the WebSocket endpoints use. Behind nginx in the
+  Docker image you may need to add a `/system` proxy rule alongside the
+  existing `/ws/trade` rules.
+
+The HTTP and WebSocket endpoints share one TCP port. The dispatcher
+peeks the first inbound bytes and routes anything with `Upgrade:
+websocket` to the WS handlers; everything else goes to the HTTP
+handler. The trade-tool / simulator / captain's-log WebSocket flows
+are unchanged.
+
 ## What this library is NOT
 
 - No HTTP server. (The `backend` feature exists for the trade computer's

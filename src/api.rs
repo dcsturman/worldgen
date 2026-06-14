@@ -241,3 +241,143 @@ pub fn build_constraints(
 
     Ok(cs)
 }
+
+/// Parse a Traveller-Map style "Stellar" string into a list of
+/// [`StarSpec`]s suitable for passing to [`build_constraints`].
+///
+/// Accepts strings like:
+/// - `"G2 V"` — single star, subtype as inline digit, size as own token
+/// - `"G2 V M9 V M6 V"` — three stars (e.g. Noricum)
+/// - `"G2V"` — single token, subtype and size mashed together
+/// - `"G V"` — no subtype digit; produces a `StarSpec` whose `subtype`
+///   is `None` so the generator rolls it
+/// - `"BD G2 V"` — `BD` (brown dwarf) tokens are silently skipped; the
+///   library doesn't render them today
+///
+/// Tolerant of garbage: any token that doesn't start with a known
+/// spectral letter (O/B/A/F/G/K/M, case-sensitive) is skipped, and
+/// unknown size suffixes drop the entire star. An empty string returns
+/// an empty `Vec`.
+pub fn parse_stellar(s: &str) -> Vec<StarSpec> {
+    let tokens: Vec<&str> = s.split_whitespace().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < tokens.len() {
+        let tok = tokens[i];
+        i += 1;
+        if tok.eq_ignore_ascii_case("BD") {
+            continue;
+        }
+        let bytes = tok.as_bytes();
+        if bytes.is_empty() {
+            continue;
+        }
+        let spectral = match bytes[0] {
+            b'O' => StarType::O,
+            b'B' => StarType::B,
+            b'A' => StarType::A,
+            b'F' => StarType::F,
+            b'G' => StarType::G,
+            b'K' => StarType::K,
+            b'M' => StarType::M,
+            _ => continue,
+        };
+        let mut subtype: Option<u8> = None;
+        let mut j = 1;
+        while j < bytes.len() && bytes[j].is_ascii_digit() {
+            subtype = Some(subtype.unwrap_or(0) * 10 + (bytes[j] - b'0'));
+            j += 1;
+        }
+        let size_str: String = if j < bytes.len() {
+            std::str::from_utf8(&bytes[j..]).unwrap_or("").to_string()
+        } else if i < tokens.len() && is_size_token(tokens[i]) {
+            let s = tokens[i].to_string();
+            i += 1;
+            s
+        } else {
+            continue;
+        };
+        let size = match size_str.as_str() {
+            "Ia" => StarSize::Ia,
+            "Ib" => StarSize::Ib,
+            "II" => StarSize::II,
+            "III" => StarSize::III,
+            "IV" => StarSize::IV,
+            "V" => StarSize::V,
+            "VI" => StarSize::VI,
+            "D" => StarSize::D,
+            _ => continue,
+        };
+        out.push(match subtype {
+            Some(sub) => StarSpec::new(spectral, sub, size),
+            None => StarSpec::with_rolled_subtype(spectral, size),
+        });
+    }
+    out
+}
+
+fn is_size_token(s: &str) -> bool {
+    matches!(s, "Ia" | "Ib" | "II" | "III" | "IV" | "V" | "VI" | "D")
+}
+
+#[cfg(test)]
+mod parse_stellar_tests {
+    use super::*;
+
+    #[test]
+    fn empty_string_yields_no_stars() {
+        assert!(parse_stellar("").is_empty());
+        assert!(parse_stellar("   ").is_empty());
+    }
+
+    #[test]
+    fn single_split_token() {
+        let s = parse_stellar("G2 V");
+        assert_eq!(s.len(), 1);
+        assert!(matches!(s[0].spectral, StarType::G));
+        assert_eq!(s[0].subtype, Some(2));
+        assert!(matches!(s[0].size, StarSize::V));
+    }
+
+    #[test]
+    fn single_inline_token() {
+        let s = parse_stellar("G2V");
+        assert_eq!(s.len(), 1);
+        assert!(matches!(s[0].spectral, StarType::G));
+        assert_eq!(s[0].subtype, Some(2));
+        assert!(matches!(s[0].size, StarSize::V));
+    }
+
+    #[test]
+    fn three_stars_noricum() {
+        let s = parse_stellar("G2 V M9 V M6 V");
+        assert_eq!(s.len(), 3);
+        assert_eq!(s[0].subtype, Some(2));
+        assert_eq!(s[1].subtype, Some(9));
+        assert_eq!(s[2].subtype, Some(6));
+    }
+
+    #[test]
+    fn skips_brown_dwarf() {
+        let s = parse_stellar("BD G2 V");
+        assert_eq!(s.len(), 1);
+        assert!(matches!(s[0].spectral, StarType::G));
+    }
+
+    #[test]
+    fn no_subtype_uses_with_rolled_subtype() {
+        let s = parse_stellar("G V");
+        assert_eq!(s.len(), 1);
+        assert!(matches!(s[0].spectral, StarType::G));
+        assert_eq!(s[0].subtype, None);
+        assert!(matches!(s[0].size, StarSize::V));
+    }
+
+    #[test]
+    fn unknown_token_skipped() {
+        // "Z" isn't a spectral letter; ignored. "G2 V" still parses.
+        let s = parse_stellar("Z9 V G2 V");
+        assert_eq!(s.len(), 1);
+        assert!(matches!(s[0].spectral, StarType::G));
+    }
+}

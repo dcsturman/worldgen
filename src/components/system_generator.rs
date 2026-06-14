@@ -279,77 +279,10 @@ fn parse_star_type(s: &str) -> Result<Option<StarType>, String> {
     }))
 }
 
-struct ParsedStar {
-    spectral: StarType,
-    subtype: Option<u8>,
-    size: StarSize,
-}
-
-/// Parse a Traveller-Map "Stellar" string like "G2 V K2 V" into a list
-/// of stars. Tolerant: skips brown-dwarf entries (`BD`) and any token
-/// that doesn't begin with a known spectral letter.
-fn parse_stellar(s: &str) -> Vec<ParsedStar> {
-    let tokens: Vec<&str> = s.split_whitespace().collect();
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < tokens.len() {
-        let tok = tokens[i];
-        i += 1;
-        if tok.eq_ignore_ascii_case("BD") {
-            continue;
-        }
-        let bytes = tok.as_bytes();
-        if bytes.is_empty() {
-            continue;
-        }
-        let spectral = match bytes[0] {
-            b'O' => StarType::O,
-            b'B' => StarType::B,
-            b'A' => StarType::A,
-            b'F' => StarType::F,
-            b'G' => StarType::G,
-            b'K' => StarType::K,
-            b'M' => StarType::M,
-            _ => continue,
-        };
-        let mut subtype: Option<u8> = None;
-        let mut j = 1;
-        while j < bytes.len() && bytes[j].is_ascii_digit() {
-            subtype = Some(subtype.unwrap_or(0) * 10 + (bytes[j] - b'0'));
-            j += 1;
-        }
-        let size_str: String = if j < bytes.len() {
-            std::str::from_utf8(&bytes[j..]).unwrap_or("").to_string()
-        } else if i < tokens.len() && is_size_token(tokens[i]) {
-            let s = tokens[i].to_string();
-            i += 1;
-            s
-        } else {
-            continue;
-        };
-        let size = match size_str.as_str() {
-            "Ia" => StarSize::Ia,
-            "Ib" => StarSize::Ib,
-            "II" => StarSize::II,
-            "III" => StarSize::III,
-            "IV" => StarSize::IV,
-            "V" => StarSize::V,
-            "VI" => StarSize::VI,
-            "D" => StarSize::D,
-            _ => continue,
-        };
-        out.push(ParsedStar {
-            spectral,
-            subtype,
-            size,
-        });
-    }
-    out
-}
-
-fn is_size_token(s: &str) -> bool {
-    matches!(s, "Ia" | "Ib" | "II" | "III" | "IV" | "V" | "VI" | "D")
-}
+// Stellar-string parsing lives in `crate::api::parse_stellar` so the
+// backend HTTP endpoint and library consumers can share it. We import
+// it as `parse_stellar` for the call site below.
+use crate::api::parse_stellar;
 
 /// Parse a Traveller-Map "PBG" string (3 hex digits: population
 /// multiplier, planetoid belts, gas giants). Returns `None` for
@@ -908,37 +841,12 @@ fn StarInputs(row: ConstraintRow) -> impl IntoView {
 mod tests {
     use super::*;
 
-    #[test]
-    fn parse_stellar_single_star_split_token() {
-        let s = parse_stellar("G2 V");
-        assert_eq!(s.len(), 1);
-        assert!(matches!(s[0].spectral, StarType::G));
-        assert_eq!(s[0].subtype, Some(2));
-        assert!(matches!(s[0].size, StarSize::V));
-    }
-
-    #[test]
-    fn parse_stellar_two_stars_split_tokens() {
-        let s = parse_stellar("G2 V K2 V");
-        assert_eq!(s.len(), 2);
-        assert!(matches!(s[0].spectral, StarType::G));
-        assert!(matches!(s[1].spectral, StarType::K));
-    }
-
-    #[test]
-    fn parse_stellar_three_stars() {
-        let s = parse_stellar("F4 II G3 V M5 V");
-        assert_eq!(s.len(), 3);
-        assert!(matches!(s[0].size, StarSize::II));
-        assert_eq!(s[0].subtype, Some(4));
-        assert!(matches!(s[2].size, StarSize::V));
-    }
-
+    // `parse_stellar` itself is tested in `src/api.rs` (the shared
+    // implementation). We keep one Noricum regression test here to
+    // pin the call-site behaviour (the frontend consumes the parsed
+    // stars via the `StarSpec` shape).
     #[test]
     fn parse_stellar_noricum_three_stars() {
-        // Exact stellar string Traveller Map returns for Noricum
-        // (Trojan Reach 2018). User reported only the primary was
-        // loading; this test catches a regression in parsing.
         let s = parse_stellar("G2 V M9 V M6 V");
         assert_eq!(s.len(), 3);
         assert!(matches!(s[0].spectral, StarType::G));
@@ -948,22 +856,6 @@ mod tests {
         assert_eq!(s[1].subtype, Some(9));
         assert!(matches!(s[2].spectral, StarType::M));
         assert_eq!(s[2].subtype, Some(6));
-    }
-
-    #[test]
-    fn parse_stellar_skips_brown_dwarf() {
-        let s = parse_stellar("BD G2 V");
-        assert_eq!(s.len(), 1);
-        assert!(matches!(s[0].spectral, StarType::G));
-    }
-
-    #[test]
-    fn parse_stellar_handles_no_subtype() {
-        // Some entries omit the digit; we should still recognise them.
-        let s = parse_stellar("G V");
-        assert_eq!(s.len(), 1);
-        assert_eq!(s[0].subtype, None);
-        assert!(matches!(s[0].size, StarSize::V));
     }
 
     #[test]
