@@ -31,6 +31,13 @@ trunk build --release
 # Run the simulator's live smoke test against TravellerMap (network-bound, ~20s)
 cargo test --features backend --lib -- --ignored simulator_smoke_regina --nocapture
 
+# Smoke-test the deployed /system HTTP endpoint at tools.callistoflight.com.
+# External consumers (Traveller Map client) depend on this URL; run this
+# before pushing any change that could affect the public surface
+# (worldgen library API, sysmap renderer, backend http_server, or nginx.conf).
+# Override the target with `WORLDGEN_BASE_URL=https://staging…` for staging.
+cargo test --features backend --test production_smoke -- --ignored --nocapture
+
 # Tests (CI runs `cargo build` + `cargo test`)
 cargo test
 cargo test <test_name>           # single test
