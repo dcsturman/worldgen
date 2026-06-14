@@ -32,7 +32,44 @@ use ab_glyph::{Font, FontRef, PxScale, ScaleFont};
 use rand::Rng;
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
+use std::cell::Cell;
 use tiny_skia::{Color as SkColor, FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
+
+thread_local! {
+    /// Active render scale. The drawing primitives (`fill_circle`,
+    /// `stroke_ellipse`, `fill_text`) consult this when emitting to the
+    /// pixmap so all higher-level draw code can stay in logical
+    /// 1600×900 space. Default is `1.0`; `render_png_scaled` installs a
+    /// different value via [`RenderScaleGuard`] for the duration of one
+    /// render.
+    static RENDER_SCALE: Cell<f32> = const { Cell::new(1.0) };
+}
+
+#[inline]
+fn current_scale() -> f32 {
+    RENDER_SCALE.with(|c| c.get())
+}
+
+/// RAII guard installing a render scale for the lifetime of one render
+/// call. Restores the previous scale on drop, including during panic
+/// unwind, so a partial render can't leak a non-default scale into
+/// subsequent renders on the same thread.
+struct RenderScaleGuard {
+    prev: f32,
+}
+
+impl RenderScaleGuard {
+    fn new(scale: f32) -> Self {
+        let prev = RENDER_SCALE.with(|c| c.replace(scale));
+        RenderScaleGuard { prev }
+    }
+}
+
+impl Drop for RenderScaleGuard {
+    fn drop(&mut self) {
+        RENDER_SCALE.with(|c| c.set(self.prev));
+    }
+}
 
 use crate::systems::gas_giant::GasGiant;
 use crate::systems::system::{OrbitContent, Star, StarOrbit, System};
@@ -48,12 +85,33 @@ const FONT_BYTES: &[u8] = include_bytes!("../../assets/DejaVuSans.ttf");
 
 /// Render the given system to an opaque PNG and return the encoded bytes.
 ///
+/// Equivalent to [`render_png_scaled`] called with `scale = 1.0`.
 /// On any tiny-skia setup failure (typically out-of-memory for the
 /// target pixmap) returns a `String` describing the cause; the caller
 /// is expected to surface this in the UI.
 pub fn render_png(system: &System) -> Result<Vec<u8>, String> {
-    let mut pm = Pixmap::new(CANVAS_W as u32, CANVAS_H as u32)
-        .ok_or_else(|| format!("Pixmap::new failed for {CANVAS_W}x{CANVAS_H}"))?;
+    render_png_scaled(system, 1.0)
+}
+
+/// Render the given system to an opaque PNG at the requested pixel
+/// scale. `scale = 1.0` matches the legacy 1600×900 output; `scale = 2.0`
+/// is 3200×1800; higher values scale proportionally with no composition
+/// change — same layout, same orbit positions, same label placement,
+/// just more pixels. Fonts, stroke widths, dot radii, and the legend
+/// all scale uniformly so relative sizes are preserved.
+///
+/// Returns an error if `scale < 1.0` or not finite. The scale is not
+/// fed into any RNG — same `(system, scale)` always produces the same
+/// PNG bytes.
+pub fn render_png_scaled(system: &System, scale: f32) -> Result<Vec<u8>, String> {
+    if !scale.is_finite() || scale < 1.0 {
+        return Err(format!("render scale must be a finite value >= 1.0, got {scale}"));
+    }
+    let _scale_guard = RenderScaleGuard::new(scale);
+    let pw = (CANVAS_W * scale).round() as u32;
+    let ph = (CANVAS_H * scale).round() as u32;
+    let mut pm = Pixmap::new(pw, ph)
+        .ok_or_else(|| format!("Pixmap::new failed for {pw}x{ph}"))?;
     paint_background(&mut pm);
 
     let max_orbit = max_populated_orbit(system).unwrap_or(0);
@@ -112,6 +170,12 @@ fn fill_circle(pm: &mut Pixmap, cx: f32, cy: f32, r: f32, rgba: (u8, u8, u8, u8)
     if r <= 0.0 {
         return;
     }
+    // Geometry math stays in logical 1600×900 space; the `Transform`
+    // scales the rasterized path into pixel space. At `scale == 1.0`
+    // this is bitwise identity (Transform::from_scale(1, 1) is the
+    // identity matrix in tiny-skia), so the legacy output is byte-
+    // preserved.
+    let scale = current_scale();
     if let Some(path) = PathBuilder::from_circle(cx, cy, r) {
         let mut paint = Paint::default();
         paint.set_color(SkColor::from_rgba8(rgba.0, rgba.1, rgba.2, rgba.3));
@@ -120,7 +184,7 @@ fn fill_circle(pm: &mut Pixmap, cx: f32, cy: f32, r: f32, rgba: (u8, u8, u8, u8)
             &path,
             &paint,
             FillRule::Winding,
-            Transform::identity(),
+            Transform::from_scale(scale, scale),
             None,
         );
     }
@@ -180,11 +244,15 @@ fn stroke_ellipse(
         let mut paint = Paint::default();
         paint.set_color(SkColor::from_rgba8(rgba.0, rgba.1, rgba.2, rgba.3));
         paint.anti_alias = true;
+        // Stroke widths in tiny-skia are interpreted in destination
+        // (post-transform) pixel space, so we have to scale the width
+        // ourselves; the `Transform` only handles path geometry.
+        let scale = current_scale();
         let stroke = Stroke {
-            width,
+            width: width * scale,
             ..Default::default()
         };
-        pm.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+        pm.stroke_path(&path, &paint, &stroke, Transform::from_scale(scale, scale), None);
     }
 }
 
@@ -197,6 +265,16 @@ fn fill_text(pm: &mut Pixmap, x: f32, y: f32, size: f32, text: &str, rgb: (u8, u
         Ok(f) => f,
         Err(_) => return,
     };
+    // ab_glyph rasterizes directly into the pixel buffer and ignores the
+    // tiny-skia transform, so we scale position and font size at the
+    // entry. Callers pass logical 1600×900-space coordinates and font
+    // sizes; `text_width` / right-alignment math also lives in logical
+    // space, which works because both `x` and `pen_x` advances scale by
+    // the same factor.
+    let scale = current_scale();
+    let x = x * scale;
+    let y = y * scale;
+    let size = size * scale;
     if size < 1.0 {
         return;
     }

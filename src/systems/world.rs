@@ -4,6 +4,7 @@
 //! planets and worlds in the Traveller universe, including their physical characteristics,
 //! facilities, and trade classifications.
 //! use log::debug;
+#[cfg(feature = "frontend")]
 use reactive_stores::Store;
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
@@ -26,7 +27,8 @@ use crate::trade::ZoneClassification;
 /// Container for world satellites
 ///
 /// Stores a vector of satellite worlds with a key based on the parent world's name.
-#[derive(Debug, Clone, Store, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "frontend", derive(Store))]
 pub struct World {
     pub name: String,
     pub orbit: usize,
@@ -64,9 +66,10 @@ pub enum Facility {
 /// Container for world (or gas giant) satellites
 /// each satellite is in its own right a world, though
 /// orbit numbering uses a different system than in the main system.
-#[derive(Debug, Clone, Store, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "frontend", derive(Store))]
 pub struct Satellites {
-    #[store(key: String = |world| world.name.clone())]
+    #[cfg_attr(feature = "frontend", store(key: String = |world| world.name.clone()))]
     pub sats: Vec<World>,
 }
 

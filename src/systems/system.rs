@@ -33,8 +33,7 @@
 //! 8. **Companion Processing**: Recursively processes secondary/tertiary systems
 
 use log::{debug, error, warn};
-use rand::Rng;
-use rand::prelude::IndexedRandom;
+#[cfg(feature = "frontend")]
 use reactive_stores::Store;
 use std::fmt::Display;
 
@@ -145,16 +144,17 @@ pub struct SystemOverrides {
 /// - Gas giants (with their own satellite systems)
 /// - Secondary/tertiary star markers
 /// - Blocked orbits (intentionally empty for realism)
-#[derive(Debug, Clone, Store)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "frontend", derive(Store))]
 pub struct System {
     pub name: String,
     pub star: Star,
-    #[store]
+    #[cfg_attr(feature = "frontend", store)]
     pub secondary: Option<Box<System>>,
-    #[store]
+    #[cfg_attr(feature = "frontend", store)]
     pub tertiary: Option<Box<System>>,
     pub orbit: StarOrbit,
-    #[store]
+    #[cfg_attr(feature = "frontend", store)]
     pub orbit_slots: Vec<Option<OrbitContent>>,
 }
 
@@ -174,7 +174,8 @@ pub struct System {
 /// - **G**: Yellow stars like Sol (5,200-6,000K), stable main sequence
 /// - **K**: Orange stars, cooler (3,700-5,200K), long-lived
 /// - **M**: Red dwarfs, coolest (2,400-3,700K), most common, very long-lived
-#[derive(Debug, Store, Clone, Copy, PartialEq, Eq, PartialOrd, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Hash)]
+#[cfg_attr(feature = "frontend", derive(Store))]
 pub enum StarType {
     O,
     B,
@@ -206,7 +207,8 @@ pub type StarSubType = u8;
 /// - **V**: Main sequence (dwarfs), stable hydrogen burning
 /// - **VI**: Subdwarfs, metal-poor, lower luminosity
 /// - **D**: White dwarfs, stellar remnants, very compact zones
-#[derive(Debug, Store, Clone, Copy, PartialEq, Eq, PartialOrd, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Hash)]
+#[cfg_attr(feature = "frontend", derive(Store))]
 pub enum StarSize {
     Ia,
     Ib,
@@ -231,7 +233,8 @@ pub enum StarSize {
 /// - **Primary**: Contact binary or very close orbit
 /// - **Far**: Distant orbit, independent zone system
 /// - **System(n)**: Orbits within primary's zone system at position n
-#[derive(Debug, Store, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "frontend", derive(Store))]
 pub enum StarOrbit {
     Primary,
     Far,
@@ -250,7 +253,8 @@ pub enum StarOrbit {
 /// - Sol: G2V (G-type, subtype 2, main sequence)
 /// - Rigel: B8Ia (B-type, subtype 8, supergiant)
 /// - Proxima Centauri: M5.5V (M-type, subtype 5-6, main sequence)
-#[derive(Debug, Store, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "frontend", derive(Store))]
 pub struct Star {
     pub star_type: StarType,
     pub subtype: StarSubType,
@@ -269,17 +273,18 @@ pub struct Star {
 /// - **World**: Rocky planets with full UWP characteristics
 /// - **GasGiant**: Gas giants with satellite systems
 /// - **Blocked**: Intentionally empty orbits for realism
-#[derive(Debug, Store, Clone)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "frontend", derive(Store))]
 pub enum OrbitContent {
     // This orbit contains the secondary star system of the primary.
     Secondary,
     // This orbit contains the tertiary star system of the primary.
     Tertiary,
     // This orbit contains a world
-    #[store]
+    #[cfg_attr(feature = "frontend", store)]
     World(World),
     // This orbit contains a gas giant
-    #[store]
+    #[cfg_attr(feature = "frontend", store)]
     GasGiant(GasGiant),
     // This orbit is intentionally empty and cannot be filled.
     Blocked,
@@ -367,6 +372,17 @@ impl System {
         system
     }
 
+    /// Seeded variant of [`generate_system`]. Installs a `ChaCha8Rng`
+    /// seeded from `seed` as the worldgen thread-local for the duration
+    /// of the call, so every `roll_2d6` / `roll_1d6` / `roll_10` /
+    /// `rng_random_range` invocation inside the generation pipeline draws
+    /// from a reproducible stream. Same seed + same `main_world` →
+    /// identical `System`, forever.
+    pub fn generate_system_seeded(seed: u64, main_world: World) -> System {
+        let _guard = crate::util::RngScope::new(seed);
+        System::generate_system(main_world)
+    }
+
     /// Constraint-driven entry point. The classic `generate_system(World)`
     /// path is the special case of a single fully-specified
     /// `Planet { is_mainworld: true }` constraint plus no overrides.
@@ -438,6 +454,18 @@ impl System {
         main_world.gen_trade_classes();
         system.fill_system_with(main_world, true, &overrides);
         Ok(system)
+    }
+
+    /// Seeded variant of [`generate_from_constraints`]. The headline
+    /// library entry point — used by `crate::generate_system_png` to
+    /// give consumers byte-identical output across runs for a given
+    /// `(seed, constraints)` pair.
+    pub fn generate_from_constraints_seeded(
+        seed: u64,
+        constraints: SystemConstraints,
+    ) -> Result<System, Vec<ConstraintError>> {
+        let _guard = crate::util::RngScope::new(seed);
+        System::generate_from_constraints(constraints)
     }
 
     fn generate_companion(
@@ -530,10 +558,10 @@ impl System {
             // shuffle and could overwrite slots that weren't viable
             // (e.g. an Empty-pinned Blocked orbit at index 0).
             let orbit = if !viable_giants.is_empty() {
-                let pos = rand::rng().random_range(0..viable_giants.len());
+                let pos = crate::util::rng_random_range(0..viable_giants.len());
                 viable_giants.remove(pos)
             } else {
-                let pos = rand::rng().random_range(0..viable_other_orbits.len());
+                let pos = crate::util::rng_random_range(0..viable_other_orbits.len());
                 viable_other_orbits.remove(pos)
             };
 
@@ -654,11 +682,11 @@ impl System {
                 viable_inner_orbits.retain(|x| *x != o);
                 o
             } else if !viable_outer_orbits.is_empty() {
-                let pos = rand::rng().random_range(0..viable_outer_orbits.len());
+                let pos = crate::util::rng_random_range(0..viable_outer_orbits.len());
 
                 viable_outer_orbits.remove(pos)
             } else {
-                let pos = rand::rng().random_range(0..viable_inner_orbits.len());
+                let pos = crate::util::rng_random_range(0..viable_inner_orbits.len());
 
                 viable_inner_orbits.remove(pos)
             };
@@ -943,7 +971,7 @@ impl System {
         } else {
             let empty_orbits = self.get_unused_orbits();
             if !empty_orbits.is_empty() {
-                let orbit = empty_orbits[rand::rng().random_range(0..empty_orbits.len())];
+                let orbit = empty_orbits[crate::util::rng_random_range(0..empty_orbits.len())];
                 main_world.position_in_system = orbit;
                 main_world.orbit = orbit;
                 main_world.compute_astro_data(&self.star);
@@ -953,7 +981,7 @@ impl System {
                 let pos = if self.get_max_orbits() == 0 {
                     0
                 } else {
-                    rand::rng().random_range(0..self.get_max_orbits())
+                    crate::util::rng_random_range(0..self.get_max_orbits())
                 };
                 main_world.orbit = pos;
                 main_world.position_in_system = pos;
@@ -1224,7 +1252,7 @@ impl System {
         let valid_orbits = self.get_unused_orbits();
 
         for _ in 0..num_empty {
-            if let Some(pos) = valid_orbits.choose(&mut rand::rng()) {
+            if let Some(pos) = crate::util::rng_choose(&valid_orbits) {
                 self.set_orbit_slot(*pos, OrbitContent::Blocked);
             }
         }

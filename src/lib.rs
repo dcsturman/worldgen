@@ -19,15 +19,45 @@
 #[cfg(feature = "backend")]
 pub mod backend;
 
-pub mod comms;
-pub mod components;
-pub mod logging;
-pub mod simulator;
+// Always-compiled modules — these are the library surface. A consumer
+// depending on worldgen as a Cargo dep (with `default-features = false`)
+// sees these and nothing else.
+pub mod api;
+pub mod seed;
 pub mod sysmap;
 pub mod systems;
 pub mod trade;
 pub mod util;
 pub mod worldmap;
+
+// Top-level re-exports of the library's "primary surface" — what an
+// external consumer needs to write `worldgen::generate_system_png(...)`
+// without digging into nested module paths. The constraint types come
+// out next to them so consumers can build a `SystemConstraints` value
+// in one `use` statement.
+pub use api::{
+    StarSpec, WorldgenError, build_constraints, generate_planet_png, generate_system_png,
+    generate_system_png_scaled,
+};
+pub use systems::constraint::{Constraint, PartialUwp, SystemConstraints};
+pub use systems::gas_giant::GasGiantSize;
+pub use systems::system::{StarOrbit, StarSize, StarType};
+
+// Frontend-only modules (Leptos UI, URL-driven logging). Gated so library
+// consumers don't transitively pull in Leptos.
+#[cfg(feature = "frontend")]
+pub mod components;
+#[cfg(feature = "frontend")]
+pub mod logging;
+
+// Trade-computer wire types, WebSocket client, and ship simulator. Shared
+// between the WASM client and the native server (TradeState is the
+// authoritative example — see CLAUDE.md), so compiled when either feature
+// is on. Library consumers don't need any of this.
+#[cfg(any(feature = "frontend", feature = "backend"))]
+pub mod comms;
+#[cfg(any(feature = "frontend", feature = "backend"))]
+pub mod simulator;
 
 /// Default UWP (Universal World Profile) used for initial world generation
 pub const INITIAL_UWP: &str = "A788899-A";

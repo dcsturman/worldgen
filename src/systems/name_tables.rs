@@ -27,7 +27,7 @@
 //! random number generation, making them safe for concurrent use across
 //! multiple threads during system generation.
 
-use rand::Rng;
+use crate::util::rng_random_range;
 
 /// Generates a random moon name
 ///
@@ -48,7 +48,7 @@ use rand::Rng;
 /// // Possible results: "Luna", "Phobos", "Europa"
 /// ```
 pub fn gen_moon_name() -> String {
-    MOON_NAMES[rand::rng().random_range(0..MOON_NAMES.len())].to_string()
+    MOON_NAMES[rng_random_range(0..MOON_NAMES.len())].to_string()
 }
 
 /// Generates a random planet name
@@ -69,7 +69,7 @@ pub fn gen_moon_name() -> String {
 /// // Possible results: "Kepler's Keep", "Nova Nexus", "Quantum Quasar"
 /// ```
 pub fn gen_planet_name() -> String {
-    PLANET_NAMES[rand::rng().random_range(0..PLANET_NAMES.len())].to_string()
+    PLANET_NAMES[rng_random_range(0..PLANET_NAMES.len())].to_string()
 }
 
 /// Generates a random star system name
@@ -90,7 +90,7 @@ pub fn gen_planet_name() -> String {
 /// // Possible results: "Aegis Prime", "Orion's Forge", "Vega Void"
 /// ```
 pub fn gen_star_system_name() -> String {
-    STAR_SYSTEM_NAMES[rand::rng().random_range(0..STAR_SYSTEM_NAMES.len())].to_string()
+    STAR_SYSTEM_NAMES[rng_random_range(0..STAR_SYSTEM_NAMES.len())].to_string()
 }
 
 /// Star system names combining astronomical terms with evocative descriptors

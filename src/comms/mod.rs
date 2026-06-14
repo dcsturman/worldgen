@@ -4,9 +4,14 @@
 //! trade state between multiple clients through the trade server.
 
 pub mod captains_log;
+// The WebSocket client is WASM-only — it uses `Closure` from `wasm_bindgen`
+// and `WebSocket` from `web_sys`. The backend never uses it, so gate it to
+// the frontend feature rather than including it in any(frontend, backend).
+#[cfg(feature = "frontend")]
 pub mod client;
 mod state;
 
+#[cfg(feature = "frontend")]
 pub use client::Client;
 pub use state::TradeState;
 

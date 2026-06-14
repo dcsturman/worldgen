@@ -35,6 +35,7 @@
 //! // Result: either a proper name like "Jupiter" or "Sol V"
 //! ```
 
+#[cfg(feature = "frontend")]
 use reactive_stores::Store;
 
 use crate::systems::has_satellites::HasSatellites;
@@ -44,7 +45,6 @@ use crate::systems::system_tables::ZoneTable;
 use crate::systems::world::{Satellites, World, force_lifeless};
 use crate::trade::PortCode;
 use crate::util::{arabic_to_roman, roll_1d6, roll_2d6};
-use rand::Rng;
 use std::fmt::Display;
 
 /// Small gas giant radius range, in kilometres. Matches the user-facing
@@ -60,7 +60,8 @@ const LARGE_GG_RADIUS_KM: std::ops::RangeInclusive<u32> = 60_000..=100_000;
 /// Gas giants are major planetary bodies that can host multiple satellites and
 /// play important roles in system trade and exploration. They are classified
 /// by size which affects their satellite generation characteristics.
-#[derive(Debug, Clone, Store)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "frontend", derive(Store))]
 pub struct GasGiant {
     /// Display name of the gas giant
     pub name: String,
@@ -106,10 +107,9 @@ impl GasGiant {
     ///
     /// New `GasGiant` instance ready for further configuration
     pub fn new(size: GasGiantSize, orbit: usize) -> GasGiant {
-        let mut rng = rand::rng();
         let radius_km = match size {
-            GasGiantSize::Small => rng.random_range(SMALL_GG_RADIUS_KM),
-            GasGiantSize::Large => rng.random_range(LARGE_GG_RADIUS_KM),
+            GasGiantSize::Small => crate::util::rng_random_range(SMALL_GG_RADIUS_KM),
+            GasGiantSize::Large => crate::util::rng_random_range(LARGE_GG_RADIUS_KM),
         };
         GasGiant {
             name: "".to_string(),

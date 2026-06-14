@@ -5,40 +5,58 @@ edition = "2024"
 license = "MIT"
 
 [features]
-default = []
+default = ["frontend"]
+# Frontend feature: Leptos UI + WASM bindings. Required for the deployed web
+# app (trunk build) and for `cargo test` in the existing project layout.
+# Library consumers depending on worldgen as a Cargo dependency should set
+# `default-features = false` to avoid pulling Leptos and the WASM toolchain.
+frontend = [
+    "dep:leptos", "dep:leptos_meta", "dep:leptos-use",
+    "dep:reactive_stores", "dep:reactive_graph", "dep:codee",
+    "dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:serde-wasm-bindgen",
+    "dep:web-sys", "dep:js-sys",
+    "dep:wasm-logger", "dep:console_error_panic_hook",
+]
 # Backend feature enables native-only server code (tokio, firestore, etc.)
 backend = ["dep:tokio", "dep:tokio-tungstenite", "dep:futures-util", "dep:firestore", "dep:env_logger", "dep:rustls", "dep:reqwest", "dep:sentry", "dep:jsonwebtoken", "dep:gcp_auth"]
 # Local development mode: connect directly to backend on 8081 instead of through nginx
 local-dev = []
 
 [dependencies]
-console_error_panic_hook = "0.1.7"
+# Always-on deps used by the always-compiled modules (systems, sysmap,
+# worldmap, util, trade).
 itertools = "0.14.0"
 lazy_static = "1.5.0"
-leptos = { version = "0.8.2", features = ["csr", "ssr"] }
-leptos_meta = "0.8.2"
 log = "0.4.22"
 rand = "0.9.1"
 rand_chacha = "0.9"
 noise = "0.9"
 tiny-skia = "0.11"
 ab_glyph = "0.2"
-reactive_stores = "0.2.2"
 test-log = "0.2.16"
 getrandom = { version = "0.3", features = ["wasm_js"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-wasm-bindgen = { version = "0.2", features = ["serde-serialize"] }
-wasm-bindgen-futures = "0.4"
-serde-wasm-bindgen = "0.6"
-web-sys = { version = "0.3", features = ["Request", "RequestInit", "RequestMode", "Response", "Window", "Headers", "Storage", "WebSocket", "MessageEvent", "CloseEvent", "ErrorEvent", "BinaryType", "Blob", "BlobPropertyBag", "Url", "HtmlAnchorElement", "Document", "Element"] }
-js-sys = "0.3"
-wasm-logger = "0.2"
-leptos-use = { version = "0.16.2", features = ["storage"] }
-codee = "0.3.2"
 backtrace = "0.3.75"
-reactive_graph = "0.2.6"
 thiserror = "2.0.18"
+siphasher = "1.0"
+
+# Frontend-only deps (gated behind `frontend` feature). The deployed app
+# enables this via `default = ["frontend"]`; library consumers turn it off
+# with `default-features = false`.
+console_error_panic_hook = { version = "0.1.7", optional = true }
+leptos = { version = "0.8.2", features = ["csr", "ssr"], optional = true }
+leptos_meta = { version = "0.8.2", optional = true }
+reactive_stores = { version = "0.2.2", optional = true }
+reactive_graph = { version = "0.2.6", optional = true }
+leptos-use = { version = "0.16.2", features = ["storage"], optional = true }
+codee = { version = "0.3.2", optional = true }
+wasm-bindgen = { version = "0.2", features = ["serde-serialize"], optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+serde-wasm-bindgen = { version = "0.6", optional = true }
+web-sys = { version = "0.3", features = ["Request", "RequestInit", "RequestMode", "Response", "Window", "Headers", "Storage", "WebSocket", "MessageEvent", "CloseEvent", "ErrorEvent", "BinaryType", "Blob", "BlobPropertyBag", "Url", "HtmlAnchorElement", "Document", "Element"], optional = true }
+js-sys = { version = "0.3", optional = true }
+wasm-logger = { version = "0.2", optional = true }
 
 # Backend-only dependencies (native server)
 tokio = { version = "1.49.0", features = ["full"], optional = true }
@@ -83,14 +101,17 @@ panic = "abort"
 [[bin]]
 name = "main"
 path = "src/bin/main.rs"
+required-features = ["frontend"]
 
 [[bin]]
 name = "trade"
 path = "src/bin/trade.rs"
+required-features = ["frontend"]
 
 [[bin]]
 name = "world"
 path = "src/bin/world.rs"
+required-features = ["frontend"]
 
 [[bin]]
 name = "server"

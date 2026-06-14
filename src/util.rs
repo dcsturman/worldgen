@@ -4,7 +4,74 @@
 //! including random number generation for dice rolls and number base conversion utilities.
 
 pub use rand::Rng;
+use rand::SeedableRng;
+use rand_chacha::ChaCha8Rng;
+use std::cell::RefCell;
 use std::fmt::Display;
+
+thread_local! {
+    /// Thread-local seeded RNG consulted by `roll_2d6` / `roll_1d6` /
+    /// `roll_10` (and the few direct rng helpers in `src/systems/system.rs`)
+    /// when set. The library's seeded entry points install one of these
+    /// via [`RngScope`]; outside that scope, the helpers fall back to the
+    /// system RNG so the existing non-seeded UI path is unchanged.
+    static WORLDGEN_RNG: RefCell<Option<ChaCha8Rng>> = const { RefCell::new(None) };
+}
+
+/// RAII guard installing a seeded `ChaCha8Rng` as the worldgen thread-local
+/// for the lifetime of the guard. On drop (including via panic unwind) the
+/// previous thread-local state is restored, so nested seeded calls compose
+/// correctly and a panic mid-generation doesn't leak seeded entropy into
+/// unrelated calls on the same thread.
+pub struct RngScope {
+    prev: Option<ChaCha8Rng>,
+}
+
+impl RngScope {
+    pub fn new(seed: u64) -> Self {
+        let prev = WORLDGEN_RNG.with(|cell| {
+            cell.borrow_mut().replace(ChaCha8Rng::seed_from_u64(seed))
+        });
+        RngScope { prev }
+    }
+}
+
+impl Drop for RngScope {
+    fn drop(&mut self) {
+        WORLDGEN_RNG.with(|cell| *cell.borrow_mut() = self.prev.take());
+    }
+}
+
+/// Generate a `random_range` value using the worldgen thread-local seeded
+/// RNG if one is installed, otherwise the system RNG. Use this for the
+/// handful of direct rng calls in `src/systems/system.rs` that the dice
+/// helpers don't already cover.
+pub fn rng_random_range<T, R>(range: R) -> T
+where
+    T: rand::distr::uniform::SampleUniform,
+    R: rand::distr::uniform::SampleRange<T>,
+{
+    WORLDGEN_RNG.with(|cell| {
+        if let Some(rng) = cell.borrow_mut().as_mut() {
+            rng.random_range(range)
+        } else {
+            rand::rng().random_range(range)
+        }
+    })
+}
+
+/// Pick a random element from a slice using the worldgen thread-local
+/// seeded RNG if one is installed, otherwise the system RNG.
+pub fn rng_choose<T>(slice: &[T]) -> Option<&T> {
+    use rand::seq::IndexedRandom;
+    WORLDGEN_RNG.with(|cell| {
+        if let Some(rng) = cell.borrow_mut().as_mut() {
+            slice.choose(rng)
+        } else {
+            slice.choose(&mut rand::rng())
+        }
+    })
+}
 /// Converts Arabic numerals to Roman numerals for numbers 0-20
 ///
 /// Used primarily for displaying orbital positions and other small numbers
@@ -150,8 +217,14 @@ pub fn mcr(credits: i64) -> f64 {
 /// assert!(result >= 2 && result <= 12);
 /// ```
 pub fn roll_2d6() -> i32 {
-    let mut rng = rand::rng();
-    rng.random_range(1..=6) + rng.random_range(1..=6)
+    WORLDGEN_RNG.with(|cell| {
+        if let Some(rng) = cell.borrow_mut().as_mut() {
+            rng.random_range(1..=6) + rng.random_range(1..=6)
+        } else {
+            let mut r = rand::rng();
+            r.random_range(1..=6) + r.random_range(1..=6)
+        }
+    })
 }
 
 /// Simulates rolling one six-sided die (1d6)
@@ -172,8 +245,13 @@ pub fn roll_2d6() -> i32 {
 /// assert!(result >= 1 && result <= 6);
 /// ```
 pub fn roll_1d6() -> i32 {
-    let mut rng = rand::rng();
-    rng.random_range(1..=6)
+    WORLDGEN_RNG.with(|cell| {
+        if let Some(rng) = cell.borrow_mut().as_mut() {
+            rng.random_range(1..=6)
+        } else {
+            rand::rng().random_range(1..=6)
+        }
+    })
 }
 
 /// Generates a random digit from 0 to 9
@@ -194,8 +272,13 @@ pub fn roll_1d6() -> i32 {
 /// assert!(result >= 0 && result <= 9);
 /// ```
 pub fn roll_10() -> i32 {
-    let mut rng = rand::rng();
-    rng.random_range(0..=9)
+    WORLDGEN_RNG.with(|cell| {
+        if let Some(rng) = cell.borrow_mut().as_mut() {
+            rng.random_range(0..=9)
+        } else {
+            rand::rng().random_range(0..=9)
+        }
+    })
 }
 
 /// Calculate the distance in parsecs between two hex coordinates
