@@ -48,6 +48,50 @@ cargo clippy
 cargo fmt   # uses leptosfmt via .vscode/settings.json — prefer `leptosfmt --rustfmt` if formatting view! macros
 ```
 
+### Test conventions: why some test commands need extra flags
+
+Routine `cargo test` is fast and hermetic; the awkward-looking flags on the
+two smoke commands above are how the repo keeps it that way.
+
+- **`--features backend`** — the `backend` feature pulls in tokio, tonic,
+  firestore, reqwest, gcloud-sdk, hyper-rustls, sentry, etc. (~40 s cold
+  compile, many MB of dep graph, some of which doesn't build on wasm).
+  Default features are `["frontend"]` so the dev loop and `trunk build`
+  stay quick and WASM-compatible. Any test that needs backend code
+  (the smoke tests, anything `#[cfg(feature = "backend")]`) must opt in.
+
+- **`#[ignore]` + `-- --ignored`** — Rust's idiomatic marker for tests
+  that have side effects, hit external networks, or take too long for
+  routine runs. Used in this repo for:
+  - `simulator_smoke_regina` — hits travellermap.com (network-bound, ~20 s)
+  - `worldmap::tests::*` PNG-dump tests — write files to `/tmp/`
+  - `tests/production_smoke.rs` — hits live `tools.callistoflight.com`
+
+  The harness still **compiles** ignored tests (so they can't bit-rot
+  silently), but skips execution unless you pass `-- --ignored`. Anything
+  after `--` is forwarded to the test binary itself, not Cargo. You can
+  also filter further with `-- --ignored <name_substring>` to run just
+  one ignored test.
+
+- **`--test <name>`** — runs only one integration-test binary
+  (`tests/<name>.rs`). Without it, `cargo test --features backend --
+  --ignored` would also run every other ignored test in the repo
+  (simulator regina, worldmap dumps, etc.). Useful for cycle time and
+  for not polluting `/tmp/` when you're only after the production check.
+
+So the production-smoke invocation answers four independent questions:
+
+```
+cargo test --features backend --test production_smoke -- --ignored --nocapture
+            ^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^   ^^^^^^^^^  ^^^^^^^^^^
+            compile backend?   which test binary?        run ignored? print stdout?
+```
+
+Drop `--features backend` → file doesn't compile (cfg-gated).
+Drop `--test production_smoke` → also runs every other ignored test.
+Drop `-- --ignored` → tests are listed as ignored but don't execute.
+Drop `--nocapture` → still works, but you lose live progress output.
+
 The wasm target requires `rustup target add wasm32-unknown-unknown` and `cargo install trunk`. `Trunk.toml` sets `getrandom_backend="wasm_js"` via rustflags — needed because `getrandom` 0.3 requires explicit backend selection on wasm.
 
 ## Binaries
