@@ -1,13 +1,15 @@
-//! Live smoke tests that hit the **deployed** `/system` endpoint at
-//! `tools.callistoflight.com` (or whatever URL `WORLDGEN_BASE_URL` is
-//! set to) and verify the public contract still holds end-to-end.
+//! Live smoke tests that hit the **deployed** `/api/system` and
+//! `/api/world` endpoints at `tools.callistoflight.com` (or whatever
+//! URL `WORLDGEN_BASE_URL` is set to) and verify the public contract
+//! still holds end-to-end. Also includes a set of SPA-route survival
+//! tests that catch nginx routing regressions.
 //!
 //! External consumers — notably the Traveller Map web client — call
-//! `/system` from a different origin and depend on the response shape,
-//! CORS headers, and byte-level determinism. These tests are the
-//! regression net: if a future change to worldgen, nginx, or the Cloud
-//! Run deploy quietly breaks the contract, running this test will
-//! surface it immediately.
+//! `/api/system` and `/api/world` from a different origin and depend on
+//! the response shape, CORS headers, and byte-level determinism. These
+//! tests are the regression net: if a future change to worldgen, nginx,
+//! or the Cloud Run deploy quietly breaks the contract, running this
+//! test will surface it immediately.
 //!
 //! All tests are `#[ignore]` by default so `cargo test` doesn't hit
 //! production on every run. Invoke them manually before pushing a
@@ -42,21 +44,22 @@ fn client() -> reqwest::Client {
         .expect("reqwest client builds")
 }
 
-/// Canonical Noricum query for `/system` — the spec example. If this
-/// URL stops returning a valid PNG, external consumers (Traveller Map)
-/// break.
+/// Canonical Noricum query for `/api/system` — the spec example. If
+/// this URL stops returning a valid PNG, external consumers (Traveller
+/// Map) break.
 const NORICUM_QUERY: &str =
     "sector=Trojan+Reach&hex=2018&name=Noricum&uwp=D8867BB-1&pbg=804&stellar=G2+V+M9+V+M6+V&worlds=14";
 
-/// `/world` query — only needs the world identity (no PBG / stellar /
-/// system worlds) because the planet renderer takes the UWP directly.
+/// `/api/world` query — only needs the world identity (no PBG /
+/// stellar / system worlds) because the planet renderer takes the UWP
+/// directly.
 const NORICUM_WORLD_QUERY: &str =
     "sector=Trojan+Reach&hex=2018&name=Noricum&uwp=D8867BB-1";
 
 #[tokio::test]
 #[ignore]
 async fn live_system_endpoint_returns_valid_3200x1800_png() {
-    let url = format!("{}/system?{NORICUM_QUERY}", base_url());
+    let url = format!("{}/api/system?{NORICUM_QUERY}", base_url());
     let resp = client().get(&url).send().await.expect("HTTP GET succeeds");
 
     assert_eq!(
@@ -97,7 +100,7 @@ async fn live_system_endpoint_emits_cors_headers() {
     // External consumers (browser-based Traveller Map client) must be
     // able to read the response from a different origin. Loss of any
     // CORS header breaks them silently.
-    let url = format!("{}/system?{NORICUM_QUERY}", base_url());
+    let url = format!("{}/api/system?{NORICUM_QUERY}", base_url());
     let resp = client().get(&url).send().await.expect("HTTP GET succeeds");
     let headers = resp.headers();
     assert_eq!(
@@ -123,7 +126,7 @@ async fn live_system_endpoint_options_preflight_returns_204() {
     // Browsers fire OPTIONS before the real GET when the origin
     // differs. If this stops returning 204 (or stops emitting CORS
     // headers), every cross-origin GET breaks.
-    let url = format!("{}/system", base_url());
+    let url = format!("{}/api/system", base_url());
     let resp = client()
         .request(reqwest::Method::OPTIONS, &url)
         .header("Origin", "https://travellermap.com")
@@ -151,7 +154,7 @@ async fn live_system_endpoint_options_preflight_returns_204() {
 #[ignore]
 async fn live_system_endpoint_rejects_bad_uwp_with_422() {
     let url = format!(
-        "{}/system?sector=x&hex=0000&name=x&uwp=X???????-?",
+        "{}/api/system?sector=x&hex=0000&name=x&uwp=X???????-?",
         base_url()
     );
     let resp = client().get(&url).send().await.expect("HTTP GET succeeds");
@@ -172,7 +175,7 @@ async fn live_system_endpoint_rejects_bad_uwp_with_422() {
 async fn live_system_endpoint_rejects_missing_required_with_400() {
     // Drop the `hex` param — required, so the handler should return
     // 400 naming which one is missing.
-    let url = format!("{}/system?sector=x&name=x&uwp=A788899-A", base_url());
+    let url = format!("{}/api/system?sector=x&name=x&uwp=A788899-A", base_url());
     let resp = client().get(&url).send().await.expect("HTTP GET succeeds");
     assert_eq!(
         resp.status().as_u16(),
@@ -195,7 +198,7 @@ async fn live_system_endpoint_is_byte_deterministic() {
     // worldgen versions: seed derivation, ChaCha8Rng plumbing, sysmap
     // renderer, or even an nginx-level transform (gzip, image
     // optimization, etc.). All would silently break external caching.
-    let url = format!("{}/system?{NORICUM_QUERY}", base_url());
+    let url = format!("{}/api/system?{NORICUM_QUERY}", base_url());
     let a = client()
         .get(&url)
         .send()
@@ -229,7 +232,7 @@ async fn live_system_endpoint_scale_1_returns_1600x900() {
     // `generate_system_png` — also confirms the scale parameter is
     // actually being read from the query string.
     let url = format!(
-        "{}/system?sector=x&hex=0000&name=x&uwp=A788899-A&scale=1.0",
+        "{}/api/system?sector=x&hex=0000&name=x&uwp=A788899-A&scale=1.0",
         base_url()
     );
     let resp = client().get(&url).send().await.expect("HTTP GET succeeds");
@@ -266,7 +269,7 @@ fn slow_client() -> reqwest::Client {
 #[tokio::test]
 #[ignore]
 async fn live_world_endpoint_returns_valid_png_with_cors_headers() {
-    let url = format!("{}/world?{NORICUM_WORLD_QUERY}", base_url());
+    let url = format!("{}/api/world?{NORICUM_WORLD_QUERY}", base_url());
     let resp = slow_client().get(&url).send().await.expect("HTTP GET succeeds");
 
     assert_eq!(
@@ -310,7 +313,7 @@ async fn live_world_endpoint_caches_second_call_quickly() {
     // eyeball the cold vs warm ratio. If the second call is anywhere
     // near the first, the cache isn't working.
     use std::time::Instant;
-    let url = format!("{}/world?{NORICUM_WORLD_QUERY}", base_url());
+    let url = format!("{}/api/world?{NORICUM_WORLD_QUERY}", base_url());
 
     let t0 = Instant::now();
     let r1 = slow_client().get(&url).send().await.unwrap();
@@ -343,7 +346,7 @@ async fn live_world_endpoint_is_byte_deterministic() {
     // This pins worldgen determinism + GCS round-trip + (if applicable)
     // the downsample step — bytes must be the same whether served from
     // cache or freshly generated.
-    let url = format!("{}/world?{NORICUM_WORLD_QUERY}", base_url());
+    let url = format!("{}/api/world?{NORICUM_WORLD_QUERY}", base_url());
     let a = slow_client()
         .get(&url)
         .send()
@@ -375,7 +378,7 @@ async fn live_world_endpoint_is_byte_deterministic() {
 async fn live_world_endpoint_canonical_scale_is_byte_deterministic() {
     // Same as above but at scale=2.0 — bypasses the downsample branch
     // and pins that the cached canonical bytes are served verbatim.
-    let url = format!("{}/world?{NORICUM_WORLD_QUERY}&scale=2.0", base_url());
+    let url = format!("{}/api/world?{NORICUM_WORLD_QUERY}&scale=2.0", base_url());
     let a = slow_client()
         .get(&url)
         .send()
@@ -405,7 +408,7 @@ async fn live_world_endpoint_canonical_scale_is_byte_deterministic() {
 #[ignore]
 async fn live_world_endpoint_rejects_bad_uwp_with_422() {
     let url = format!(
-        "{}/world?sector=x&hex=0000&name=x&uwp=X???????-?",
+        "{}/api/world?sector=x&hex=0000&name=x&uwp=X???????-?",
         base_url()
     );
     let resp = slow_client().get(&url).send().await.expect("HTTP GET succeeds");
@@ -415,4 +418,78 @@ async fn live_world_endpoint_rejects_bad_uwp_with_422() {
         "bad UWP should return 422; got {}",
         resp.status()
     );
+}
+
+// ---------------------------------------------------------------------------
+// SPA route survival tests.
+//
+// These would have caught the prefix-match regression that shipped in the
+// initial /system and /world deploys: nginx `location /world` was a
+// prefix match that captured the SPA's /worldmap (404 "Unknown endpoint")
+// AND the SPA's /world page (400 "missing required param: sector"). Each
+// test below asserts a SPA route returns 200 + text/html — i.e. the
+// nginx try_files fallback served index.html — and not a backend
+// plain-text error.
+//
+// If you ever add another /api/<foo> route and accidentally drop the
+// /api/ prefix, the same tests will fail loudly on the next push.
+// ---------------------------------------------------------------------------
+
+async fn assert_spa_route(path: &str) {
+    let url = format!("{}{path}", base_url());
+    let resp = client().get(&url).send().await.expect("HTTP GET succeeds");
+    let status = resp.status();
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    assert_eq!(
+        status.as_u16(),
+        200,
+        "SPA route {path} should return 200 (SPA fallback to index.html), got {status}"
+    );
+    assert!(
+        ct.starts_with("text/html"),
+        "SPA route {path} should return text/html, got {ct:?}. \
+         This usually means an API location block in nginx is prefix-matching \
+         the path and proxying to the backend."
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_spa_root_serves_html() {
+    assert_spa_route("/").await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_spa_world_serves_html() {
+    // The system-generator page. Lives at /world in the SPA. This is the
+    // route my initial /world API endpoint catastrophically collided
+    // with — the API handler answered first and returned 400.
+    assert_spa_route("/world").await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_spa_worldmap_serves_html() {
+    // The planet-surface viewer. Was the most visible casualty of the
+    // nginx prefix-match bug — clicking a "Map" link from /world's
+    // world list landed users on a 404 "Unknown endpoint" page.
+    assert_spa_route("/worldmap").await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_spa_trade_serves_html() {
+    assert_spa_route("/trade").await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_spa_simulator_serves_html() {
+    assert_spa_route("/simulator").await;
 }

@@ -207,14 +207,51 @@ is just a `Vec<Constraint>` you can push directly into. Variants:
   not a bug. **Pin your `worldgen` dependency by commit SHA** (or `tag =`
   if tags exist) if you need stable images across worldgen updates.
 
-## HTTP endpoint (for non-Rust callers)
+## HTTP API (for non-Rust callers)
 
 If you can't link worldgen as a Rust crate — e.g. a browser client like
 Traveller Map's web frontend — the backend server exposes the same
-flow over HTTP. One endpoint, no auth, permissive CORS.
+generation flow over HTTP. No auth, permissive CORS, two endpoints,
+both under the `/api/` prefix to keep them out of the SPA's path-based
+routing.
 
 ```
-GET <base>/system
+GET <base>/api/system   → system-map PNG
+GET <base>/api/world    → planet-surface PNG (cached in GCS)
+```
+
+`<base>` is `http://127.0.0.1:8081` for local-dev and
+`https://tools.callistoflight.com` for the deployed instance.
+
+### Why `/api/`?
+
+The SPA serves its UI routes (`/`, `/world`, `/worldmap`, `/trade`,
+`/simulator`) from the same hostname as the API. nginx prefix-matches
+its `location` blocks, so a bare `/world` API route would silently
+capture the SPA's `/world` system-generator page *and* its `/worldmap`
+planet-viewer page. Namespacing the whole API under `/api/` makes
+collisions impossible — add `/api/anything` in the future and the SPA
+stays safe by default.
+
+### CORS
+
+All `/api/*` responses include:
+
+```
+Access-Control-Allow-Origin: *
+Access-Control-Allow-Methods: GET, HEAD, OPTIONS
+Access-Control-Allow-Headers: *
+```
+
+OPTIONS preflight returns `204 No Content` with the same headers. The
+endpoints are designed to be hit from any origin without auth.
+
+---
+
+### `GET /api/system` — system-map PNG
+
+```
+GET <base>/api/system
   ?sector=<string>     required  sector name (used only for the seed)
   &hex=<CCRR>          required  4-digit string; "2018" → hex_x=20, hex_y=18
   &name=<string>       required  main-world name
@@ -226,48 +263,35 @@ GET <base>/system
 ```
 
 Response:
-- `200 image/png` — the system map (default 3200×1800 at `scale=2.0`).
-- `400 text/plain` — missing or malformed required parameter.
-- `422 text/plain` — `build_constraints` rejected the inputs (invalid /
-  partial / contradictory UWP). Body is the constraint error reason.
-- `500 text/plain` — render failure (scale out of range, tiny-skia OOM).
+- **`200 image/png`** — the system map. Default dimensions at the
+  default `scale=2.0` are 3200×1800.
+- **`400 text/plain`** — missing or malformed required parameter.
+  Body names the param.
+- **`422 text/plain`** — `build_constraints` rejected the inputs
+  (invalid / partial / contradictory UWP). Body is the constraint
+  error reason.
+- **`500 text/plain`** — render failure (scale out of range,
+  tiny-skia OOM).
 
-CORS: `Access-Control-Allow-Origin: *`, `Access-Control-Allow-Methods:
-GET, HEAD, OPTIONS`, `Access-Control-Allow-Headers: *`. OPTIONS preflight
-returns `204 No Content` with the same headers.
-
-Determinism contract is the same as the library: same
-`(sector, hex, name, uwp, pbg, stellar, worlds, scale)` always yields
-byte-identical PNG bytes. `scale` never feeds any RNG.
+Determinism: same `(sector, hex, name, uwp, pbg, stellar, worlds, scale)`
+→ same PNG bytes, forever. `scale` does not feed any RNG.
 
 Example:
 ```
-http://<host>:<port>/system?sector=Trojan+Reach&hex=2018&name=Noricum&uwp=D8867BB-1&pbg=804&stellar=G2+V+M9+V+M6+V&worlds=14
+https://tools.callistoflight.com/api/system?sector=Trojan+Reach&hex=2018&name=Noricum&uwp=D8867BB-1&pbg=804&stellar=G2+V+M9+V+M6+V&worlds=14
 ```
 
-Where to point the client:
-- **Local dev (this repo's `./scripts/run-backend.sh`):**
-  `http://127.0.0.1:8081/system`
-- **Deployed (Cloud Run):** same path on the deployed hostname, served
-  on the same port the WebSocket endpoints use. Behind nginx in the
-  Docker image you may need to add a `/system` proxy rule alongside the
-  existing `/ws/trade` rules.
+---
 
-The HTTP and WebSocket endpoints share one TCP port. The dispatcher
-peeks the first inbound bytes and routes anything with `Upgrade:
-websocket` to the WS handlers; everything else goes to the HTTP
-handler. The trade-tool / simulator / captain's-log WebSocket flows
-are unchanged.
+### `GET /api/world` — planet-surface PNG (with GCS cache)
 
-### `GET /world` — planet surface map, with GCS-backed cache
-
-Same shape as `/system`, scoped to a single planet. The generator
-takes 20–30 s per cold call, so the backend caches the canonical-scale
-render in Google Cloud Storage and serves subsequent calls in
-~200 ms.
+Per-planet surface renders cost 20–30 s of CPU. The backend caches the
+canonical-scale render in Google Cloud Storage (one entry per world,
+**not** per scale) and downsamples on cache-hit, so subsequent calls
+finish in ~200 ms.
 
 ```
-GET <base>/world
+GET <base>/api/world
   ?sector=<string>     required  sector name (seed input only)
   &hex=<CCRR>          required  4-digit string; "2018" → hex_x=20, hex_y=18
   &name=<string>       required  planet name; the main world today
@@ -277,26 +301,25 @@ GET <base>/world
 ```
 
 Response:
-- `200 image/png` — the planet surface map. Native dimensions at
-  `scale = 1.0` are ~1000×655; the cache always stores the
-  **canonical** `scale = 2.0` render (~2000×1310), and smaller requests
-  are downsampled on-the-fly.
-- `X-Cache: HIT | MISS | DISABLED | BYPASS` — `HIT` and `MISS` are
+- **`200 image/png`** — the planet surface map. Native dimensions at
+  `scale=1.0` are ~1000×655. The cache always stores the **canonical**
+  `scale=2.0` render (~2000×1310); smaller requested scales are
+  bilinear-downsampled server-side on-the-fly.
+- **`X-Cache: HIT | MISS | DISABLED | BYPASS`** — `HIT` and `MISS` are
   the obvious cache states. `DISABLED` means the backend is running
   with `GCS_BUCKET=debug` (local dev) and didn't try to cache.
-  `BYPASS` means the GCS GET failed and the backend regenerated to
+  `BYPASS` means the GCS GET errored and the backend regenerated to
   avoid blocking the request.
-- `Cache-Control: public, max-age=31536000, immutable` — browsers can
-  cache aggressively; the underlying bytes never change for a given
-  query.
-- Same `400 / 422 / 500` semantics as `/system`. CORS headers
-  identical.
+- **`Cache-Control: public, max-age=31536000, immutable`** — browsers
+  can cache aggressively; the underlying bytes never change for a
+  given query.
+- Same `400 / 422 / 500` semantics as `/api/system`.
 
-**Determinism contract (same as `/system`, just continuing the chain):**
+Determinism chain (the whole point of the seed helpers in `src/seed.rs`):
 
 ```
-(sector, hex_x, hex_y)       → seed::system_seed                → sys_seed
-(sys_seed, orbit, name)      → seed::planet_seed                → seed
+(sector, hex_x, hex_y)       → seed::system_seed   → sys_seed
+(sys_seed, orbit, name)      → seed::planet_seed   → seed
 generate_planet_png_scaled(seed, uwp, Some(name), CANONICAL_SCALE)
   └─ worldmap::generate(uwp, seed, name)
       └─ ChaCha8Rng::seed_from_u64(seed)
@@ -304,17 +327,17 @@ generate_planet_png_scaled(seed, uwp, Some(name), CANONICAL_SCALE)
 
 Same `(sector, hex, name, uwp, orbit)` → same `seed` → same canonical
 PNG bytes, forever. `scale` is **not** part of the seed or the cache
-key — it only affects the post-cache downsample step.
+key — it only affects the downsample step.
 
 **Scale clamping**: `scale > 2.0` is silently clamped to the canonical
 scale. We don't upsample (poor quality) and won't regenerate fresh at
-a higher scale (defeats the cache). If a consumer truly needs a
-higher resolution, file an issue and we'll bump the canonical or add
-a separate code path.
+a higher scale (defeats the cache). If you need a higher resolution,
+file an issue and we'll bump the canonical or add a separate code
+path.
 
 **Cache mechanics**:
-- Cache key is `SipHash-2-4(seed, normalized_uwp, normalized_name)`
-  — no scale, no sector/hex (those already determine `seed`).
+- Cache key: `SipHash-2-4(seed, normalized_uwp, normalized_name)`.
+  Scale is excluded; sector/hex are already folded into `seed`.
 - Object path: `world/v1/<u64_hex>.png` in the bucket named by
   `GCS_BUCKET`. Bump the `v1` segment to invalidate every cached
   render at once (e.g. on a worldgen version bump that changes pixel
@@ -324,13 +347,20 @@ a separate code path.
 
 Example:
 ```
-http://<host>:<port>/world?sector=Trojan+Reach&hex=2018&name=Noricum&uwp=D8867BB-1
+https://tools.callistoflight.com/api/world?sector=Trojan+Reach&hex=2018&name=Noricum&uwp=D8867BB-1
 ```
 
-Deployed URL once the nginx rule and the next image push are in:
-```
-https://tools.callistoflight.com/world?...
-```
+---
+
+### Architecture note
+
+The HTTP and WebSocket endpoints share one TCP port (`8081` inside the
+container, `443` through the Cloud Run + nginx front). The dispatcher
+peeks the first inbound bytes and routes anything with
+`Upgrade: websocket` to the WebSocket handlers; everything else goes
+to the HTTP handler in `src/backend/http_server.rs`. The trade-tool /
+simulator / captain's-log WebSocket flows are unaffected by anything
+in this document.
 
 ## What this library is NOT
 

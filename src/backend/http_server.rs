@@ -8,7 +8,7 @@
 //!
 //! Currently exposes one route:
 //!
-//! - `GET /system?sector=…&hex=CCRR&name=…&uwp=…&pbg=…&stellar=…&worlds=…&scale=…`
+//! - `GET /api/system?sector=…&hex=CCRR&name=…&uwp=…&pbg=…&stellar=…&worlds=…&scale=…`
 //!   → `200 image/png` of the system-map render. See [`handle_system`]
 //!   for the parameter semantics and error mapping.
 //!
@@ -44,7 +44,7 @@ use crate::seed::{planet_seed, system_seed};
 /// the 20–30 s compute cost is paid exactly once per world per
 /// worldgen version.
 ///
-/// 2.0 is also the default scale of `/system`, so a request to either
+/// 2.0 is also the default scale of `/api/system`, so a request to either
 /// endpoint with no explicit scale produces a comparably-sized image.
 const PLANET_CANONICAL_SCALE: f32 = 2.0;
 
@@ -123,14 +123,20 @@ pub async fn handle_http(
 
     let head_only = method.eq_ignore_ascii_case("HEAD");
 
+    // All HTTP API routes live under `/api/` to keep them out of the way
+    // of the SPA's path-based routing (`/world`, `/worldmap`, `/trade`,
+    // `/simulator`, `/` — see `src/bin/main.rs`). Without the prefix,
+    // nginx's `location /world { proxy_pass … }` block prefix-matched
+    // `/worldmap`, broke the SPA planet-viewer page, and silently
+    // intercepted bare `/world` system-generator navigation.
     match path {
-        "/system" => handle_system(reader.get_mut(), query, head_only).await,
-        "/world" => handle_world(reader.get_mut(), query, head_only, gcs).await,
+        "/api/system" => handle_system(reader.get_mut(), query, head_only).await,
+        "/api/world" => handle_world(reader.get_mut(), query, head_only, gcs).await,
         _ => write_simple(reader.get_mut(), 404, "Not Found", "Unknown endpoint").await,
     }
 }
 
-/// Handler for `GET /system`. Parses required + optional query params,
+/// Handler for `GET /api/system`. Parses required + optional query params,
 /// derives a deterministic seed from the world identity, builds a
 /// constraint set, renders a PNG at the requested scale, and writes
 /// the response.
@@ -225,13 +231,13 @@ async fn handle_system(
     write_png(stream, &png, head_only, None).await
 }
 
-/// Handler for `GET /world`. Renders a planet surface PNG, caching the
+/// Handler for `GET /api/world`. Renders a planet surface PNG, caching the
 /// canonical-scale render in GCS. Subsequent requests for the same
 /// `(sector, hex, name, uwp, orbit)` are served from the cache and
 /// downsampled to the requested scale instead of paying the 20–30 s
 /// generation cost again.
 ///
-/// Deterministic seed chain (identical to `/system`'s, just continuing
+/// Deterministic seed chain (identical to `/api/system`'s, just continuing
 /// through `planet_seed`):
 /// ```text
 /// (sector, hex_x, hex_y)  →  seed::system_seed       →  sys_seed
@@ -246,7 +252,7 @@ async fn handle_system(
 /// downsampled on-the-fly. `scale > CANONICAL_SCALE` is clamped (we
 /// don't upsample).
 ///
-/// Error mapping mirrors `/system`: 400 missing param, 422 invalid
+/// Error mapping mirrors `/api/system`: 400 missing param, 422 invalid
 /// UWP (from `worldmap::generate` → `MapError`), 500 render failure.
 async fn handle_world(
     stream: &mut TcpStream,

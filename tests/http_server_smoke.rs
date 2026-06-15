@@ -77,7 +77,7 @@ fn split_response(buf: &[u8]) -> (String, Vec<u8>) {
 async fn get_system_returns_png_with_cors_headers() {
     let addr = spawn_http_server().await;
     let req = format!(
-        "GET /system?sector=Trojan+Reach&hex=2018&name=Noricum&uwp=D8867BB-1&pbg=804&stellar=G2+V+M9+V+M6+V&worlds=14 \
+        "GET /api/system?sector=Trojan+Reach&hex=2018&name=Noricum&uwp=D8867BB-1&pbg=804&stellar=G2+V+M9+V+M6+V&worlds=14 \
          HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
     );
     let buf = send_request(addr, &req).await;
@@ -99,7 +99,7 @@ async fn get_system_returns_png_with_cors_headers() {
 async fn get_system_is_byte_identical_across_calls() {
     let addr = spawn_http_server().await;
     let req = format!(
-        "GET /system?sector=Trojan+Reach&hex=2018&name=Noricum&uwp=D8867BB-1&pbg=804&stellar=G2+V+M9+V+M6+V&worlds=14 \
+        "GET /api/system?sector=Trojan+Reach&hex=2018&name=Noricum&uwp=D8867BB-1&pbg=804&stellar=G2+V+M9+V+M6+V&worlds=14 \
          HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
     );
     let buf1 = send_request(addr, &req).await;
@@ -113,7 +113,7 @@ async fn get_system_is_byte_identical_across_calls() {
 async fn get_system_with_scale_1_returns_1600x900() {
     let addr = spawn_http_server().await;
     let req = format!(
-        "GET /system?sector=Trojan+Reach&hex=2018&name=Noricum&uwp=D8867BB-1&scale=1.0 \
+        "GET /api/system?sector=Trojan+Reach&hex=2018&name=Noricum&uwp=D8867BB-1&scale=1.0 \
          HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
     );
     let buf = send_request(addr, &req).await;
@@ -128,7 +128,7 @@ async fn get_system_with_scale_1_returns_1600x900() {
 async fn get_system_with_bad_uwp_returns_422() {
     let addr = spawn_http_server().await;
     let req = format!(
-        "GET /system?sector=x&hex=0000&name=x&uwp=NOT-A-UWP-WAY-TOO-LONG \
+        "GET /api/system?sector=x&hex=0000&name=x&uwp=NOT-A-UWP-WAY-TOO-LONG \
          HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
     );
     let buf = send_request(addr, &req).await;
@@ -145,7 +145,7 @@ async fn get_system_with_missing_required_param_returns_400() {
     let addr = spawn_http_server().await;
     // Missing `hex` parameter.
     let req = format!(
-        "GET /system?sector=x&name=x&uwp=A788899-A HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
+        "GET /api/system?sector=x&name=x&uwp=A788899-A HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
     );
     let buf = send_request(addr, &req).await;
     let (head, body) = split_response(&buf);
@@ -182,7 +182,7 @@ async fn unknown_path_returns_404() {
 async fn invalid_hex_quad_returns_400() {
     let addr = spawn_http_server().await;
     let req = format!(
-        "GET /system?sector=x&hex=20A1&name=x&uwp=A788899-A \
+        "GET /api/system?sector=x&hex=20A1&name=x&uwp=A788899-A \
          HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
     );
     let buf = send_request(addr, &req).await;
@@ -205,7 +205,7 @@ const NORICUM_WORLD_QUERY: &str =
 async fn get_world_returns_png_with_cors_and_x_cache_headers() {
     let addr = spawn_http_server().await;
     let req = format!(
-        "GET /world?{NORICUM_WORLD_QUERY} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
+        "GET /api/world?{NORICUM_WORLD_QUERY} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
     );
     let buf = send_request(addr, &req).await;
     let (head, body) = split_response(&buf);
@@ -233,10 +233,10 @@ async fn get_world_at_canonical_scale_matches_no_scale_param_byte_for_byte() {
     // scale=1.0 hits the same branch. Same output regardless.
     let addr = spawn_http_server().await;
     let req_default = format!(
-        "GET /world?{NORICUM_WORLD_QUERY} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
+        "GET /api/world?{NORICUM_WORLD_QUERY} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
     );
     let req_explicit = format!(
-        "GET /world?{NORICUM_WORLD_QUERY}&scale=1.0 HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
+        "GET /api/world?{NORICUM_WORLD_QUERY}&scale=1.0 HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
     );
     let a = split_response(&send_request(addr, &req_default).await).1;
     let b = split_response(&send_request(addr, &req_explicit).await).1;
@@ -247,7 +247,7 @@ async fn get_world_at_canonical_scale_matches_no_scale_param_byte_for_byte() {
 async fn get_world_at_scale_2_is_canonical_2000x1310() {
     let addr = spawn_http_server().await;
     let req = format!(
-        "GET /world?{NORICUM_WORLD_QUERY}&scale=2.0 HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
+        "GET /api/world?{NORICUM_WORLD_QUERY}&scale=2.0 HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
     );
     let buf = send_request(addr, &req).await;
     let (head, body) = split_response(&buf);
@@ -265,7 +265,7 @@ async fn get_world_at_scale_2_is_canonical_2000x1310() {
 async fn get_world_is_byte_deterministic_across_calls() {
     let addr = spawn_http_server().await;
     let req = format!(
-        "GET /world?{NORICUM_WORLD_QUERY} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
+        "GET /api/world?{NORICUM_WORLD_QUERY} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
     );
     let a = split_response(&send_request(addr, &req).await).1;
     let b = split_response(&send_request(addr, &req).await).1;
@@ -276,7 +276,7 @@ async fn get_world_is_byte_deterministic_across_calls() {
 async fn get_world_with_bad_uwp_returns_422() {
     let addr = spawn_http_server().await;
     let req = format!(
-        "GET /world?sector=x&hex=0000&name=x&uwp=X???????-? HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
+        "GET /api/world?sector=x&hex=0000&name=x&uwp=X???????-? HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
     );
     let buf = send_request(addr, &req).await;
     let head = split_response(&buf).0;
@@ -292,7 +292,7 @@ async fn get_world_with_missing_required_param_returns_400() {
     let addr = spawn_http_server().await;
     // Drop the `hex` param.
     let req = format!(
-        "GET /world?sector=x&name=x&uwp=A788899-A HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
+        "GET /api/world?sector=x&name=x&uwp=A788899-A HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
     );
     let buf = send_request(addr, &req).await;
     let (head, body) = split_response(&buf);
@@ -309,7 +309,7 @@ async fn get_world_with_scale_above_canonical_is_clamped() {
     // defeat the cache).
     let addr = spawn_http_server().await;
     let req = format!(
-        "GET /world?{NORICUM_WORLD_QUERY}&scale=4.0 HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
+        "GET /api/world?{NORICUM_WORLD_QUERY}&scale=4.0 HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
     );
     let buf = send_request(addr, &req).await;
     let (head, body) = split_response(&buf);
@@ -327,7 +327,7 @@ async fn get_world_with_scale_above_canonical_is_clamped() {
 async fn get_world_with_scale_below_1_returns_400() {
     let addr = spawn_http_server().await;
     let req = format!(
-        "GET /world?{NORICUM_WORLD_QUERY}&scale=0.5 HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
+        "GET /api/world?{NORICUM_WORLD_QUERY}&scale=0.5 HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
     );
     let buf = send_request(addr, &req).await;
     let head = split_response(&buf).0;

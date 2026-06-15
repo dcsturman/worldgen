@@ -120,7 +120,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let listener = TcpListener::bind(&addr).await?;
     log::info!(
-        "Listening on: {} (trade: /ws/trade, simulator: /ws/simulator, captains-log: /ws/captains-log, system image: /system, world image: /world)",
+        "Listening on: {} (trade: /ws/trade, simulator: /ws/simulator, captains-log: /ws/captains-log, system image: /api/system, world image: /api/world)",
         addr
     );
 
