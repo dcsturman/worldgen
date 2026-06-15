@@ -36,8 +36,8 @@ pub mod worldmap;
 // out next to them so consumers can build a `SystemConstraints` value
 // in one `use` statement.
 pub use api::{
-    StarSpec, WorldgenError, build_constraints, generate_planet_png, generate_system_png,
-    generate_system_png_scaled, parse_stellar,
+    StarSpec, WorldgenError, build_constraints, generate_planet_png, generate_planet_png_scaled,
+    generate_system_png, generate_system_png_scaled, parse_stellar,
 };
 pub use systems::constraint::{Constraint, PartialUwp, SystemConstraints};
 pub use systems::gas_giant::GasGiantSize;

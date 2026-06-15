@@ -42,10 +42,16 @@ fn client() -> reqwest::Client {
         .expect("reqwest client builds")
 }
 
-/// Canonical Noricum query — the spec example. If this URL stops
-/// returning a valid PNG, external consumers (Traveller Map) break.
+/// Canonical Noricum query for `/system` — the spec example. If this
+/// URL stops returning a valid PNG, external consumers (Traveller Map)
+/// break.
 const NORICUM_QUERY: &str =
     "sector=Trojan+Reach&hex=2018&name=Noricum&uwp=D8867BB-1&pbg=804&stellar=G2+V+M9+V+M6+V&worlds=14";
+
+/// `/world` query — only needs the world identity (no PBG / stellar /
+/// system worlds) because the planet renderer takes the UWP directly.
+const NORICUM_WORLD_QUERY: &str =
+    "sector=Trojan+Reach&hex=2018&name=Noricum&uwp=D8867BB-1";
 
 #[tokio::test]
 #[ignore]
@@ -235,5 +241,178 @@ async fn live_system_endpoint_scale_1_returns_1600x900() {
         (w, h),
         (1600, 900),
         "scale=1.0 should yield 1600x900; got {w}x{h}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// /world endpoint smoke tests. These hit the same deployed backend as
+// `/system` but exercise the planet renderer + GCS cache. The first
+// call against a never-seen world is slow (~25 s cold); subsequent
+// calls are sub-second cache hits.
+// ---------------------------------------------------------------------------
+
+/// Long client timeout — a cold-cache /world render can take ~25 s on
+/// production. We use a separate client because the default `client()`
+/// is tuned for fast endpoints.
+fn slow_client() -> reqwest::Client {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(90))
+        .user_agent("worldgen-production-smoke/1.0")
+        .build()
+        .expect("reqwest client builds")
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_world_endpoint_returns_valid_png_with_cors_headers() {
+    let url = format!("{}/world?{NORICUM_WORLD_QUERY}", base_url());
+    let resp = slow_client().get(&url).send().await.expect("HTTP GET succeeds");
+
+    assert_eq!(
+        resp.status().as_u16(),
+        200,
+        "expected 200 OK from {url}; got {}",
+        resp.status()
+    );
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .expect("content-type header present")
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(ct.starts_with("image/png"), "content-type should be image/png, got {ct}");
+    let headers = resp.headers().clone();
+    assert_eq!(
+        headers
+            .get("access-control-allow-origin")
+            .and_then(|v| v.to_str().ok()),
+        Some("*"),
+    );
+    // X-Cache should be present; we don't assert HIT vs MISS because
+    // the live state depends on whether this test ran before for this
+    // world recently.
+    assert!(
+        headers.get("x-cache").is_some(),
+        "expected X-Cache header on /world response"
+    );
+
+    let bytes = resp.bytes().await.expect("response body downloads").to_vec();
+    assert!(bytes.len() > 10_000, "PNG suspiciously small: {} bytes", bytes.len());
+    assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_world_endpoint_caches_second_call_quickly() {
+    // No hard threshold — we log timings via --nocapture so a human can
+    // eyeball the cold vs warm ratio. If the second call is anywhere
+    // near the first, the cache isn't working.
+    use std::time::Instant;
+    let url = format!("{}/world?{NORICUM_WORLD_QUERY}", base_url());
+
+    let t0 = Instant::now();
+    let r1 = slow_client().get(&url).send().await.unwrap();
+    assert_eq!(r1.status().as_u16(), 200);
+    let bytes1 = r1.bytes().await.unwrap().len();
+    let cold = t0.elapsed();
+
+    let t1 = Instant::now();
+    let r2 = slow_client().get(&url).send().await.unwrap();
+    assert_eq!(r2.status().as_u16(), 200);
+    let bytes2 = r2.bytes().await.unwrap().len();
+    let warm = t1.elapsed();
+
+    eprintln!(
+        "/world timings — call 1: {cold:?} ({bytes1} bytes); call 2: {warm:?} ({bytes2} bytes)"
+    );
+    // Cold call could be a cache HIT if this test ran recently; what we
+    // really want to confirm is that the second call doesn't somehow
+    // take longer than the first.
+    assert!(
+        warm <= cold + Duration::from_secs(2),
+        "second call took longer than the first (cache regression?): cold={cold:?} warm={warm:?}"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_world_endpoint_is_byte_deterministic() {
+    // Two calls at default scale should return byte-identical PNGs.
+    // This pins worldgen determinism + GCS round-trip + (if applicable)
+    // the downsample step — bytes must be the same whether served from
+    // cache or freshly generated.
+    let url = format!("{}/world?{NORICUM_WORLD_QUERY}", base_url());
+    let a = slow_client()
+        .get(&url)
+        .send()
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap()
+        .to_vec();
+    let b = slow_client()
+        .get(&url)
+        .send()
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap()
+        .to_vec();
+    assert_eq!(
+        a, b,
+        "/world bytes drifted between calls — determinism broken (len {} vs {})",
+        a.len(),
+        b.len()
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_world_endpoint_canonical_scale_is_byte_deterministic() {
+    // Same as above but at scale=2.0 — bypasses the downsample branch
+    // and pins that the cached canonical bytes are served verbatim.
+    let url = format!("{}/world?{NORICUM_WORLD_QUERY}&scale=2.0", base_url());
+    let a = slow_client()
+        .get(&url)
+        .send()
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap()
+        .to_vec();
+    let b = slow_client()
+        .get(&url)
+        .send()
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap()
+        .to_vec();
+    assert_eq!(a, b, "/world canonical bytes drifted between calls");
+    // And verify the canonical dimensions while we're here.
+    let w = u32::from_be_bytes([a[16], a[17], a[18], a[19]]);
+    let h = u32::from_be_bytes([a[20], a[21], a[22], a[23]]);
+    assert_eq!((w, h), (2000, 1310), "canonical /world should be 2000x1310");
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_world_endpoint_rejects_bad_uwp_with_422() {
+    let url = format!(
+        "{}/world?sector=x&hex=0000&name=x&uwp=X???????-?",
+        base_url()
+    );
+    let resp = slow_client().get(&url).send().await.expect("HTTP GET succeeds");
+    assert_eq!(
+        resp.status().as_u16(),
+        422,
+        "bad UWP should return 422; got {}",
+        resp.status()
     );
 }

@@ -24,12 +24,41 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::Arc;
 
+use siphasher::sip::SipHasher24;
+use std::hash::Hasher;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
-use crate::api::{build_constraints, generate_system_png_scaled, parse_stellar};
-use crate::seed::system_seed;
+use crate::api::{
+    build_constraints, generate_planet_png_scaled, generate_system_png_scaled, parse_stellar,
+};
+use crate::backend::gcs::GcsClient;
+use crate::seed::{planet_seed, system_seed};
+
+/// Always render planet PNGs at this scale, regardless of the request's
+/// `scale` query param. On cache-hit we decode the cached PNG and
+/// downsample to the requested scale. This way the GCS bucket holds
+/// **one** PNG per world rather than N (one per requested scale), and
+/// the 20–30 s compute cost is paid exactly once per world per
+/// worldgen version.
+///
+/// 2.0 is also the default scale of `/system`, so a request to either
+/// endpoint with no explicit scale produces a comparably-sized image.
+const PLANET_CANONICAL_SCALE: f32 = 2.0;
+
+/// GCS object-path prefix for cached planet PNGs. The version segment
+/// (`v1`) lets us bust the cache on a worldgen version bump by
+/// changing the prefix instead of deleting objects.
+const PLANET_CACHE_PREFIX: &str = "world/v1";
+
+/// SipHash key for cache-key derivation. Separate from the keys in
+/// `src/seed.rs` so a future change to one doesn't accidentally
+/// invalidate the other. Pinned forever — change these and every
+/// cached object becomes orphaned.
+const CACHE_SIP_KEY_0: u64 = 0x776f_726c_645f_6361; // "world_ca"
+const CACHE_SIP_KEY_1: u64 = 0x6368_655f_7631_5f00; // "che_v1_\0"
 
 /// Soft cap on the request bytes we read before bailing out. The only
 /// endpoint we expose is a `GET` so the headers should be well under a
@@ -40,9 +69,15 @@ const MAX_HEADER_BYTES: usize = 8 * 1024;
 /// Top-level HTTP entry point. Called by the dispatch loop in
 /// `bin/server.rs` after it has peeked the stream and determined this
 /// is an HTTP request rather than a WebSocket upgrade.
+///
+/// `gcs` is shared across every request — it's a `reqwest::Client`
+/// internally (already cheap to clone) plus a possibly-`None` bucket
+/// name (disabled mode). Disabled clients short-circuit cache I/O so
+/// local dev runs without GCP creds.
 pub async fn handle_http(
     stream: TcpStream,
     peer_addr: SocketAddr,
+    gcs: Arc<GcsClient>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut reader = BufReader::new(stream);
     let request_line = match read_line(&mut reader, MAX_HEADER_BYTES).await {
@@ -90,6 +125,7 @@ pub async fn handle_http(
 
     match path {
         "/system" => handle_system(reader.get_mut(), query, head_only).await,
+        "/world" => handle_world(reader.get_mut(), query, head_only, gcs).await,
         _ => write_simple(reader.get_mut(), 404, "Not Found", "Unknown endpoint").await,
     }
 }
@@ -186,7 +222,238 @@ async fn handle_system(
         }
     };
 
-    write_png(stream, &png, head_only).await
+    write_png(stream, &png, head_only, None).await
+}
+
+/// Handler for `GET /world`. Renders a planet surface PNG, caching the
+/// canonical-scale render in GCS. Subsequent requests for the same
+/// `(sector, hex, name, uwp, orbit)` are served from the cache and
+/// downsampled to the requested scale instead of paying the 20–30 s
+/// generation cost again.
+///
+/// Deterministic seed chain (identical to `/system`'s, just continuing
+/// through `planet_seed`):
+/// ```text
+/// (sector, hex_x, hex_y)  →  seed::system_seed       →  sys_seed
+/// (sys_seed, orbit, name) →  seed::planet_seed       →  seed
+/// generate_planet_png_scaled(seed, uwp, Some(name), CANONICAL_SCALE)
+///   └─ worldmap::generate(uwp, seed, name)
+///       └─ ChaCha8Rng::seed_from_u64(seed)
+/// ```
+///
+/// `scale` is **not** part of the seed or the cache key — the bucket
+/// only ever stores the canonical-scale PNG, and the response is
+/// downsampled on-the-fly. `scale > CANONICAL_SCALE` is clamped (we
+/// don't upsample).
+///
+/// Error mapping mirrors `/system`: 400 missing param, 422 invalid
+/// UWP (from `worldmap::generate` → `MapError`), 500 render failure.
+async fn handle_world(
+    stream: &mut TcpStream,
+    query: &str,
+    head_only: bool,
+    gcs: Arc<GcsClient>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let params = parse_query(query);
+
+    let sector = match params.get("sector") {
+        Some(s) if !s.is_empty() => s.as_str(),
+        _ => return write_simple(stream, 400, "Bad Request", "missing required param: sector").await,
+    };
+    let hex = match params.get("hex") {
+        Some(h) if !h.is_empty() => h.as_str(),
+        _ => return write_simple(stream, 400, "Bad Request", "missing required param: hex").await,
+    };
+    let name = match params.get("name") {
+        Some(n) if !n.is_empty() => n.as_str(),
+        _ => return write_simple(stream, 400, "Bad Request", "missing required param: name").await,
+    };
+    let uwp = match params.get("uwp") {
+        Some(u) if !u.is_empty() => u.as_str(),
+        _ => return write_simple(stream, 400, "Bad Request", "missing required param: uwp").await,
+    };
+
+    let (hex_x, hex_y) = match parse_hex_quad(hex) {
+        Some(h) => h,
+        None => {
+            return write_simple(
+                stream,
+                400,
+                "Bad Request",
+                "hex must be a 4-digit string like \"2018\"",
+            )
+            .await;
+        }
+    };
+
+    let orbit = params
+        .get("orbit")
+        .and_then(|s| s.trim().parse::<i32>().ok())
+        .unwrap_or(3);
+
+    // Requested scale: defaults to 1.0 to match `generate_planet_png`'s
+    // legacy native resolution. Values > CANONICAL_SCALE are clamped
+    // (we don't upsample — the cache holds canonical-scale bytes and
+    // upsampling would just give a blurry larger image).
+    let requested_scale = params
+        .get("scale")
+        .and_then(|s| s.trim().parse::<f32>().ok())
+        .unwrap_or(1.0);
+    if !requested_scale.is_finite() || requested_scale < 1.0 {
+        return write_simple(
+            stream,
+            400,
+            "Bad Request",
+            "scale must be finite and >= 1.0",
+        )
+        .await;
+    }
+    let output_scale = requested_scale.min(PLANET_CANONICAL_SCALE);
+
+    let sys_seed = system_seed(sector, hex_x, hex_y);
+    let seed = planet_seed(sys_seed, orbit, name);
+    let cache_key = planet_cache_key(seed, uwp, name);
+    let cache_object = format!("{PLANET_CACHE_PREFIX}/{cache_key:016x}.png");
+
+    // Try cache first. Disabled-mode GCS returns Ok(None) here so the
+    // cache_status will be "DISABLED" rather than "HIT".
+    let (canonical_bytes, cache_status) = match gcs.get(&cache_object).await {
+        Ok(Some(bytes)) => (bytes, "HIT"),
+        Ok(None) if gcs.is_disabled() => {
+            let bytes = match generate_planet_png_scaled(
+                seed,
+                uwp,
+                Some(name),
+                PLANET_CANONICAL_SCALE,
+            ) {
+                Ok(b) => b,
+                Err(e) => return classify_render_error(stream, e).await,
+            };
+            (bytes, "DISABLED")
+        }
+        Ok(None) => {
+            let bytes = match generate_planet_png_scaled(
+                seed,
+                uwp,
+                Some(name),
+                PLANET_CANONICAL_SCALE,
+            ) {
+                Ok(b) => b,
+                Err(e) => return classify_render_error(stream, e).await,
+            };
+            // Fire-and-forget upload so the response ships immediately.
+            // A failed upload just means the next request is another
+            // cache miss — correctness is preserved, only the next
+            // user's latency is affected.
+            let gcs2 = gcs.clone();
+            let key2 = cache_object.clone();
+            let bytes2 = bytes.clone();
+            tokio::spawn(async move {
+                if let Err(e) = gcs2.put(&key2, bytes2, "image/png").await {
+                    log::warn!("GCS put failed for {key2}: {e}");
+                }
+            });
+            (bytes, "MISS")
+        }
+        Err(e) => {
+            log::warn!("GCS get failed for {cache_object}: {e}; regenerating");
+            let bytes = match generate_planet_png_scaled(
+                seed,
+                uwp,
+                Some(name),
+                PLANET_CANONICAL_SCALE,
+            ) {
+                Ok(b) => b,
+                Err(e) => return classify_render_error(stream, e).await,
+            };
+            (bytes, "BYPASS")
+        }
+    };
+
+    // Downsample if the request asked for less than canonical. At
+    // canonical we serve the cached bytes directly — bit-equivalence
+    // is the contract.
+    let response_bytes = if (output_scale - PLANET_CANONICAL_SCALE).abs() < f32::EPSILON {
+        canonical_bytes
+    } else {
+        let factor = output_scale / PLANET_CANONICAL_SCALE;
+        match downsample_png(&canonical_bytes, factor) {
+            Ok(b) => b,
+            Err(e) => {
+                return write_simple(
+                    stream,
+                    500,
+                    "Internal Server Error",
+                    &format!("downsample failed: {e}"),
+                )
+                .await;
+            }
+        }
+    };
+
+    write_png(stream, &response_bytes, head_only, Some(cache_status)).await
+}
+
+/// Map a `WorldgenError` from the planet generator into the right HTTP
+/// status. The library has three error variants but only two of them
+/// are reachable from this code path — we don't pass constraints, so
+/// `Constraints` is impossible; `Map(MapError)` is the bad-UWP case
+/// (→ 422); `Render(_)` is everything else (→ 500).
+async fn classify_render_error(
+    stream: &mut TcpStream,
+    e: crate::api::WorldgenError,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use crate::api::WorldgenError::*;
+    match e {
+        Map(m) => {
+            write_simple(stream, 422, "Unprocessable Entity", &format!("{m:?}")).await
+        }
+        Constraints(_) | Render(_) => {
+            write_simple(stream, 500, "Internal Server Error", &format!("{e}")).await
+        }
+    }
+}
+
+/// Compute the SipHash-2-4 cache key for a planet render. The key is
+/// derived purely from the inputs that determine the canonical-scale
+/// PNG bytes — not from `scale` (the bucket only ever stores the
+/// canonical render).
+fn planet_cache_key(seed: u64, uwp: &str, name: &str) -> u64 {
+    let mut h = SipHasher24::new_with_keys(CACHE_SIP_KEY_0, CACHE_SIP_KEY_1);
+    h.write(b"world_v1\0");
+    h.write_u64(seed);
+    h.write(uwp.trim().to_ascii_uppercase().as_bytes());
+    h.write_u8(0);
+    h.write(name.trim().to_lowercase().as_bytes());
+    h.finish()
+}
+
+/// Decode a PNG, draw it into a pixmap scaled by `factor`, re-encode.
+/// `factor` must be in (0.0, 1.0]; we don't upsample here.
+///
+/// Uses `tiny_skia` primitives only — no new image-processing crate.
+/// Bilinear filtering is good enough for our 2.0 → 1.0 downsample;
+/// upgrade to a higher-quality filter later if it matters.
+fn downsample_png(bytes: &[u8], factor: f32) -> Result<Vec<u8>, String> {
+    let src = tiny_skia::Pixmap::decode_png(bytes)
+        .map_err(|e| format!("decode: {e}"))?;
+    let target_w = ((src.width() as f32) * factor).round().max(1.0) as u32;
+    let target_h = ((src.height() as f32) * factor).round().max(1.0) as u32;
+    let mut dst = tiny_skia::Pixmap::new(target_w, target_h)
+        .ok_or_else(|| format!("Pixmap::new failed for {target_w}x{target_h}"))?;
+    let paint = tiny_skia::PixmapPaint {
+        quality: tiny_skia::FilterQuality::Bilinear,
+        ..Default::default()
+    };
+    dst.draw_pixmap(
+        0,
+        0,
+        src.as_ref(),
+        &paint,
+        tiny_skia::Transform::from_scale(factor, factor),
+        None,
+    );
+    dst.encode_png().map_err(|e| format!("encode: {e}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -353,13 +620,19 @@ async fn write_png(
     stream: &mut TcpStream,
     bytes: &[u8],
     head_only: bool,
+    x_cache: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let x_cache_header = match x_cache {
+        Some(v) => format!("X-Cache: {v}\r\n"),
+        None => String::new(),
+    };
     let headers = format!(
         "HTTP/1.1 200 OK\r\n\
          Content-Type: image/png\r\n\
          Content-Length: {len}\r\n\
          Cache-Control: public, max-age=31536000, immutable\r\n\
          Connection: close\r\n\
+         {x_cache_header}\
          {cors}\
          \r\n",
         len = bytes.len(),

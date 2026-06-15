@@ -102,13 +102,33 @@ pub fn assemble_svg(map: &WorldMap, raster: &[u8]) -> String {
 }
 
 pub fn render_png(map: &WorldMap) -> Result<Vec<u8>, String> {
+    render_png_scaled(map, 1.0)
+}
+
+/// Render the planet to PNG at `scale × native resolution`. `scale = 1.0`
+/// is byte-identical to [`render_png`] (the native ~975×630 sheet plus
+/// legend); `scale = 2.0` is ~1950×1260, etc.
+///
+/// **Composition is preserved.** Pixel dimensions of the raster, the
+/// overlay transform, and the font/stroke sizes all multiply by the same
+/// factor so the layout reads identically at any scale — only the pixel
+/// count changes. Determinism is unchanged: `scale` doesn't enter the
+/// noise field, the biome assignment, or any RNG; same `(map, scale)`
+/// always produces the same bytes.
+///
+/// Returns `Err` if `scale < 1.0` or not finite.
+pub fn render_png_scaled(map: &WorldMap, scale: f32) -> Result<Vec<u8>, String> {
+    if !scale.is_finite() || scale < 1.0 {
+        return Err(format!("render scale must be finite and >= 1.0, got {scale}"));
+    }
+    let effective_scale = PNG_RASTER_SCALE * scale as f64;
     let total_h = SHEET_HEIGHT + LEGEND_HEIGHT;
     // Raster only the map portion; the legend is drawn vector-only over a
     // solid fill so we don't waste compute rasterizing a large empty band.
-    let map_pixel_w = (SHEET_WIDTH * PNG_RASTER_SCALE).ceil() as u32;
-    let map_pixel_h = (SHEET_HEIGHT * PNG_RASTER_SCALE).ceil() as u32;
+    let map_pixel_w = (SHEET_WIDTH * effective_scale).ceil() as u32;
+    let map_pixel_h = (SHEET_HEIGHT * effective_scale).ceil() as u32;
     let raster = raster::render_terrain(map, map_pixel_w, map_pixel_h);
-    let total_pixel_h = (total_h * PNG_RASTER_SCALE).ceil() as u32;
+    let total_pixel_h = (total_h * effective_scale).ceil() as u32;
     let mut r = png::PngRenderer::from_raster_with_extra_height(
         &raster,
         map_pixel_w,

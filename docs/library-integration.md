@@ -30,6 +30,8 @@ worldgen::generate_system_png_scaled(seed: u64, constraints: SystemConstraints, 
     -> Result<Vec<u8>, WorldgenError>
 worldgen::generate_planet_png(seed: u64, uwp: &str, name: Option<&str>)
     -> Result<Vec<u8>, WorldgenError>
+worldgen::generate_planet_png_scaled(seed: u64, uwp: &str, name: Option<&str>, scale: f32)
+    -> Result<Vec<u8>, WorldgenError>
 ```
 
 `generate_system_png_scaled` produces a higher-resolution render — pass
@@ -41,6 +43,12 @@ byte-for-byte identical to `generate_system_png` (the unscaled call is
 implemented as `generate_system_png_scaled(seed, constraints, 1.0)`).
 Output is deterministic per `(seed, constraints, scale)`; `scale` does
 not feed any RNG. Use higher scales when exporting for VTT use.
+
+`generate_planet_png_scaled` works the same way for the per-planet
+renderer. Native resolution at `scale = 1.0` is ~1000×655 (sheet +
+legend); pass `2.0` for ~2000×1310. Same byte-identity contract: the
+unscaled `generate_planet_png` is `..._scaled(..., 1.0)` under the
+hood. Same determinism contract: `scale` doesn't feed the RNG.
 
 Stable seed derivation from TravellerMap-style identity:
 
@@ -250,6 +258,79 @@ peeks the first inbound bytes and routes anything with `Upgrade:
 websocket` to the WS handlers; everything else goes to the HTTP
 handler. The trade-tool / simulator / captain's-log WebSocket flows
 are unchanged.
+
+### `GET /world` — planet surface map, with GCS-backed cache
+
+Same shape as `/system`, scoped to a single planet. The generator
+takes 20–30 s per cold call, so the backend caches the canonical-scale
+render in Google Cloud Storage and serves subsequent calls in
+~200 ms.
+
+```
+GET <base>/world
+  ?sector=<string>     required  sector name (seed input only)
+  &hex=<CCRR>          required  4-digit string; "2018" → hex_x=20, hex_y=18
+  &name=<string>       required  planet name; the main world today
+  &uwp=<9-char>        required  full UWP, e.g. "D8867BB-1"
+  &orbit=<int>         optional  planet's system orbit (default 3 — typical main world)
+  &scale=<float>       optional  pixel scale, default 1.0, must be finite and >= 1.0
+```
+
+Response:
+- `200 image/png` — the planet surface map. Native dimensions at
+  `scale = 1.0` are ~1000×655; the cache always stores the
+  **canonical** `scale = 2.0` render (~2000×1310), and smaller requests
+  are downsampled on-the-fly.
+- `X-Cache: HIT | MISS | DISABLED | BYPASS` — `HIT` and `MISS` are
+  the obvious cache states. `DISABLED` means the backend is running
+  with `GCS_BUCKET=debug` (local dev) and didn't try to cache.
+  `BYPASS` means the GCS GET failed and the backend regenerated to
+  avoid blocking the request.
+- `Cache-Control: public, max-age=31536000, immutable` — browsers can
+  cache aggressively; the underlying bytes never change for a given
+  query.
+- Same `400 / 422 / 500` semantics as `/system`. CORS headers
+  identical.
+
+**Determinism contract (same as `/system`, just continuing the chain):**
+
+```
+(sector, hex_x, hex_y)       → seed::system_seed                → sys_seed
+(sys_seed, orbit, name)      → seed::planet_seed                → seed
+generate_planet_png_scaled(seed, uwp, Some(name), CANONICAL_SCALE)
+  └─ worldmap::generate(uwp, seed, name)
+      └─ ChaCha8Rng::seed_from_u64(seed)
+```
+
+Same `(sector, hex, name, uwp, orbit)` → same `seed` → same canonical
+PNG bytes, forever. `scale` is **not** part of the seed or the cache
+key — it only affects the post-cache downsample step.
+
+**Scale clamping**: `scale > 2.0` is silently clamped to the canonical
+scale. We don't upsample (poor quality) and won't regenerate fresh at
+a higher scale (defeats the cache). If a consumer truly needs a
+higher resolution, file an issue and we'll bump the canonical or add
+a separate code path.
+
+**Cache mechanics**:
+- Cache key is `SipHash-2-4(seed, normalized_uwp, normalized_name)`
+  — no scale, no sector/hex (those already determine `seed`).
+- Object path: `world/v1/<u64_hex>.png` in the bucket named by
+  `GCS_BUCKET`. Bump the `v1` segment to invalidate every cached
+  render at once (e.g. on a worldgen version bump that changes pixel
+  output).
+- Set `GCS_BUCKET=debug` to disable caching (local dev). The endpoint
+  still serves valid PNGs, just regenerates every time.
+
+Example:
+```
+http://<host>:<port>/world?sector=Trojan+Reach&hex=2018&name=Noricum&uwp=D8867BB-1
+```
+
+Deployed URL once the nginx rule and the next image push are in:
+```
+https://tools.callistoflight.com/world?...
+```
 
 ## What this library is NOT
 

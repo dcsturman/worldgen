@@ -108,8 +108,28 @@ pub fn generate_planet_png(
     uwp: &str,
     name: Option<&str>,
 ) -> Result<Vec<u8>, WorldgenError> {
+    generate_planet_png_scaled(seed, uwp, name, 1.0)
+}
+
+/// Generate a planet PNG at `scale × native resolution`.
+///
+/// `scale = 1.0` is byte-identical to [`generate_planet_png`]; higher
+/// values scale every pixel dimension and font/stroke size by the same
+/// factor while keeping the same composition. The native dimensions are
+/// ~975×630 plus a legend band (`SHEET_WIDTH × (SHEET_HEIGHT + LEGEND_HEIGHT)`).
+///
+/// Determinism contract: same `(seed, uwp, name, scale)` always yields
+/// the same bytes. `scale` doesn't feed any RNG — it only scales the
+/// pixel grid. Returns [`WorldgenError::Render`] if `scale < 1.0` or
+/// not finite.
+pub fn generate_planet_png_scaled(
+    seed: u64,
+    uwp: &str,
+    name: Option<&str>,
+    scale: f32,
+) -> Result<Vec<u8>, WorldgenError> {
     let map: WorldMap = crate::worldmap::generate(uwp, seed, name)?;
-    crate::worldmap::render_png(&map).map_err(WorldgenError::Render)
+    crate::worldmap::render_png_scaled(&map, scale).map_err(WorldgenError::Render)
 }
 
 /// One star's classification, as the convenience builder expects it.

@@ -1,5 +1,6 @@
 pub mod captains_log_server;
 pub mod firestore;
+pub mod gcs;
 pub mod http_server;
 pub mod server;
 pub mod simulator_server;

@@ -26,6 +26,7 @@ use tokio::sync::{Mutex, RwLock};
 use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
 
 use worldgen::backend::captains_log_server;
+use worldgen::backend::gcs::GcsClient;
 use worldgen::backend::http_server;
 use worldgen::backend::server::TradeServer;
 use worldgen::backend::simulator_server;
@@ -95,9 +96,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     );
     let captains_log_global_limiter: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
 
+    // GCS-backed cache for the /world endpoint. `GCS_BUCKET=debug` (or
+    // unset) puts the client into disabled mode — get returns None,
+    // put is a no-op — so local dev works without GCP creds.
+    let gcs: Arc<GcsClient> = match GcsClient::init().await {
+        Ok(c) => {
+            if c.is_disabled() {
+                log::info!("GCS: disabled (GCS_BUCKET=debug or unset)");
+            } else {
+                log::info!("GCS: enabled");
+            }
+            Arc::new(c)
+        }
+        Err(e) => {
+            log::error!("GCS init failed; world cache will not be available: {e}");
+            // Fall back to a disabled client so the server still boots.
+            // The /world endpoint will regenerate on every request.
+            Arc::new(GcsClient::init().await.unwrap_or_else(|_| {
+                panic!("GCS init failed twice — should be unreachable in disabled mode");
+            }))
+        }
+    };
+
     let listener = TcpListener::bind(&addr).await?;
     log::info!(
-        "Listening on: {} (trade: /ws/trade, simulator: /ws/simulator, captains-log: /ws/captains-log, system image: /system)",
+        "Listening on: {} (trade: /ws/trade, simulator: /ws/simulator, captains-log: /ws/captains-log, system image: /system, world image: /world)",
         addr
     );
 
@@ -105,6 +128,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let trade_server = trade_server.clone();
         let captains_log_project = captains_log_project.clone();
         let captains_log_global_limiter = captains_log_global_limiter.clone();
+        let gcs = gcs.clone();
         tokio::spawn(async move {
             if let Err(e) = dispatch(
                 stream,
@@ -112,6 +136,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 trade_server,
                 captains_log_project,
                 captains_log_global_limiter,
+                gcs,
             )
             .await
             {
@@ -143,6 +168,7 @@ async fn dispatch(
     trade_server: Arc<TradeServer>,
     captains_log_project: Arc<String>,
     captains_log_global_limiter: Arc<Mutex<Option<Instant>>>,
+    gcs: Arc<GcsClient>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if is_websocket_upgrade(&stream).await {
         // Capture the request URI during the handshake.
@@ -176,7 +202,7 @@ async fn dispatch(
             trade_server.handle_one_ws(ws_stream, peer_addr).await?;
         }
     } else {
-        http_server::handle_http(stream, peer_addr).await?;
+        http_server::handle_http(stream, peer_addr, gcs).await?;
     }
     Ok(())
 }

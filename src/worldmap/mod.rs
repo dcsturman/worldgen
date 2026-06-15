@@ -225,6 +225,12 @@ pub fn render_png(map: &WorldMap) -> Result<Vec<u8>, String> {
     render::render_png(map)
 }
 
+/// Render at `scale × native resolution`. See [`render::render_png_scaled`]
+/// for the contract. Equivalent to [`render_png`] when `scale == 1.0`.
+pub fn render_png_scaled(map: &WorldMap, scale: f32) -> Result<Vec<u8>, String> {
+    render::render_png_scaled(map, scale)
+}
+
 /// Resumable per-pixel rasterizer for the SVG path. Re-exported so the
 /// Leptos component can drive the heavy passes (`step_elevation`,
 /// `step_color`, `step_postprocess`) one at a time and `await` a

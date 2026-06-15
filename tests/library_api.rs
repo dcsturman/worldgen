@@ -8,7 +8,8 @@
 use worldgen::seed::{planet_seed, system_seed};
 use worldgen::{
     Constraint, PartialUwp, StarSize, StarSpec, StarType, SystemConstraints, WorldgenError,
-    build_constraints, generate_planet_png, generate_system_png, generate_system_png_scaled,
+    build_constraints, generate_planet_png, generate_planet_png_scaled, generate_system_png,
+    generate_system_png_scaled,
 };
 
 /// PNG magic header — all our renders must start with this 8-byte
@@ -66,6 +67,52 @@ fn planet_png_is_deterministic() {
 fn invalid_uwp_returns_map_error() {
     let result = generate_planet_png(42, "not-a-real-uwp", None);
     assert!(matches!(result, Err(WorldgenError::Map(_))));
+}
+
+#[test]
+fn planet_png_scaled_at_1_0_matches_unscaled_byte_for_byte() {
+    // Legacy contract: existing `generate_planet_png` keeps producing
+    // today's exact bytes. The new `_scaled` API at scale=1.0 must
+    // not perturb a single pixel.
+    let a = generate_planet_png(42, "A788899-A", Some("Regina")).unwrap();
+    let b = generate_planet_png_scaled(42, "A788899-A", Some("Regina"), 1.0).unwrap();
+    assert_eq!(a, b, "scale=1.0 must be byte-identical to unscaled render");
+}
+
+#[test]
+fn planet_png_scaled_at_2_0_doubles_dimensions() {
+    let bytes = generate_planet_png_scaled(42, "A788899-A", Some("Regina"), 2.0).unwrap();
+    assert_eq!(&bytes[..8], PNG_MAGIC);
+    let w = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
+    let h = u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
+    // At scale=1.0 the planet renders to ~1000x655. Scale=2.0 must
+    // double both axes, preserving composition.
+    let unscaled = generate_planet_png(42, "A788899-A", Some("Regina")).unwrap();
+    let uw = u32::from_be_bytes([unscaled[16], unscaled[17], unscaled[18], unscaled[19]]);
+    let uh = u32::from_be_bytes([unscaled[20], unscaled[21], unscaled[22], unscaled[23]]);
+    assert_eq!(w, uw * 2, "scale=2.0 width should be 2x native");
+    assert_eq!(h, uh * 2, "scale=2.0 height should be 2x native");
+}
+
+#[test]
+fn planet_png_scaled_is_deterministic() {
+    let a = generate_planet_png_scaled(42, "A788899-A", Some("Regina"), 2.0).unwrap();
+    let b = generate_planet_png_scaled(42, "A788899-A", Some("Regina"), 2.0).unwrap();
+    assert_eq!(a, b, "same (seed, uwp, name, scale) must produce identical bytes");
+}
+
+#[test]
+fn planet_png_scaled_rejects_below_1_0() {
+    let r = generate_planet_png_scaled(42, "A788899-A", Some("Regina"), 0.5);
+    assert!(matches!(r, Err(WorldgenError::Render(_))));
+}
+
+#[test]
+fn planet_png_scaled_rejects_non_finite() {
+    let r = generate_planet_png_scaled(42, "A788899-A", Some("Regina"), f32::NAN);
+    assert!(matches!(r, Err(WorldgenError::Render(_))));
+    let r = generate_planet_png_scaled(42, "A788899-A", Some("Regina"), f32::INFINITY);
+    assert!(matches!(r, Err(WorldgenError::Render(_))));
 }
 
 #[test]
