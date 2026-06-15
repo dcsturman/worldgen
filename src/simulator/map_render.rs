@@ -187,8 +187,14 @@ pub fn build_route_map_data(waypoints: &[MapWaypoint]) -> Option<RouteMapData> {
     let (tx, ty) = map_to_tile_centred(cx, cy, scale, TILE_IMAGE_WIDTH, TILE_IMAGE_HEIGHT);
 
     let image_url = format!(
-        "https://travellermap.com/api/tile?x={:.4}&y={:.4}&w={}&h={}&scale={}&options={}&style=poster",
-        tx, ty, TILE_IMAGE_WIDTH, TILE_IMAGE_HEIGHT, scale, TILE_OPTIONS,
+        "{}/api/tile?x={:.4}&y={:.4}&w={}&h={}&scale={}&options={}&style=poster",
+        crate::util::travellermap_base_url(),
+        tx,
+        ty,
+        TILE_IMAGE_WIDTH,
+        TILE_IMAGE_HEIGHT,
+        scale,
+        TILE_OPTIONS,
     );
 
     // Pixel position of a map-space (mx, my) in our rendered image.
@@ -216,7 +222,8 @@ pub fn build_route_map_data(waypoints: &[MapWaypoint]) -> Option<RouteMapData> {
 pub fn build_plain_link_url(waypoint: &MapWaypoint) -> String {
     let hex_str = format!("{:02}{:02}", waypoint.hex_x, waypoint.hex_y);
     format!(
-        "https://travellermap.com/?sector={}&hex={}&style=poster",
+        "{}/?sector={}&hex={}&style=poster",
+        crate::util::travellermap_base_url(),
         url_encode(&waypoint.sector),
         hex_str,
     )

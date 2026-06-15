@@ -52,10 +52,16 @@ fi
 docker buildx create --name worldgen-builder --driver docker-container --use 2>/dev/null || \
   docker buildx use worldgen-builder
 
-# Build for Cloud Run (linux/amd64) with remote caching for faster rebuilds
+# Build for Cloud Run (linux/amd64) with remote caching for faster rebuilds.
+#
+# TRAVELLERMAP_URL is forwarded as a build arg so that whatever's in
+# the shell env at push time gets baked into BOTH the WASM bundle and
+# the native server binary. Unset → both default to
+# https://travellermap.com; set → both point at the override.
 docker buildx build --platform linux/amd64 \
   --cache-from=type=registry,ref=gcr.io/$GCP_PROJECT/worldgen:buildcache \
   --cache-to=type=registry,ref=gcr.io/$GCP_PROJECT/worldgen:buildcache,mode=max \
+  --build-arg TRAVELLERMAP_URL=${TRAVELLERMAP_URL:-} \
   -t gcr.io/$GCP_PROJECT/worldgen \
   --push .
 

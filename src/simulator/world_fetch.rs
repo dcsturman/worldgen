@@ -231,7 +231,12 @@ async fn fetch_one(
 ) -> Result<Option<CachedWorld>, FetchError> {
     let hex = format!("{:02}{:02}", hex_x, hex_y);
     let encoded_sector = urlencode(sector);
-    let url = format!("https://travellermap.com/data/{}/{}", encoded_sector, hex);
+    let url = format!(
+        "{}/data/{}/{}",
+        crate::util::travellermap_base_url(),
+        encoded_sector,
+        hex
+    );
     log::trace!("world_fetch: GET {}", url);
 
     let response = client.get(&url).send().await?;

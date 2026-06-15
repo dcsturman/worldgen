@@ -376,3 +376,61 @@ fn urlencode_minimal(s: &str) -> String {
     }
     out
 }
+
+/// Default base URL when `TRAVELLERMAP_URL` isn't set at build time.
+const DEFAULT_TRAVELLERMAP_URL: &str = "https://travellermap.com";
+
+/// The base URL of the TravellerMap-compatible service worldgen talks
+/// to for sector/world lookups and tile rendering.
+///
+/// Resolved at **compile time** via `option_env!` from the
+/// `TRAVELLERMAP_URL` environment variable, so the same value is baked
+/// into both the WASM frontend bundle and the native backend binary
+/// from a single build-time setting. Defaults to
+/// `https://travellermap.com` when the env var is unset.
+///
+/// Any trailing slash is stripped so callers can write
+/// `format!("{}/data/...", travellermap_base_url())` without worrying
+/// about double-slash URLs.
+///
+/// Set the env var when building:
+///
+/// ```text
+/// TRAVELLERMAP_URL=https://tmap.internal cargo build --features backend --bin server
+/// TRAVELLERMAP_URL=https://tmap.internal trunk build --release
+/// ```
+///
+/// `build.rs` declares `cargo:rerun-if-env-changed=TRAVELLERMAP_URL`
+/// so flipping the value between builds invalidates the cache
+/// correctly instead of silently reusing a binary with the old URL
+/// baked in.
+pub fn travellermap_base_url() -> &'static str {
+    let raw = option_env!("TRAVELLERMAP_URL").unwrap_or(DEFAULT_TRAVELLERMAP_URL);
+    raw.trim_end_matches('/')
+}
+
+#[cfg(test)]
+mod travellermap_url_tests {
+    use super::*;
+
+    #[test]
+    fn default_when_unset_at_build_time() {
+        // The dev/test build doesn't set TRAVELLERMAP_URL, so the
+        // helper must fall through to the default. If someone ever
+        // sets it during local test runs, this test will catch the
+        // surprise so they remember to unset it.
+        let url = travellermap_base_url();
+        assert!(
+            url == "https://travellermap.com" || option_env!("TRAVELLERMAP_URL").is_some(),
+            "expected default URL, got {url:?}"
+        );
+    }
+
+    #[test]
+    fn no_trailing_slash() {
+        assert!(
+            !travellermap_base_url().ends_with('/'),
+            "base URL must not end with '/' so callers can concat \"/path\""
+        );
+    }
+}

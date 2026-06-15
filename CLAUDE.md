@@ -136,8 +136,34 @@ Single Docker image runs both nginx (serving `dist/`) and the trade server, supe
 
 Server env vars (see `src/bin/server.rs`):
 - `GOOGLE_APPLICATION_CREDENTIALS`, `GCP_PROJECT`, `FIRESTORE_DATABASE_ID` (`"debug"` to skip Firestore)
+- `GCS_BUCKET` (cache for `/world` planet PNGs; `"debug"` or unset → no cache, every request regenerates)
 - `WS_PORT` (default 8081), `WS_HOST` (default `0.0.0.0`)
 - `RUST_LOG`
+
+### `TRAVELLERMAP_URL` — build-time, baked into both binaries
+
+`TRAVELLERMAP_URL` configures the base URL of the TravellerMap-compatible
+service the frontend and the simulator hit (for sector/world lookups,
+search, tile rendering). Default is `https://travellermap.com`; override
+with e.g. `https://tmap.internal` to point at a self-hosted instance.
+
+It's resolved at **compile time** via `option_env!` in
+`src/util.rs::travellermap_base_url` so a single env var set during the
+build propagates to both the WASM bundle and the native server binary.
+Same value goes everywhere — no per-call URL params, no two-place setup.
+
+- **Local dev (cargo / trunk):** `TRAVELLERMAP_URL=… cargo build` or
+  `TRAVELLERMAP_URL=… trunk build`. `./scripts/run-backend.sh` and
+  `./scripts/run-frontend.sh` inherit the shell env, so a single
+  `export` works for both terminals.
+- **Production (Docker / Cloud Run):** `./scripts/push_image.sh`
+  forwards the shell var as a `--build-arg`; the Dockerfile re-exports
+  it as `ENV` in both build stages so cargo/trunk see it. Unset →
+  defaults to `https://travellermap.com`.
+- **Re-builds:** `build.rs` declares
+  `cargo:rerun-if-env-changed=TRAVELLERMAP_URL` so changing the value
+  between builds correctly invalidates the cargo cache. Without this,
+  cargo would silently reuse the binary it built with the old URL.
 
 ## Conventions
 

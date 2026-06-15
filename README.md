@@ -77,6 +77,46 @@ You'll need the following tools installed:
 
 This will compile the application, start a development server, and open your browser to the running application.
 
+## Configuration
+
+### `TRAVELLERMAP_URL` — override the upstream TravellerMap host
+
+By default the WASM frontend and the native backend both talk to
+`https://travellermap.com` for sector/world lookups, search, and tile
+rendering. If you're running your own TravellerMap-compatible service
+(self-hosted instance, staging mirror, etc.), set `TRAVELLERMAP_URL`
+**at build time** to override it:
+
+```bash
+# Local dev — the same export covers both binaries
+export TRAVELLERMAP_URL=https://my.tmap.local
+trunk serve              # frontend
+cargo run --features backend --bin server   # backend (in another terminal)
+
+# Verify what got baked into the binary
+cargo run --example show_travellermap_url
+# →  travellermap_base_url() = "https://my.tmap.local"
+```
+
+Important details:
+
+- **It's a *build-time* setting**, not a runtime one. The URL gets
+  baked into both binaries via `option_env!` so there's no per-request
+  configuration to forget on either side. Change the value and
+  rebuild.
+- **Single source of truth.** The same env var name is read by both
+  the WASM bundle and the native server, so you can't have them point
+  at different hosts by accident.
+- **Trailing slashes are stripped** — `https://x.com` and
+  `https://x.com/` both work.
+- **Unset = default.** Omitting the variable falls back to
+  `https://travellermap.com`, so the public deploy needs no extra
+  configuration.
+
+For Docker / Cloud Run deployments, see the [Docker
+Deployment](#docker-deployment) section — the build script forwards
+the var as a `--build-arg` automatically.
+
 ## Application Structure
 
 ### URL Routing
@@ -153,12 +193,29 @@ src/
 trunk build --release
 ```
 
+To bake in a custom TravellerMap host, set `TRAVELLERMAP_URL` before
+the build (see [Configuration](#configuration)).
+
 ### Docker Deployment
 
 ```bash
 docker build -t worldgen .
 docker run -p 8080:80 worldgen
 ```
+
+To deploy to the project's Cloud Run instance, use the helper script:
+
+```bash
+# Optional: override the TravellerMap host before pushing
+export TRAVELLERMAP_URL=https://my.tmap.local
+
+./scripts/push_image.sh
+```
+
+`push_image.sh` forwards `TRAVELLERMAP_URL` to `docker buildx` as a
+`--build-arg` so the value gets baked into both the WASM bundle and
+the native server inside the image. It also prompts for `GCS_BUCKET`
+(the planet-PNG cache for the `/world` endpoint) if it's not set.
 
 ## Contributing
 

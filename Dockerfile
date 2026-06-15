@@ -10,11 +10,19 @@ FROM base AS build-wasm
 RUN mkdir /web
 WORKDIR /web
 
-COPY Cargo.toml Cargo.lock index.html Trunk.toml /web/
+COPY Cargo.toml Cargo.lock index.html Trunk.toml build.rs /web/
 COPY public ./public/
 COPY style.css ./
 
 ENV RUSTFLAGS='--cfg getrandom_backend="wasm_js"'
+
+# Optional build-time override for the TravellerMap base URL. When set,
+# `option_env!("TRAVELLERMAP_URL")` in src/util.rs picks it up and bakes
+# the value into the WASM bundle. Unset → defaults to
+# https://travellermap.com. Same ARG appears in the build-server stage
+# so the two binaries can't drift.
+ARG TRAVELLERMAP_URL
+ENV TRAVELLERMAP_URL=${TRAVELLERMAP_URL}
 
 # Copy the source code. assets/ holds DejaVuSans.ttf which
 # src/worldmap/render/png.rs bakes in via include_bytes! at compile time;
@@ -59,7 +67,13 @@ RUN rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl && \
 RUN mkdir /server
 WORKDIR /server
 
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml Cargo.lock build.rs ./
+
+# See build-wasm stage for the rationale on this ARG/ENV pair. The
+# value baked into the WASM bundle and the native server should
+# always match.
+ARG TRAVELLERMAP_URL
+ENV TRAVELLERMAP_URL=${TRAVELLERMAP_URL}
 
 # Copy source code. assets/ is included for the same reason as the WASM
 # stage: the lib's PNG renderer bakes in the bundled DejaVu Sans via

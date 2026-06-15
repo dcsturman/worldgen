@@ -435,7 +435,12 @@ pub async fn fetch_search_results(url: &str) -> Result<TravellerMapResponse, JsV
 /// ```
 pub async fn fetch_data_world(sector: &str, hex: &str) -> Result<WorldDataResponse, JsValue> {
     let encoded_sector = web_sys::js_sys::encode_uri_component(sector);
-    let url = format!("https://travellermap.com/data/{}/{}", encoded_sector, hex);
+    let url = format!(
+        "{}/data/{}/{}",
+        crate::util::travellermap_base_url(),
+        encoded_sector,
+        hex
+    );
 
     let request = web_sys::Request::new_with_str(&url)?;
     let window = web_sys::window().unwrap();
@@ -832,7 +837,10 @@ pub fn WorldSearch(
         // stale autocomplete cache.
         let typed_for_fetch = typed_name.clone();
         wasm_bindgen_futures::spawn_local(async move {
-            let url = format!("https://travellermap.com/api/search?q={typed_for_fetch}");
+            let url = format!(
+                "{}/api/search?q={typed_for_fetch}",
+                crate::util::travellermap_base_url()
+            );
             match fetch_search_results(&url).await {
                 Ok(response) => {
                     let results: Vec<(String, String, String, i32, i32)> = response
@@ -892,7 +900,10 @@ pub fn WorldSearch(
 
         if search_enabled.get() && query.len() >= 2 {
             set_is_loading.set(true);
-            let url = format!("https://travellermap.com/api/search?q={query}");
+            let url = format!(
+                "{}/api/search?q={query}",
+                crate::util::travellermap_base_url()
+            );
             // The async block needs to know what query it was fired
             // for so it can stamp `last_resolved_query` correctly.
             let query_for_resolve = query.clone();
