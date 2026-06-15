@@ -37,8 +37,14 @@ fn base_url() -> String {
 
 fn client() -> reqwest::Client {
     let _ = rustls::crypto::ring::default_provider().install_default();
+    // 60 s timeout covers Cloud Run cold-starts on top of the typical
+    // ~500 ms /api/system render. The fast-endpoint default of 30 s
+    // tripped intermittently when the second deterministic call
+    // raced ahead of the first into a cold container instance —
+    // false positives like that drown out real regressions, so we
+    // pad generously.
     reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(60))
         .user_agent("worldgen-production-smoke/1.0")
         .build()
         .expect("reqwest client builds")
@@ -308,34 +314,82 @@ async fn live_world_endpoint_returns_valid_png_with_cors_headers() {
 
 #[tokio::test]
 #[ignore]
-async fn live_world_endpoint_caches_second_call_quickly() {
-    // No hard threshold — we log timings via --nocapture so a human can
-    // eyeball the cold vs warm ratio. If the second call is anywhere
-    // near the first, the cache isn't working.
+async fn live_world_endpoint_caches_via_x_cache_header() {
+    // Direct check of the cache contract: after two calls for the same
+    // world, at least one must be served from cache (`X-Cache: HIT`).
+    //
+    // Replaces the earlier timing-based assertion, which was a noisy
+    // proxy for "is the cache actually working" — Cloud Run cold starts
+    // could make the second call slower than the first even with a
+    // working cache, and a working cache wasn't proof the bytes came
+    // from GCS (could have been hot in-process state).
+    //
+    // The previous test caught the production-cache misconfiguration
+    // (silent GCS PUT failure) only via that timing proxy. This one
+    // catches it head-on: if both calls report MISS, either GCS_BUCKET
+    // is wrong, the bucket doesn't exist, or the Cloud Run service
+    // account lacks storage.objects.create. See the diagnostic steps
+    // in `docs/library-integration.md` § "/api/world".
     use std::time::Instant;
     let url = format!("{}/api/world?{NORICUM_WORLD_QUERY}", base_url());
 
     let t0 = Instant::now();
     let r1 = slow_client().get(&url).send().await.unwrap();
     assert_eq!(r1.status().as_u16(), 200);
+    let cache1 = r1
+        .headers()
+        .get("x-cache")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("(missing)")
+        .to_string();
     let bytes1 = r1.bytes().await.unwrap().len();
     let cold = t0.elapsed();
+
+    // Allow GCS PUT to settle. The handler spawns the upload in a
+    // detached task, so the response can ship before the cache write
+    // completes. ~1 s should be plenty for a write of ~700 KB.
+    tokio::time::sleep(Duration::from_secs(2)).await;
 
     let t1 = Instant::now();
     let r2 = slow_client().get(&url).send().await.unwrap();
     assert_eq!(r2.status().as_u16(), 200);
+    let cache2 = r2
+        .headers()
+        .get("x-cache")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("(missing)")
+        .to_string();
     let bytes2 = r2.bytes().await.unwrap().len();
     let warm = t1.elapsed();
 
     eprintln!(
-        "/world timings — call 1: {cold:?} ({bytes1} bytes); call 2: {warm:?} ({bytes2} bytes)"
+        "/api/world — call 1: {cold:?} X-Cache={cache1} ({bytes1} bytes); \
+         call 2: {warm:?} X-Cache={cache2} ({bytes2} bytes)"
     );
-    // Cold call could be a cache HIT if this test ran recently; what we
-    // really want to confirm is that the second call doesn't somehow
-    // take longer than the first.
+
+    if cache2 == "DISABLED" {
+        // GCS_BUCKET=debug on the server — caching is intentionally
+        // off. Don't fail the test; the operator knows what they did.
+        return;
+    }
+
+    assert_eq!(
+        cache2, "HIT",
+        "second /api/world call should be served from GCS (X-Cache: HIT); \
+         got X-Cache={cache2}. If the first call also reported MISS, the \
+         GCS PUT failed silently — most likely the bucket doesn't exist or \
+         the Cloud Run service account lacks storage.objects.create. \
+         Check Cloud Run logs for \"GCS put failed\"."
+    );
+
+    // The HIT call should also be substantially faster than the cold
+    // generate. Use a generous bound so transient Cloud Run cold starts
+    // on the second call don't trip a false positive — a real HIT is
+    // ~200 ms, a cold render is ~25 s.
     assert!(
-        warm <= cold + Duration::from_secs(2),
-        "second call took longer than the first (cache regression?): cold={cold:?} warm={warm:?}"
+        warm < Duration::from_secs(10),
+        "X-Cache reported HIT but the response still took {warm:?} — \
+         GCS read or downsample is suspiciously slow (cold render was {cold:?})"
     );
 }
 
