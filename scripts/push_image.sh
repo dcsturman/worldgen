@@ -48,20 +48,50 @@ if [ "$GCS_BUCKET" != "debug" ]; then
   fi
 fi
 
+# TRAVELLERMAP_URL is baked into both the WASM bundle and the native
+# server binary at compile time (option_env! in src/util.rs). Unset =>
+# defaults to https://travellermap.com. Prompt now so a future you (or
+# anyone else who comes back to a private deploy after a while) doesn't
+# silently re-bake the public URL into a private build.
+DEFAULT_TRAVELLERMAP_URL=https://travellermap.com
+if [ -z "$TRAVELLERMAP_URL" ]; then
+  echo ""
+  echo "TRAVELLERMAP_URL is not set in your shell environment."
+  echo "  This is the upstream TravellerMap host the frontend and the"
+  echo "  simulator hit for sector lookups, search, and tile rendering."
+  echo "  It's baked into the build, so you have to pick now — there's"
+  echo "  no runtime override."
+  echo ""
+  echo "  Enter a custom URL (e.g. https://my.tmap.local) or press"
+  echo "  enter to use the default ($DEFAULT_TRAVELLERMAP_URL)."
+  read "TRAVELLERMAP_URL?TravellerMap URL: "
+  if [ -z "$TRAVELLERMAP_URL" ]; then
+    TRAVELLERMAP_URL=$DEFAULT_TRAVELLERMAP_URL
+    echo "  → using default: $TRAVELLERMAP_URL"
+  fi
+fi
+
+# Echo the final settings so the user can confirm what's about to be
+# baked into the image before the long docker build kicks off.
+echo ""
+echo "Build configuration:"
+echo "  TRAVELLERMAP_URL = $TRAVELLERMAP_URL"
+echo "  GCS_BUCKET       = $GCS_BUCKET"
+echo ""
+
 # Ensure we're using the docker-container builder (supports caching)
 docker buildx create --name worldgen-builder --driver docker-container --use 2>/dev/null || \
   docker buildx use worldgen-builder
 
 # Build for Cloud Run (linux/amd64) with remote caching for faster rebuilds.
 #
-# TRAVELLERMAP_URL is forwarded as a build arg so that whatever's in
-# the shell env at push time gets baked into BOTH the WASM bundle and
-# the native server binary. Unset → both default to
-# https://travellermap.com; set → both point at the override.
+# TRAVELLERMAP_URL is forwarded as a build arg so the value resolved
+# by the prompt above gets baked into BOTH the WASM bundle and the
+# native server binary.
 docker buildx build --platform linux/amd64 \
   --cache-from=type=registry,ref=gcr.io/$GCP_PROJECT/worldgen:buildcache \
   --cache-to=type=registry,ref=gcr.io/$GCP_PROJECT/worldgen:buildcache,mode=max \
-  --build-arg TRAVELLERMAP_URL=${TRAVELLERMAP_URL:-} \
+  --build-arg TRAVELLERMAP_URL=$TRAVELLERMAP_URL \
   -t gcr.io/$GCP_PROJECT/worldgen \
   --push .
 
