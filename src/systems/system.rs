@@ -1838,6 +1838,22 @@ mod tests {
         println!("{system}");
     }
 
+    #[test]
+    fn test_generate_system_pop_zero_main_world_does_not_panic() {
+        // Regression: Aacheon (The Beyond 2720), UWP E410000-0, crashed the
+        // live server. A population-0 main world made world.rs compute
+        // `clamp(0, get_population() - 1)` = `clamp(0, -1)`, which panics
+        // (min > max) and, under panic=abort, took down the whole process.
+        // Generation is randomized, so loop to reliably exercise the
+        // subordinate-world population path.
+        let main_uwp = "E410000-0";
+        for _ in 0..100 {
+            let main_world =
+                World::from_uwp("Aacheon", main_uwp, false, true).unwrap();
+            let _ = System::generate_system(main_world);
+        }
+    }
+
     #[test_log::test]
     fn test_generate_from_constraints_single_mainworld() {
         let constraints = SystemConstraints::from_main_world("Regina", "A788899-A").unwrap();

@@ -624,7 +624,10 @@ impl World {
                 } else {
                     0
                 })
-            .clamp(0, main_world.get_population() - 1),
+            // `max(0)` guards a population-0 main world: `get_population() - 1`
+            // would be -1, and `clamp(0, -1)` panics (min > max), aborting the
+            // whole server. A pop-0 main world simply caps subordinates at 0.
+            .clamp(0, (main_world.get_population() - 1).max(0)),
         };
 
         let world_name = name
