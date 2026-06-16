@@ -215,16 +215,18 @@ impl GcsClient {
     }
 }
 
-/// Minimal URL-encoder that percent-encodes everything outside the
-/// unreserved set plus `/` (so e.g. `world/v1/<hex>.png` round-trips).
-/// GCS object names can contain almost any byte; we don't need a
-/// general-purpose encoder, just one that survives our cache keys
-/// (alphanumerics + `/` + `.` + `_` + `-`) verbatim and escapes
-/// anything else defensively.
+/// Minimal URL-encoder that percent-encodes everything outside the RFC
+/// 3986 unreserved set — crucially including `/` as `%2F`. The object
+/// name is interpolated into the **path** of the GCS JSON API GET URL
+/// (`…/o/{object}?alt=media`), where the API requires the entire object
+/// name to be a single percent-encoded path segment; a literal `/` is
+/// parsed as a path separator and the object is never found (404 → silent
+/// cache miss). The same encoding is safe in the PUT `name=` query
+/// parameter, since GCS decodes `%2F` back to `/` when storing the object.
 fn urlencode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
-        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~' | b'/') {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
             out.push(b as char);
         } else {
             out.push_str(&format!("%{b:02X}"));
@@ -270,7 +272,9 @@ mod tests {
 
     #[test]
     fn urlencode_passes_through_safe_chars() {
-        assert_eq!(urlencode("world/v1/abc123.png"), "world/v1/abc123.png");
+        // `/` must be escaped to `%2F`: the object name is a single path
+        // segment in the GCS GET URL, so a literal slash 404s (silent miss).
+        assert_eq!(urlencode("world/v1/abc123.png"), "world%2Fv1%2Fabc123.png");
         assert_eq!(urlencode("Trojan_Reach"), "Trojan_Reach");
     }
 
