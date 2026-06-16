@@ -409,6 +409,25 @@ pub fn travellermap_base_url() -> &'static str {
     raw.trim_end_matches('/')
 }
 
+/// Escape the five XML predefined entities so a string is safe to embed
+/// in either SVG text content or a double-quoted attribute value. Shared
+/// by the `worldmap` and `sysmap` SVG renderers so the escaping rules
+/// can't drift between the two.
+pub fn escape_xml(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod travellermap_url_tests {
     use super::*;

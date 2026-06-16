@@ -1,4 +1,4 @@
-//! HTTP endpoint serving deterministic system-map PNGs.
+//! HTTP endpoint serving deterministic system-map and planet renders.
 //!
 //! The deployed binary runs one TCP listener (`bin/server.rs`) that
 //! dispatches each accepted connection to either a WebSocket handler
@@ -6,11 +6,17 @@
 //! handler. Dispatch happens before any handshake — `bin/server.rs`
 //! peeks the first bytes of the stream and routes plain HTTP here.
 //!
-//! Currently exposes one route:
+//! Routes:
 //!
 //! - `GET /api/system?sector=…&hex=CCRR&name=…&uwp=…&pbg=…&stellar=…&worlds=…&scale=…`
-//!   → `200 image/png` of the system-map render. See [`handle_system`]
-//!   for the parameter semantics and error mapping.
+//!   → `200 image/png` of the system-map render. See [`handle_system`].
+//! - `GET /api/system_svg?…` (same query params) → `200 image/svg+xml` of
+//!   the same render as vectors, with each body wrapped in a
+//!   `<g class="sysmap-body" data-…>` group so consumers can make bodies
+//!   clickable. `scale` is accepted but ignored (SVG is
+//!   resolution-independent). See [`handle_system_svg`]. Both share
+//!   [`parse_system_request`] for parsing/validation.
+//! - `GET /api/world?…` → `200 image/png` of a planet surface (GCS-cached).
 //!
 //! All responses include permissive CORS headers (`*` origin, GET + OPTIONS
 //! allowed) so a browser client served from a different origin (e.g. the
@@ -20,7 +26,7 @@
 //! hand-rolls an HTTP/1.1 request line and header parser plus minimal
 //! response writers. Everything beyond that funnels through the existing
 //! public library API (`system_seed`, `parse_stellar`, `build_constraints`,
-//! `generate_system_png_scaled`).
+//! `generate_system_png_scaled`, `generate_system_svg`).
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -32,10 +38,12 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
 use crate::api::{
-    build_constraints, generate_planet_png_scaled, generate_system_png_scaled, parse_stellar,
+    build_constraints, generate_planet_png_scaled, generate_system_png_scaled,
+    generate_system_svg, parse_stellar,
 };
 use crate::backend::gcs::GcsClient;
 use crate::seed::{planet_seed, system_seed};
+use crate::systems::constraint::SystemConstraints;
 
 /// Always render planet PNGs at this scale, regardless of the request's
 /// `scale` query param. On cache-hit we decode the cached PNG and
@@ -131,63 +139,63 @@ pub async fn handle_http(
     // intercepted bare `/world` system-generator navigation.
     match path {
         "/api/system" => handle_system(reader.get_mut(), query, head_only).await,
+        "/api/system_svg" => handle_system_svg(reader.get_mut(), query, head_only).await,
         "/api/world" => handle_world(reader.get_mut(), query, head_only, gcs).await,
         _ => write_simple(reader.get_mut(), 404, "Not Found", "Unknown endpoint").await,
     }
 }
 
-/// Handler for `GET /api/system`. Parses required + optional query params,
-/// derives a deterministic seed from the world identity, builds a
-/// constraint set, renders a PNG at the requested scale, and writes
-/// the response.
+/// The parsed, validated inputs shared by `/api/system` (PNG) and
+/// `/api/system_svg` (SVG). Both endpoints take the identical query string
+/// and derive the same `(seed, constraints)`; only the render target and the
+/// `scale` use differ, so the parsing lives in one place.
+struct SystemRequest {
+    seed: u64,
+    constraints: SystemConstraints,
+    /// Requested pixel scale. Used by the PNG path; the SVG path ignores it
+    /// (vector output is resolution-independent).
+    scale: f32,
+}
+
+/// HTTP error to surface to the client: `(status code, reason, body)`.
+type HttpError = (u16, &'static str, String);
+
+/// Parse + validate the shared `/api/system*` query params. On success
+/// returns the deterministic seed, the constraint set, and the requested
+/// scale. On failure returns the status/reason/body the caller should write.
 ///
 /// Error mapping:
-/// - Missing or malformed required params → `400 text/plain`
+/// - Missing or malformed required params → `400`
 /// - `build_constraints` returning `Err` (invalid / partial / contradictory
-///   UWP) → `422 text/plain`
-/// - Render failure (e.g. scale < 1.0, NaN, tiny-skia OOM) → `500 text/plain`
-///
-/// `same (sector, hex, name, uwp, pbg, stellar, worlds, scale)` always
-/// yields byte-identical output — `scale` does not feed any RNG.
-async fn handle_system(
-    stream: &mut TcpStream,
-    query: &str,
-    head_only: bool,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+///   UWP) → `422`
+fn parse_system_request(query: &str) -> Result<SystemRequest, HttpError> {
     let params = parse_query(query);
 
-    let sector = match params.get("sector") {
-        Some(s) if !s.is_empty() => s.as_str(),
-        _ => return write_simple(stream, 400, "Bad Request", "missing required param: sector").await,
-    };
-    let hex = match params.get("hex") {
-        Some(h) if !h.is_empty() => h.as_str(),
-        _ => return write_simple(stream, 400, "Bad Request", "missing required param: hex").await,
-    };
-    let name = match params.get("name") {
-        Some(n) if !n.is_empty() => n.as_str(),
-        _ => return write_simple(stream, 400, "Bad Request", "missing required param: name").await,
-    };
-    let uwp = match params.get("uwp") {
-        Some(u) if !u.is_empty() => u.as_str(),
-        _ => return write_simple(stream, 400, "Bad Request", "missing required param: uwp").await,
-    };
+    let missing = |p: &str| (400, "Bad Request", format!("missing required param: {p}"));
+    let sector = params
+        .get("sector")
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| missing("sector"))?;
+    let hex = params
+        .get("hex")
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| missing("hex"))?;
+    let name = params
+        .get("name")
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| missing("name"))?;
+    let uwp = params
+        .get("uwp")
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| missing("uwp"))?;
 
-    // `hex` is a 4-character "CCRR" sub-sector hex location. We treat
-    // each pair as a u8 — Traveller hexes can run up to 32×40 per
-    // sector, well within u8.
-    let (hex_x, hex_y) = match parse_hex_quad(hex) {
-        Some(h) => h,
-        None => {
-            return write_simple(
-                stream,
-                400,
-                "Bad Request",
-                "hex must be a 4-digit string like \"2018\"",
-            )
-            .await;
-        }
-    };
+    // `hex` is a 4-character "CCRR" sub-sector hex location. We treat each
+    // pair as a u8 — Traveller hexes run up to 32×40 per sector, within u8.
+    let (hex_x, hex_y) = parse_hex_quad(hex).ok_or((
+        400,
+        "Bad Request",
+        "hex must be a 4-digit string like \"2018\"".to_string(),
+    ))?;
 
     let pbg = params.get("pbg").cloned().unwrap_or_default();
     let belts = digit_at(&pbg, 1).unwrap_or(0) as usize;
@@ -196,10 +204,9 @@ async fn handle_system(
     let stellar = params.get("stellar").map(|s| s.as_str()).unwrap_or("");
     let stars = parse_stellar(stellar);
 
-    // `worlds` is the system's `W` digit (total body count) from
-    // Traveller Map. We back out the main world, the belts and the
-    // gas giants to leave just the extra rocky planets the caller
-    // wants placed. Clamps to 0 if the math goes negative.
+    // `worlds` is the system's `W` digit (total body count) from Traveller
+    // Map. We back out the main world, the belts and the gas giants to leave
+    // just the extra rocky planets the caller wants placed.
     let worlds = params
         .get("worlds")
         .and_then(|s| s.trim().parse::<i32>().ok());
@@ -214,14 +221,31 @@ async fn handle_system(
         .unwrap_or(2.0);
 
     let seed = system_seed(sector, hex_x, hex_y);
-    let constraints = match build_constraints(name, uwp, &stars, giants, belts, planets) {
-        Ok(c) => c,
-        Err(e) => {
-            return write_simple(stream, 422, "Unprocessable Entity", &format!("{e}")).await;
-        }
+    let constraints = build_constraints(name, uwp, &stars, giants, belts, planets)
+        .map_err(|e| (422, "Unprocessable Entity", format!("{e}")))?;
+
+    Ok(SystemRequest {
+        seed,
+        constraints,
+        scale,
+    })
+}
+
+/// Handler for `GET /api/system`. Renders the system map as a PNG at the
+/// requested scale. `same (sector, hex, name, uwp, pbg, stellar, worlds,
+/// scale)` always yields byte-identical output — `scale` does not feed any
+/// RNG. Render failure (scale < 1.0, NaN, tiny-skia OOM) → `500 text/plain`.
+async fn handle_system(
+    stream: &mut TcpStream,
+    query: &str,
+    head_only: bool,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let req = match parse_system_request(query) {
+        Ok(r) => r,
+        Err((code, reason, body)) => return write_simple(stream, code, reason, &body).await,
     };
 
-    let png = match generate_system_png_scaled(seed, constraints, scale) {
+    let png = match generate_system_png_scaled(req.seed, req.constraints, req.scale) {
         Ok(b) => b,
         Err(e) => {
             return write_simple(stream, 500, "Internal Server Error", &format!("{e}")).await;
@@ -229,6 +253,32 @@ async fn handle_system(
     };
 
     write_png(stream, &png, head_only, None).await
+}
+
+/// Handler for `GET /api/system_svg`. The vector parallel to
+/// `/api/system`: identical query params, but the response is an
+/// `image/svg+xml` document whose bodies are wrapped in
+/// `<g class="sysmap-body" data-…>` groups so a consuming web app can make
+/// individual bodies clickable. SVG is resolution-independent, so the
+/// `scale` param is accepted but ignored.
+async fn handle_system_svg(
+    stream: &mut TcpStream,
+    query: &str,
+    head_only: bool,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let req = match parse_system_request(query) {
+        Ok(r) => r,
+        Err((code, reason, body)) => return write_simple(stream, code, reason, &body).await,
+    };
+
+    let svg = match generate_system_svg(req.seed, req.constraints) {
+        Ok(s) => s,
+        Err(e) => {
+            return write_simple(stream, 500, "Internal Server Error", &format!("{e}")).await;
+        }
+    };
+
+    write_svg(stream, svg.as_bytes(), head_only).await
 }
 
 /// Handler for `GET /api/world`. Renders a planet surface PNG, caching the
@@ -639,6 +689,34 @@ async fn write_png(
          Cache-Control: public, max-age=31536000, immutable\r\n\
          Connection: close\r\n\
          {x_cache_header}\
+         {cors}\
+         \r\n",
+        len = bytes.len(),
+        cors = CORS_HEADERS,
+    );
+    stream.write_all(headers.as_bytes()).await?;
+    if !head_only {
+        stream.write_all(bytes).await?;
+    }
+    stream.shutdown().await.ok();
+    Ok(())
+}
+
+/// Write an `image/svg+xml` 200 response. Mirrors [`write_png`] but with the
+/// SVG content type; `charset=utf-8` since the body is text. Same long
+/// immutable cache headers — the output is a deterministic function of the
+/// query string.
+async fn write_svg(
+    stream: &mut TcpStream,
+    bytes: &[u8],
+    head_only: bool,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let headers = format!(
+        "HTTP/1.1 200 OK\r\n\
+         Content-Type: image/svg+xml; charset=utf-8\r\n\
+         Content-Length: {len}\r\n\
+         Cache-Control: public, max-age=31536000, immutable\r\n\
+         Connection: close\r\n\
          {cors}\
          \r\n",
         len = bytes.len(),

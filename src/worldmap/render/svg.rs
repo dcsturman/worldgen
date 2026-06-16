@@ -147,22 +147,7 @@ impl Renderer for SvgRenderer {
             r#"<text x="{x:.2}" y="{y:.2}" font-size="{s:.2}" font-family="DejaVu Sans, Verdana, Helvetica, Arial, sans-serif" fill="{c}">{t}</text>"#,
             s = size,
             c = fmt_color(color),
-            t = escape_xml(text),
+            t = crate::util::escape_xml(text),
         );
     }
-}
-
-fn escape_xml(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&apos;"),
-            _ => out.push(c),
-        }
-    }
-    out
 }

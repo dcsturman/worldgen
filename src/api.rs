@@ -92,6 +92,26 @@ pub fn generate_system_png_scaled(
     crate::sysmap::render_png_scaled(&system, scale).map_err(WorldgenError::Render)
 }
 
+/// Generate a Traveller solar system as an SVG string.
+///
+/// The vector parallel to [`generate_system_png`]: same `(seed,
+/// constraints)` drives the same `System`, but the output is a
+/// resolution-independent SVG whose bodies are wrapped in
+/// `<g class="sysmap-body" data-…>` groups so a consuming web app can make
+/// individual bodies clickable. There's no `scale` parameter — the SVG
+/// `viewBox` lets the browser scale the whole document.
+///
+/// **Determinism contract:** for a fixed `(seed, constraints)` pair the
+/// returned SVG string is identical across runs (same caveat as the PNG
+/// path: pinned worldgen dep version).
+pub fn generate_system_svg(
+    seed: u64,
+    constraints: SystemConstraints,
+) -> Result<String, WorldgenError> {
+    let system = System::generate_from_constraints_seeded(seed, constraints)?;
+    Ok(crate::sysmap::render_svg(&system))
+}
+
 /// Generate a planet surface map for the given UWP, render it to PNG,
 /// and return the bytes.
 ///

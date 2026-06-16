@@ -102,6 +102,50 @@ async fn live_system_endpoint_returns_valid_3200x1800_png() {
 
 #[tokio::test]
 #[ignore]
+async fn live_system_svg_endpoint_returns_valid_svg() {
+    // The SVG parallel of `/api/system`: same query, vector output with
+    // clickable body groups. External apps that overlay interactivity on
+    // the system map depend on this URL + the `sysmap-body` group contract.
+    let url = format!("{}/api/system_svg?{NORICUM_QUERY}", base_url());
+    let resp = client().get(&url).send().await.expect("HTTP GET succeeds");
+
+    assert_eq!(
+        resp.status().as_u16(),
+        200,
+        "expected 200 OK from {url}; got {}",
+        resp.status()
+    );
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .expect("content-type header present")
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        ct.starts_with("image/svg+xml"),
+        "content-type should be image/svg+xml, got {ct}"
+    );
+    // CORS must hold for the SVG endpoint too — same cross-origin consumers.
+    assert_eq!(
+        resp.headers()
+            .get("access-control-allow-origin")
+            .and_then(|v| v.to_str().ok()),
+        Some("*"),
+        "Access-Control-Allow-Origin must be * on the SVG endpoint"
+    );
+
+    let svg = resp.text().await.expect("response body downloads");
+    assert!(svg.starts_with("<svg"), "body should be an SVG document");
+    assert!(svg.contains("</svg>"), "SVG document should be closed");
+    assert!(
+        svg.contains(r#"class="sysmap-body""#),
+        "SVG should carry at least one clickable body group"
+    );
+}
+
+#[tokio::test]
+#[ignore]
 async fn live_system_endpoint_emits_cors_headers() {
     // External consumers (browser-based Traveller Map client) must be
     // able to read the response from a different origin. Loss of any

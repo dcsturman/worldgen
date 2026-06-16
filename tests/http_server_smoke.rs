@@ -96,6 +96,47 @@ async fn get_system_returns_png_with_cors_headers() {
 }
 
 #[tokio::test]
+async fn get_system_svg_returns_svg_with_cors_and_body_groups() {
+    let addr = spawn_http_server().await;
+    let req = format!(
+        "GET /api/system_svg?sector=Trojan+Reach&hex=2018&name=Noricum&uwp=D8867BB-1&pbg=804&stellar=G2+V+M9+V+M6+V&worlds=14 \
+         HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
+    );
+    let buf = send_request(addr, &req).await;
+    let (head, body) = split_response(&buf);
+
+    assert!(head.starts_with("HTTP/1.1 200 OK\r\n"), "head:\n{head}");
+    assert!(head.contains("Content-Type: image/svg+xml"));
+    assert!(head.contains("Access-Control-Allow-Origin: *"));
+    assert!(head.contains("Access-Control-Allow-Methods: GET, HEAD, OPTIONS"));
+
+    let svg = String::from_utf8(body).expect("SVG body is UTF-8");
+    assert!(svg.starts_with("<svg"), "body should be an SVG document:\n{svg:.80}");
+    assert!(svg.contains("</svg>"));
+    assert!(
+        svg.contains(r#"class="sysmap-body""#),
+        "SVG should carry clickable body groups"
+    );
+}
+
+#[tokio::test]
+async fn get_system_svg_with_bad_uwp_returns_422() {
+    // Shares the parse path with /api/system, so the same validation applies.
+    let addr = spawn_http_server().await;
+    let req = format!(
+        "GET /api/system_svg?sector=x&hex=0000&name=x&uwp=NOT-A-UWP-WAY-TOO-LONG \
+         HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
+    );
+    let buf = send_request(addr, &req).await;
+    let (head, _) = split_response(&buf);
+    assert!(
+        head.starts_with("HTTP/1.1 422 Unprocessable Entity\r\n"),
+        "head:\n{head}"
+    );
+    assert!(head.contains("Access-Control-Allow-Origin: *"));
+}
+
+#[tokio::test]
 async fn get_system_is_byte_identical_across_calls() {
     let addr = spawn_http_server().await;
     let req = format!(
