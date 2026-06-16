@@ -409,6 +409,38 @@ pub fn travellermap_base_url() -> &'static str {
     raw.trim_end_matches('/')
 }
 
+/// Decode a single Traveller "extended hex" (ehex) digit to its value.
+///
+/// Traveller uses pseudo-hex that runs past `F`: `0`-`9` then the letters
+/// `A`-`Z` **skipping `I` and `O`** (so they're not confused with `1` and
+/// `0`). So `A`=10 … `H`=17, `J`=18 … `N`=22, `P`=23 … `Z`=33. This is why
+/// plain `i32::from_str_radix(_, 16)` is wrong for UWP columns — it caps at
+/// `F` (15) and rejects `G`+ (e.g. Tech Level 16 = `G`). Case-insensitive;
+/// returns `None` for any other character.
+pub fn ehex_to_value(c: char) -> Option<u32> {
+    let c = c.to_ascii_uppercase();
+    match c {
+        '0'..='9' => Some(c as u32 - '0' as u32),
+        'A'..='H' => Some(10 + (c as u32 - 'A' as u32)),
+        'J'..='N' => Some(18 + (c as u32 - 'J' as u32)),
+        'P'..='Z' => Some(23 + (c as u32 - 'P' as u32)),
+        _ => None,
+    }
+}
+
+/// Encode a value as a Traveller ehex digit — the inverse of
+/// [`ehex_to_value`]. `0`-`9` then `A`-`H`, `J`-`N`, `P`-`Z` (skipping `I`
+/// and `O`). Values outside `0..=33` return `'?'`.
+pub fn value_to_ehex(v: u32) -> char {
+    match v {
+        0..=9 => (b'0' + v as u8) as char,
+        10..=17 => (b'A' + (v - 10) as u8) as char,
+        18..=22 => (b'J' + (v - 18) as u8) as char,
+        23..=33 => (b'P' + (v - 23) as u8) as char,
+        _ => '?',
+    }
+}
+
 /// Escape the five XML predefined entities so a string is safe to embed
 /// in either SVG text content or a double-quoted attribute value. Shared
 /// by the `worldmap` and `sysmap` SVG renderers so the escaping rules
@@ -426,6 +458,46 @@ pub fn escape_xml(s: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod ehex_tests {
+    use super::{ehex_to_value, value_to_ehex};
+
+    #[test]
+    fn decodes_digits_and_letters() {
+        assert_eq!(ehex_to_value('0'), Some(0));
+        assert_eq!(ehex_to_value('9'), Some(9));
+        assert_eq!(ehex_to_value('A'), Some(10));
+        assert_eq!(ehex_to_value('F'), Some(15));
+        assert_eq!(ehex_to_value('G'), Some(16)); // the Tech-Level-16 case
+        assert_eq!(ehex_to_value('H'), Some(17));
+        assert_eq!(ehex_to_value('J'), Some(18)); // skips I
+        assert_eq!(ehex_to_value('N'), Some(22));
+        assert_eq!(ehex_to_value('P'), Some(23)); // skips O
+        assert_eq!(ehex_to_value('Z'), Some(33));
+        assert_eq!(ehex_to_value('a'), Some(10)); // case-insensitive
+    }
+
+    #[test]
+    fn rejects_skipped_and_invalid_letters() {
+        // I and O are not ehex digits (they'd be confused with 1 and 0).
+        assert_eq!(ehex_to_value('I'), None);
+        assert_eq!(ehex_to_value('O'), None);
+        assert_eq!(ehex_to_value('-'), None);
+        assert_eq!(ehex_to_value(' '), None);
+    }
+
+    #[test]
+    fn encodes_inverse_of_decode() {
+        assert_eq!(value_to_ehex(16), 'G');
+        assert_eq!(value_to_ehex(18), 'J');
+        assert_eq!(value_to_ehex(23), 'P');
+        assert_eq!(value_to_ehex(99), '?');
+        for v in 0..=33u32 {
+            assert_eq!(ehex_to_value(value_to_ehex(v)), Some(v), "round-trip {v}");
+        }
+    }
 }
 
 #[cfg(test)]

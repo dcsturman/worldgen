@@ -11,17 +11,19 @@
 //! ## Wildcards in partial UWPs
 //!
 //! In a `PartialUwp` parsed via [`PartialUwp::parse`], the character
-//! `'X'` (or `'x'`) means "wild" — the generator rolls this digit using
-//! the same per-orbit modifier table it uses for full generation, and
-//! any sibling digits the user *did* specify act as inputs to that roll.
+//! `'X'` (or `'x'`) in any column **except the starport** means "wild" —
+//! the generator rolls this digit using the same per-orbit modifier table
+//! it uses for full generation, and any sibling digits the user *did*
+//! specify act as inputs to that roll.
 //!
-//! This deliberately differs from [`crate::systems::world::World::from_uwp`],
-//! which treats `'X'` in the port slot as the literal [`PortCode::X`]
-//! ("no starport"). In the partial-UWP path there's no way to ask for
-//! "port X" by typing X — choose it via the UI dropdown instead. The
-//! tradeoff is intentional: typing `HXXXXXX-X` to mean "Class H port,
-//! roll the rest" is the common case; specifying "no starport"
-//! explicitly is rare and can use the dropdown.
+//! The **starport column** is the exception: `'X'` there is the literal
+//! [`PortCode::X`] ("no starport"), matching the canonical Traveller
+//! meaning and [`crate::systems::world::World::from_uwp`]. This is what
+//! Traveller Map sends for frontier worlds, and a full UWP like
+//! `X788899-A` must parse as a complete, generatable main world — not be
+//! rejected as "wild port, hence partial". To leave the port for the
+//! generator to roll, set `PartialUwp::port` to `None` directly (e.g. via
+//! the UI dropdown) rather than typing `X`.
 
 use crate::systems::gas_giant::GasGiantSize;
 use crate::systems::system::{StarOrbit, StarSize, StarType};
@@ -94,11 +96,11 @@ impl PartialUwp {
     /// Format as a 9-char UWP string, using `'X'` for any wild column.
     pub fn to_string_with_wildcards(&self) -> String {
         fn d(v: Option<u8>) -> char {
+            // Specified columns render in Traveller ehex (so 16 → `G`, not a
+            // truncated hex digit); wild columns render as `X`.
             match v {
-                Some(n) if n < 16 => char::from_digit(n as u32, 16)
-                    .unwrap_or('?')
-                    .to_ascii_uppercase(),
-                _ => 'X',
+                Some(n) => crate::util::value_to_ehex(n as u32),
+                None => 'X',
             }
         }
         let port = self
@@ -123,21 +125,27 @@ fn parse_digit(c: char) -> Result<Option<u8>, String> {
     if c == 'X' || c == 'x' {
         return Ok(None);
     }
-    c.to_digit(16)
+    // Traveller ehex, so columns past `F` (15) — e.g. Tech Level `G` (16) —
+    // parse instead of erroring out.
+    crate::util::ehex_to_value(c)
         .map(|d| Some(d as u8))
-        .ok_or_else(|| format!("invalid hex digit '{c}'"))
+        .ok_or_else(|| format!("invalid ehex digit '{c}'"))
 }
 
 fn parse_port(c: char) -> Result<Option<PortCode>, String> {
-    if c == 'X' || c == 'x' {
-        return Ok(None);
-    }
+    // `X` in the port column is the literal "no starport" code
+    // ([`PortCode::X`]), matching the canonical Traveller meaning and what
+    // Traveller Map sends — NOT a wildcard. (The other columns still treat
+    // `X` as wild; see the module-level docs.) Without this, every X-port
+    // world parsed to a wild port, leaving the main-world UWP "incomplete"
+    // and rejected at generation.
     Ok(Some(match c {
         'A' => PortCode::A,
         'B' => PortCode::B,
         'C' => PortCode::C,
         'D' => PortCode::D,
         'E' => PortCode::E,
+        'X' | 'x' => PortCode::X,
         'Y' => PortCode::Y,
         'H' => PortCode::H,
         'G' => PortCode::G,
@@ -376,11 +384,36 @@ mod tests {
     }
 
     #[test]
-    fn parse_wild_port() {
+    fn parse_x_port_is_literal_no_starport() {
+        // `X` in the starport column is the literal "no starport" code, not
+        // a wildcard — so an otherwise-full UWP is complete and generatable.
         let p = PartialUwp::parse("X788899-A").unwrap();
-        // Lowercase or uppercase X both mean wild in any slot.
-        assert_eq!(p.port, None);
+        assert_eq!(p.port, Some(PortCode::X));
         assert_eq!(p.size, Some(7));
+        assert!(p.is_complete(), "X-port full UWP must be complete");
+
+        let lower = PartialUwp::parse("x788899-A").unwrap();
+        assert_eq!(lower.port, Some(PortCode::X));
+    }
+
+    #[test]
+    fn parse_wild_non_port_columns() {
+        // `X` still means wild in the non-port columns.
+        let p = PartialUwp::parse("AXXXXXX-X").unwrap();
+        assert_eq!(p.port, Some(PortCode::A));
+        assert_eq!(p.size, None);
+        assert_eq!(p.tech, None);
+        assert!(!p.is_complete());
+    }
+
+    #[test]
+    fn parse_ehex_tech_level_g() {
+        // Tech Level G = 16 must parse (ehex), not error as an invalid hex
+        // digit, and round-trip back to `G`.
+        let p = PartialUwp::parse("A788899-G").unwrap();
+        assert_eq!(p.tech, Some(16));
+        assert!(p.is_complete());
+        assert_eq!(p.to_string_with_wildcards(), "A788899-G");
     }
 
     #[test]

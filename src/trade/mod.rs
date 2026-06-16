@@ -246,13 +246,18 @@ pub fn uwp_to_trade_classes(uwp: &[char]) -> Vec<TradeClass> {
         uwp.len()
     );
     let mut trade_classes = Vec::new();
-    let size = uwp[UWP_SIZE].to_digit(16).unwrap() as i32;
-    let atmosphere = uwp[UWP_ATMOSPHERE].to_digit(16).unwrap() as i32;
-    let hydro = uwp[UWP_HYDRO].to_digit(16).unwrap() as i32;
-    let population = uwp[UWP_POPULATION].to_digit(16).unwrap() as i32;
-    let government = uwp[UWP_GOVERNMENT].to_digit(16).unwrap() as i32;
-    let law_level = uwp[UWP_LAW_LEVEL].to_digit(16).unwrap() as i32;
-    let tech_level = uwp[UWP_TECH_LEVEL].to_digit(16).unwrap() as i32;
+    // Parse columns as Traveller ehex (so Tech Level `G` = 16 and other
+    // above-`F` values decode) and default to 0 on anything unparseable —
+    // `to_digit(16).unwrap()` panicked on `G`, which under panic=abort would
+    // take down the whole trade server.
+    let col = |idx: usize| crate::util::ehex_to_value(uwp[idx]).unwrap_or(0) as i32;
+    let size = col(UWP_SIZE);
+    let atmosphere = col(UWP_ATMOSPHERE);
+    let hydro = col(UWP_HYDRO);
+    let population = col(UWP_POPULATION);
+    let government = col(UWP_GOVERNMENT);
+    let law_level = col(UWP_LAW_LEVEL);
+    let tech_level = col(UWP_TECH_LEVEL);
 
     // Agricultural: Atmosphere 4-9, Hydrographics 4-8, Population 5-7
     if (4..=9).contains(&atmosphere) && (4..=8).contains(&hydro) && (5..=7).contains(&population) {
@@ -453,5 +458,32 @@ impl From<&str> for ZoneClassification {
             "Red" => ZoneClassification::Red,
             _ => ZoneClassification::Green,
         }
+    }
+}
+
+#[cfg(test)]
+mod ehex_tests {
+    use super::*;
+
+    #[test]
+    fn tech_level_g_does_not_panic_and_reads_16() {
+        // Regression: TL `G` (16) used to panic via `to_digit(16).unwrap()`,
+        // which under panic=abort would crash the trade server. It must now
+        // parse cleanly. (A788899-G → high-tech world; just must not panic.)
+        let uwp: Vec<char> = "A788899G".chars().collect();
+        let classes = uwp_to_trade_classes(&uwp);
+        // High Tech is TL >= 12, so a TL-16 world must be flagged.
+        assert!(
+            classes.contains(&TradeClass::HighTech),
+            "TL-G world should be High Tech: {classes:?}"
+        );
+    }
+
+    #[test]
+    fn x_starport_uwp_classifies_without_panic() {
+        // `X` (no starport) sits in the spaceport column, which trade
+        // classification skips — it must classify like any other world.
+        let uwp: Vec<char> = "X788899A".chars().collect();
+        let _ = uwp_to_trade_classes(&uwp);
     }
 }

@@ -76,12 +76,16 @@ impl Uwp {
                     _ => 0,
                 }
             } else {
+                // `X` in a non-port column is tolerated as 0 (the raster
+                // never depends on it). Everything else parses as Traveller
+                // ehex so columns past `F` (15) — e.g. Tech Level `G` (16) —
+                // decode instead of erroring as a bad digit.
                 match c {
-                    'X' => 0,
-                    'A'..='F' => 10 + (c as u8 - b'A'),
-                    'a'..='f' => 10 + (c as u8 - b'a'),
-                    '0'..='9' => c as u8 - b'0',
-                    _ => return Err(MapError::BadDigit(i, c)),
+                    'X' | 'x' => 0,
+                    _ => match crate::util::ehex_to_value(c) {
+                        Some(v) => v as u8,
+                        None => return Err(MapError::BadDigit(i, c)),
+                    },
                 }
             };
             out[i] = v;
@@ -113,15 +117,9 @@ impl std::fmt::Display for Uwp {
     /// dash, then TL. Position 0 uses `self.starport` so
     /// non-hex starports (Y, G, H, X) render correctly.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let glyph = |d: u8| -> char {
-            if d < 10 {
-                (b'0' + d) as char
-            } else if d < 16 {
-                (b'A' + d - 10) as char
-            } else {
-                '?'
-            }
-        };
+        // Traveller ehex so values past `F` (15) — e.g. Tech Level 16 —
+        // render as `G` rather than `?`.
+        let glyph = |d: u8| -> char { crate::util::value_to_ehex(d as u32) };
         f.write_fmt(format_args!("{}", self.starport))?;
         for (i, d) in self.digits.iter().enumerate().skip(1) {
             if i == 7 {
@@ -265,6 +263,36 @@ mod tests {
             assert_eq!(u.starport, letter);
             assert_eq!(format!("{u}"), uwp);
         }
+    }
+
+    #[test]
+    fn parses_and_displays_ehex_tech_level() {
+        // Tech Level `G` = 16 must parse (ehex) and round-trip via Display,
+        // not error as a bad digit or render as `?`.
+        let u = Uwp::parse("A788899-G").unwrap();
+        assert_eq!(u.tech_level(), 16);
+        assert_eq!(format!("{u}"), "A788899-G");
+        // And a full generate over a TL-G world runs without erroring.
+        generate("A788899-G", 0x1234, None).expect("TL-G world generates");
+    }
+
+    #[test]
+    fn x_and_y_starport_worlds_place_no_starport() {
+        use features::Feature;
+        // Helper: does this world's map flag any city as a starport host?
+        let has_starport = |uwp: &str| {
+            let map = generate(uwp, 0xABCDEF, None).unwrap();
+            map.grid.hexes.iter().any(|h| {
+                h.features
+                    .iter()
+                    .any(|f| matches!(f, Feature::City { starport: true, .. }))
+            })
+        };
+        // A-port pop-8 world: at least one starport. X / Y (no starport):
+        // none, even though they still have cities.
+        assert!(has_starport("A788899-A"), "A-port world should host a starport");
+        assert!(!has_starport("X788899-A"), "X-port world must place no starport");
+        assert!(!has_starport("Y788899-A"), "Y-port world must place no starport");
     }
 
     #[test]

@@ -1854,6 +1854,27 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_generate_from_constraints_x_starport_main_world() {
+        // Regression: an `X` (no starport) main world used to be rejected
+        // because the port parsed as a wildcard, leaving the UWP "partial".
+        // It must now generate like any other fully-specified world.
+        let constraints = SystemConstraints::from_main_world("Frontier", "X788899-A").unwrap();
+        let system = System::generate_from_constraints(constraints)
+            .expect("X-starport main world should generate");
+        // And it renders without panic (sysmap is pure given the system).
+        crate::sysmap::render_png(&system).expect("render");
+    }
+
+    #[test]
+    fn test_generate_from_constraints_ehex_tech_level() {
+        // Regression: Tech Level `G` (16) used to fail UWP parsing (plain
+        // hex caps at `F`). It must parse via ehex and generate.
+        let constraints = SystemConstraints::from_main_world("HighTech", "A788899-G").unwrap();
+        System::generate_from_constraints(constraints)
+            .expect("ehex Tech Level G main world should generate");
+    }
+
     #[test_log::test]
     fn test_generate_from_constraints_single_mainworld() {
         let constraints = SystemConstraints::from_main_world("Regina", "A788899-A").unwrap();

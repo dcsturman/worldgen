@@ -203,16 +203,20 @@ impl World {
         } else {
             &self.size.to_string()
         };
+        // Columns past `F` (15) — Tech Level can be `G` (16) and a few
+        // attributes occasionally exceed 15 — must use Traveller ehex, not
+        // plain hex (`{:X}` would render 16 as "10" and corrupt the UWP).
+        use crate::util::value_to_ehex;
         format!(
-            "{}{}{:X}{:01X}{:01X}{:01X}{:01X}-{:01X}",
+            "{}{}{}{}{}{}{}-{}",
             self.port,
             size_digit,
-            self.atmosphere,
-            self.hydro,
-            self.population,
-            self.government,
-            self.law_level,
-            self.tech_level
+            value_to_ehex(self.atmosphere.max(0) as u32),
+            value_to_ehex(self.hydro.max(0) as u32),
+            value_to_ehex(self.population.max(0) as u32),
+            value_to_ehex(self.government.max(0) as u32),
+            value_to_ehex(self.law_level.max(0) as u32),
+            value_to_ehex(self.tech_level.max(0) as u32),
         )
     }
 
@@ -233,13 +237,26 @@ impl World {
         is_mainworld: bool,
     ) -> Result<World, Box<dyn std::error::Error>> {
         let port = PortCode::from_uwp(uwp);
-        let size = i32::from_str_radix(&uwp[1..2], 16)?;
-        let atmosphere = i32::from_str_radix(&uwp[2..3], 16)?;
-        let hydro = i32::from_str_radix(&uwp[3..4], 16)?;
-        let population = i32::from_str_radix(&uwp[4..5], 16)?;
-        let government = i32::from_str_radix(&uwp[5..6], 16)?;
-        let law_level = i32::from_str_radix(&uwp[6..7], 16)?;
-        let tech_level = i32::from_str_radix(&uwp[8..9], 16)?;
+        // Parse each column as Traveller ehex so values past `F` (15) — most
+        // notably Tech Level `G` (16) — decode correctly. Plain
+        // `from_str_radix(_, 16)` rejects `G`+ and would error the whole
+        // world out of generation.
+        let chars: Vec<char> = uwp.chars().collect();
+        let digit = |idx: usize, what: &str| -> Result<i32, Box<dyn std::error::Error>> {
+            let c = *chars
+                .get(idx)
+                .ok_or_else(|| format!("UWP too short, missing {what}"))?;
+            crate::util::ehex_to_value(c)
+                .map(|v| v as i32)
+                .ok_or_else(|| format!("invalid UWP {what} digit '{c}' in \"{uwp}\"").into())
+        };
+        let size = digit(1, "size")?;
+        let atmosphere = digit(2, "atmosphere")?;
+        let hydro = digit(3, "hydrographics")?;
+        let population = digit(4, "population")?;
+        let government = digit(5, "government")?;
+        let law_level = digit(6, "law level")?;
+        let tech_level = digit(8, "tech level")?;
         let mut world = World::new(
             name.to_string(),
             0,
@@ -1124,6 +1141,33 @@ mod tests {
         let mut w = World::new("Main".to_string(), 0, 0, 8, 7, 8, 8, false, true);
         w.set_subordinate_stats(PortCode::A, 9, 9, tl, Vec::new());
         w
+    }
+
+    #[test]
+    fn from_uwp_accepts_x_starport() {
+        // `X` = no starport; the world must parse, not error.
+        let w = World::from_uwp("Frontier", "X788899-A", false, true).unwrap();
+        assert_eq!(w.port, PortCode::X);
+        assert_eq!(w.to_uwp(), "X788899-A");
+    }
+
+    #[test]
+    fn from_uwp_accepts_ehex_tech_level_g() {
+        // Tech Level `G` = 16 must parse via ehex and round-trip.
+        let w = World::from_uwp("HighTech", "A788899-G", false, true).unwrap();
+        assert_eq!(w.tech_level, 16);
+        assert_eq!(w.to_uwp(), "A788899-G");
+    }
+
+    #[test]
+    fn uwp_round_trips_high_ehex_attributes() {
+        // A column above F (here population = 18 = `J`, which skips `I`)
+        // survives the parse/format round-trip in proper Traveller ehex.
+        // Columns: A=port 7=size 8=atmo 8=hydro J=pop(18) 9=gov 9=law G=TL(16).
+        let w = World::from_uwp("Exotic", "A788J99-G", false, true).unwrap();
+        assert_eq!(w.population, 18);
+        assert_eq!(w.tech_level, 16);
+        assert_eq!(w.to_uwp(), "A788J99-G");
     }
 
     #[test]

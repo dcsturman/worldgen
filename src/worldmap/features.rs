@@ -157,6 +157,10 @@ fn place_cities(grid: &mut Grid, uwp: &Uwp, rng: &mut ChaCha8Rng) {
     if eligible.is_empty() {
         return;
     }
+    // `X` (no starport) and `Y` (no starport, no landing) worlds have no
+    // starport to mark — the rank-0 city is just the largest settlement, not
+    // a port host, so it renders like any other city (no red starport glyph).
+    let has_starport = !matches!(uwp.starport, 'X' | 'Y');
     let mut taken: Vec<bool> = vec![false; eligible.len()];
     // Big cities (Megacity/Major) repel each other to avoid clumping; smaller
     // tiers place freely. Chord distance on the unit sphere; ~2 hexes ≈ 0.32.
@@ -198,7 +202,7 @@ fn place_cities(grid: &mut Grid, uwp: &Uwp, rng: &mut ChaCha8Rng) {
             pick -= *w;
         }
         let hex_idx = eligible[chosen_local];
-        let starport = rank == 0;
+        let starport = rank == 0 && has_starport;
         grid.hexes[hex_idx].features.push(Feature::City {
             tier: *tier,
             starport,
