@@ -92,7 +92,11 @@ async fn get_system_returns_png_with_cors_headers() {
     assert_eq!(&body[..8], b"\x89PNG\r\n\x1a\n");
     let w = u32::from_be_bytes([body[16], body[17], body[18], body[19]]);
     let h = u32::from_be_bytes([body[20], body[21], body[22], body[23]]);
-    assert_eq!((w, h), (3200, 1800), "default scale=2.0 should be 3200x1800");
+    assert_eq!(
+        (w, h),
+        (3200, 1800),
+        "default scale=2.0 should be 3200x1800"
+    );
 }
 
 #[tokio::test]
@@ -111,7 +115,10 @@ async fn get_system_svg_returns_svg_with_cors_and_body_groups() {
     assert!(head.contains("Access-Control-Allow-Methods: GET, HEAD, OPTIONS"));
 
     let svg = String::from_utf8(body).expect("SVG body is UTF-8");
-    assert!(svg.starts_with("<svg"), "body should be an SVG document:\n{svg:.80}");
+    assert!(
+        svg.starts_with("<svg"),
+        "body should be an SVG document:\n{svg:.80}"
+    );
     assert!(svg.contains("</svg>"));
     assert!(
         svg.contains(r#"class="sysmap-body""#),
@@ -190,20 +197,27 @@ async fn get_system_with_missing_required_param_returns_400() {
     );
     let buf = send_request(addr, &req).await;
     let (head, body) = split_response(&buf);
-    assert!(head.starts_with("HTTP/1.1 400 Bad Request\r\n"), "head:\n{head}");
+    assert!(
+        head.starts_with("HTTP/1.1 400 Bad Request\r\n"),
+        "head:\n{head}"
+    );
     let body = String::from_utf8_lossy(&body);
-    assert!(body.contains("hex"), "body should name the missing param: {body}");
+    assert!(
+        body.contains("hex"),
+        "body should name the missing param: {body}"
+    );
 }
 
 #[tokio::test]
 async fn options_returns_204_with_cors_headers() {
     let addr = spawn_http_server().await;
-    let req = format!(
-        "OPTIONS /system HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
-    );
+    let req = format!("OPTIONS /system HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n");
     let buf = send_request(addr, &req).await;
     let head = split_response(&buf).0;
-    assert!(head.starts_with("HTTP/1.1 204 No Content\r\n"), "head:\n{head}");
+    assert!(
+        head.starts_with("HTTP/1.1 204 No Content\r\n"),
+        "head:\n{head}"
+    );
     assert!(head.contains("Access-Control-Allow-Origin: *"));
     assert!(head.contains("Access-Control-Allow-Methods: GET, HEAD, OPTIONS"));
 }
@@ -211,12 +225,14 @@ async fn options_returns_204_with_cors_headers() {
 #[tokio::test]
 async fn unknown_path_returns_404() {
     let addr = spawn_http_server().await;
-    let req = format!(
-        "GET /not-a-real-endpoint HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
-    );
+    let req =
+        format!("GET /not-a-real-endpoint HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n");
     let buf = send_request(addr, &req).await;
     let head = split_response(&buf).0;
-    assert!(head.starts_with("HTTP/1.1 404 Not Found\r\n"), "head:\n{head}");
+    assert!(
+        head.starts_with("HTTP/1.1 404 Not Found\r\n"),
+        "head:\n{head}"
+    );
 }
 
 #[tokio::test]
@@ -228,7 +244,10 @@ async fn invalid_hex_quad_returns_400() {
     );
     let buf = send_request(addr, &req).await;
     let head = split_response(&buf).0;
-    assert!(head.starts_with("HTTP/1.1 400 Bad Request\r\n"), "head:\n{head}");
+    assert!(
+        head.starts_with("HTTP/1.1 400 Bad Request\r\n"),
+        "head:\n{head}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -239,8 +258,7 @@ async fn invalid_hex_quad_returns_400() {
 // — slow but reproducible without GCP creds.
 // ---------------------------------------------------------------------------
 
-const NORICUM_WORLD_QUERY: &str =
-    "sector=Trojan+Reach&hex=2018&name=Noricum&uwp=D8867BB-1";
+const NORICUM_WORLD_QUERY: &str = "sector=Trojan+Reach&hex=2018&name=Noricum&uwp=D8867BB-1";
 
 #[tokio::test]
 async fn get_world_returns_png_with_cors_and_x_cache_headers() {
@@ -262,7 +280,11 @@ async fn get_world_returns_png_with_cors_and_x_cache_headers() {
         "expected X-Cache: DISABLED with debug bucket, head:\n{head}"
     );
 
-    assert!(body.len() > 10_000, "PNG suspiciously small: {} bytes", body.len());
+    assert!(
+        body.len() > 10_000,
+        "PNG suspiciously small: {} bytes",
+        body.len()
+    );
     assert_eq!(&body[..8], b"\x89PNG\r\n\x1a\n");
 }
 
@@ -281,7 +303,10 @@ async fn get_world_at_canonical_scale_matches_no_scale_param_byte_for_byte() {
     );
     let a = split_response(&send_request(addr, &req_default).await).1;
     let b = split_response(&send_request(addr, &req_explicit).await).1;
-    assert_eq!(a, b, "default and explicit scale=1.0 must produce identical bytes");
+    assert_eq!(
+        a, b,
+        "default and explicit scale=1.0 must produce identical bytes"
+    );
 }
 
 #[tokio::test]
@@ -337,7 +362,10 @@ async fn get_world_with_missing_required_param_returns_400() {
     );
     let buf = send_request(addr, &req).await;
     let (head, body) = split_response(&buf);
-    assert!(head.starts_with("HTTP/1.1 400 Bad Request\r\n"), "head:\n{head}");
+    assert!(
+        head.starts_with("HTTP/1.1 400 Bad Request\r\n"),
+        "head:\n{head}"
+    );
     let body = String::from_utf8_lossy(&body);
     assert!(body.contains("hex"));
 }
@@ -372,5 +400,8 @@ async fn get_world_with_scale_below_1_returns_400() {
     );
     let buf = send_request(addr, &req).await;
     let head = split_response(&buf).0;
-    assert!(head.starts_with("HTTP/1.1 400 Bad Request\r\n"), "head:\n{head}");
+    assert!(
+        head.starts_with("HTTP/1.1 400 Bad Request\r\n"),
+        "head:\n{head}"
+    );
 }

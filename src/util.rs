@@ -29,9 +29,8 @@ pub struct RngScope {
 
 impl RngScope {
     pub fn new(seed: u64) -> Self {
-        let prev = WORLDGEN_RNG.with(|cell| {
-            cell.borrow_mut().replace(ChaCha8Rng::seed_from_u64(seed))
-        });
+        let prev =
+            WORLDGEN_RNG.with(|cell| cell.borrow_mut().replace(ChaCha8Rng::seed_from_u64(seed)));
         RngScope { prev }
     }
 }

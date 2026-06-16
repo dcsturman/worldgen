@@ -70,21 +70,24 @@
 //! The module includes robust error handling:
 //!
 //! ### Invalid Parameters
-//! - Invalid log levels are ignored (no logger initialized)
+//! - Unrecognized log levels fall back to `Error` (errors still surface)
 //! - Malformed URLs are handled gracefully
 //! - Missing parameters use sensible defaults
 //!
 //! ### Fallback Behavior
+//! - If no `log` parameter is given, the logger defaults to `Error` level so
+//!   genuine failures (e.g. TravellerMap connectivity/response errors) always
+//!   appear in the console
 //! - If no module is specified, defaults to "worldgen" prefix
-//! - If URL parsing fails, no logger is initialized (silent failure)
 //! - Application continues normally even if logging setup fails
 //!
 //! ## Performance Considerations
 //!
 //! ### Production Usage
-//! - Logging should be disabled in production builds for performance
+//! - The default `Error` level only emits on actual failures, so the
+//!   production cost is negligible; raise verbosity with `?log=` when needed
 //! - URL parameter parsing is lightweight and fast
-//! - No overhead when logging is not enabled
+//! - Higher levels (debug/trace) can be verbose and should stay opt-in
 //!
 //! ### Development Usage
 //! - Debug and trace levels can generate significant output
@@ -209,26 +212,28 @@ pub fn init_from_url() {
         })
         .collect();
 
-    if let Some(log_param) = params.get("log") {
-        let log_level = match log_param.to_lowercase().as_str() {
-            "error" => log::Level::Error,
-            "warn" => log::Level::Warn,
-            "info" => log::Level::Info,
-            "debug" => log::Level::Debug,
-            "trace" => log::Level::Trace,
-            _ => return, // Invalid log level, don't initialize logger
-        };
+    // Default to `Error` so genuine failures — e.g. a TravellerMap URL that
+    // can't be reached or returns a bad response — always surface in the
+    // browser console, even with no `?log=` override. `?log=<level>` raises
+    // the verbosity (warn/info/debug/trace); an unrecognized value falls
+    // back to errors-only rather than disabling logging entirely. Error-level
+    // logging only fires on actual errors, so the production cost is nil.
+    let log_level = match params.get("log").map(|s| s.to_lowercase()).as_deref() {
+        Some("error") => log::Level::Error,
+        Some("warn") => log::Level::Warn,
+        Some("info") => log::Level::Info,
+        Some("debug") => log::Level::Debug,
+        Some("trace") => log::Level::Trace,
+        _ => log::Level::Error,
+    };
 
-        let mut config = wasm_logger::Config::new(log_level);
-
-        // Add module prefix if specified
-        if let Some(module) = params.get("module") {
-            config = config.module_prefix(module);
-        } else {
-            // Default to worldgen if no module specified
-            config = config.module_prefix("worldgen");
-        }
-
-        wasm_logger::init(config);
+    let mut config = wasm_logger::Config::new(log_level);
+    // Add module prefix if specified, else default to the whole crate.
+    if let Some(module) = params.get("module") {
+        config = config.module_prefix(module);
+    } else {
+        config = config.module_prefix("worldgen");
     }
+
+    wasm_logger::init(config);
 }

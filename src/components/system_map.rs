@@ -188,11 +188,12 @@ fn trigger_png_download(bytes: &[u8], filename: &str) -> Result<(), JsValue> {
     let a: HtmlAnchorElement = document.create_element("a")?.dyn_into()?;
     a.set_href(&url);
     a.set_download(filename);
-    let body = document.body().ok_or_else(|| JsValue::from_str("no body"))?;
+    let body = document
+        .body()
+        .ok_or_else(|| JsValue::from_str("no body"))?;
     body.append_child(&a)?;
     a.click();
     body.remove_child(&a)?;
     Url::revoke_object_url(&url)?;
     Ok(())
 }
-

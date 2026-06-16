@@ -366,7 +366,10 @@ fn central_cluster(system: &System) -> CentralCluster<'_> {
         stars.push((&ter.star, ter.name.as_str(), false));
     }
 
-    let radii: Vec<f32> = stars.iter().map(|(s, _, _)| star_radius_px(s.size)).collect();
+    let radii: Vec<f32> = stars
+        .iter()
+        .map(|(s, _, _)| star_radius_px(s.size))
+        .collect();
     let n = stars.len();
 
     if n == 1 {
@@ -406,12 +409,7 @@ fn central_cluster(system: &System) -> CentralCluster<'_> {
     CentralCluster { members }
 }
 
-fn draw_bodies<R: Renderer + ?Sized>(
-    r: &mut R,
-    system: &System,
-    max_orbit: usize,
-    min_orbit: f32,
-) {
+fn draw_bodies<R: Renderer + ?Sized>(r: &mut R, system: &System, max_orbit: usize, min_orbit: f32) {
     for (orbit, slot) in system.orbit_slots.iter().enumerate() {
         let Some(content) = slot else { continue };
         let ring_r = orbit_radius_px(orbit, max_orbit, min_orbit);
@@ -420,8 +418,16 @@ fn draw_bodies<R: Renderer + ?Sized>(
         match content {
             OrbitContent::World(w) => {
                 let belt = is_belt(w);
-                let kind = if belt { BodyKind::Belt } else { BodyKind::World };
-                r.begin_group(&BodyMeta::new(kind, w.name.clone()).orbit(orbit).uwp(w.to_uwp()));
+                let kind = if belt {
+                    BodyKind::Belt
+                } else {
+                    BodyKind::World
+                };
+                r.begin_group(
+                    &BodyMeta::new(kind, w.name.clone())
+                        .orbit(orbit)
+                        .uwp(w.to_uwp()),
+                );
                 // For a belt `draw_world` only emits the label and returns;
                 // the scatter/band is then drawn over it (order preserved
                 // from the original so the raster output is unchanged).
@@ -501,13 +507,7 @@ fn draw_gas_giant<R: Renderer + ?Sized>(r: &mut R, gg: &GasGiant, cx: f32, cy: f
 /// Render a companion star (secondary or tertiary in a System orbit slot)
 /// as a spectral-tinted disc sized by luminosity class, with a soft halo
 /// and a name label.
-fn draw_companion_star<R: Renderer + ?Sized>(
-    r: &mut R,
-    star: &Star,
-    name: &str,
-    cx: f32,
-    cy: f32,
-) {
+fn draw_companion_star<R: Renderer + ?Sized>(r: &mut R, star: &Star, name: &str, cx: f32, cy: f32) {
     let (sr, sg, sb) = star_color(star.star_type);
     let radius = star_radius_px(star.size);
     r.fill_circle(cx, cy, radius * 2.4, (sr, sg, sb, 24));

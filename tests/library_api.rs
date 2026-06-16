@@ -17,15 +17,18 @@ use worldgen::{
 const PNG_MAGIC: &[u8] = b"\x89PNG\r\n\x1a\n";
 
 fn noricum_constraints() -> SystemConstraints {
-    SystemConstraints::from_main_world("Noricum", "D8867BB-1")
-        .expect("Noricum UWP is valid")
+    SystemConstraints::from_main_world("Noricum", "D8867BB-1").expect("Noricum UWP is valid")
 }
 
 #[test]
 fn system_png_is_valid_png() {
     let bytes = generate_system_png(42, noricum_constraints())
         .expect("a fully-specified main-world constraint always generates");
-    assert!(bytes.len() > 1000, "PNG suspiciously small: {} bytes", bytes.len());
+    assert!(
+        bytes.len() > 1000,
+        "PNG suspiciously small: {} bytes",
+        bytes.len()
+    );
     assert_eq!(&bytes[..8], PNG_MAGIC);
 }
 
@@ -35,7 +38,10 @@ fn system_png_is_deterministic() {
     // This is the headline determinism guarantee for the library API.
     let a = generate_system_png(42, noricum_constraints()).unwrap();
     let b = generate_system_png(42, noricum_constraints()).unwrap();
-    assert_eq!(a, b, "same (seed, constraints) produced different PNG bytes");
+    assert_eq!(
+        a, b,
+        "same (seed, constraints) produced different PNG bytes"
+    );
 }
 
 #[test]
@@ -46,7 +52,10 @@ fn different_seeds_produce_different_systems() {
     // seeds should produce wildly different streams. If this ever fires
     // it's almost certainly a regression where the seed isn't reaching
     // the generation path.
-    assert_ne!(a, b, "different seeds produced identical PNG — seed not plumbed?");
+    assert_ne!(
+        a, b,
+        "different seeds produced identical PNG — seed not plumbed?"
+    );
 }
 
 #[test]
@@ -98,7 +107,10 @@ fn planet_png_scaled_at_2_0_doubles_dimensions() {
 fn planet_png_scaled_is_deterministic() {
     let a = generate_planet_png_scaled(42, "A788899-A", Some("Regina"), 2.0).unwrap();
     let b = generate_planet_png_scaled(42, "A788899-A", Some("Regina"), 2.0).unwrap();
-    assert_eq!(a, b, "same (seed, uwp, name, scale) must produce identical bytes");
+    assert_eq!(
+        a, b,
+        "same (seed, uwp, name, scale) must produce identical bytes"
+    );
 }
 
 #[test]
@@ -206,14 +218,18 @@ fn build_constraints_is_deterministic_under_same_seed() {
         "Noricum",
         "D8867BB-1",
         &[StarSpec::new(StarType::G, 2, StarSize::V)],
-        2, 1, 3,
+        2,
+        1,
+        3,
     )
     .unwrap();
     let cs2 = build_constraints(
         "Noricum",
         "D8867BB-1",
         &[StarSpec::new(StarType::G, 2, StarSize::V)],
-        2, 1, 3,
+        2,
+        1,
+        3,
     )
     .unwrap();
     let a = generate_system_png(99, cs1).unwrap();
@@ -223,10 +239,7 @@ fn build_constraints_is_deterministic_under_same_seed() {
 
 #[test]
 fn build_constraints_rejects_malformed_uwp() {
-    let result = build_constraints(
-        "Noricum", "not-a-uwp",
-        &[], 0, 0, 0,
-    );
+    let result = build_constraints("Noricum", "not-a-uwp", &[], 0, 0, 0);
     assert!(matches!(result, Err(WorldgenError::Constraints(_))));
 }
 
@@ -234,11 +247,7 @@ fn build_constraints_rejects_malformed_uwp() {
 fn build_constraints_with_zero_stars_lets_generator_roll() {
     // Empty stars slice: generator rolls the entire star roster from
     // the main world's UWP using the existing star generation pipeline.
-    let cs = build_constraints(
-        "Regina", "A788899-A",
-        &[], 1, 0, 2,
-    )
-    .unwrap();
+    let cs = build_constraints("Regina", "A788899-A", &[], 1, 0, 2).unwrap();
     let png = generate_system_png(7, cs).expect("no-star spec should still generate");
     assert!(png.len() > 1000);
 }

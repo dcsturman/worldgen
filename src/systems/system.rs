@@ -1848,8 +1848,7 @@ mod tests {
         // subordinate-world population path.
         let main_uwp = "E410000-0";
         for _ in 0..100 {
-            let main_world =
-                World::from_uwp("Aacheon", main_uwp, false, true).unwrap();
+            let main_world = World::from_uwp("Aacheon", main_uwp, false, true).unwrap();
             let _ = System::generate_system(main_world);
         }
     }

@@ -173,13 +173,21 @@ impl StarSpec {
     /// common case (e.g. `StarSpec::new(StarType::G, 2, StarSize::V)` for
     /// a G2 V star).
     pub fn new(spectral: StarType, subtype: u8, size: StarSize) -> Self {
-        Self { spectral, subtype: Some(subtype), size }
+        Self {
+            spectral,
+            subtype: Some(subtype),
+            size,
+        }
     }
 
     /// Construct a `StarSpec` with the subtype left for the generator
     /// to roll.
     pub fn with_rolled_subtype(spectral: StarType, size: StarSize) -> Self {
-        Self { spectral, subtype: None, size }
+        Self {
+            spectral,
+            subtype: None,
+            size,
+        }
     }
 }
 
@@ -238,13 +246,16 @@ pub fn build_constraints(
     num_planetoid_belts: usize,
     num_planets: usize,
 ) -> Result<SystemConstraints, WorldgenError> {
-    let mut cs = SystemConstraints::from_main_world(main_world_name, main_world_uwp).map_err(
-        |e| WorldgenError::Constraints(vec![ConstraintError::ContradictoryUwp(e)]),
-    )?;
+    let mut cs = SystemConstraints::from_main_world(main_world_name, main_world_uwp)
+        .map_err(|e| WorldgenError::Constraints(vec![ConstraintError::ContradictoryUwp(e)]))?;
 
     for (i, spec) in stars.iter().enumerate() {
         cs.bodies.push(Constraint::Star {
-            orbit: if i == 0 { Some(StarOrbit::Primary) } else { None },
+            orbit: if i == 0 {
+                Some(StarOrbit::Primary)
+            } else {
+                None
+            },
             spectral: Some(spec.spectral),
             subtype: spec.subtype,
             size: Some(spec.size),

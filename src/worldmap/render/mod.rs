@@ -119,7 +119,9 @@ pub fn render_png(map: &WorldMap) -> Result<Vec<u8>, String> {
 /// Returns `Err` if `scale < 1.0` or not finite.
 pub fn render_png_scaled(map: &WorldMap, scale: f32) -> Result<Vec<u8>, String> {
     if !scale.is_finite() || scale < 1.0 {
-        return Err(format!("render scale must be finite and >= 1.0, got {scale}"));
+        return Err(format!(
+            "render scale must be finite and >= 1.0, got {scale}"
+        ));
     }
     let effective_scale = PNG_RASTER_SCALE * scale as f64;
     let total_h = SHEET_HEIGHT + LEGEND_HEIGHT;

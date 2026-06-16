@@ -219,11 +219,8 @@ async fn is_websocket_upgrade(stream: &tokio::net::TcpStream) -> bool {
     let mut buf = vec![0u8; 1024];
     // Up to ~250 ms for the first bytes — the client always sends the
     // request line + headers immediately, so a short wait is plenty.
-    let n = match tokio::time::timeout(
-        std::time::Duration::from_millis(250),
-        stream.peek(&mut buf),
-    )
-    .await
+    let n = match tokio::time::timeout(std::time::Duration::from_millis(250), stream.peek(&mut buf))
+        .await
     {
         Ok(Ok(n)) => n,
         _ => return false,

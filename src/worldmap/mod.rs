@@ -290,9 +290,18 @@ mod tests {
         };
         // A-port pop-8 world: at least one starport. X / Y (no starport):
         // none, even though they still have cities.
-        assert!(has_starport("A788899-A"), "A-port world should host a starport");
-        assert!(!has_starport("X788899-A"), "X-port world must place no starport");
-        assert!(!has_starport("Y788899-A"), "Y-port world must place no starport");
+        assert!(
+            has_starport("A788899-A"),
+            "A-port world should host a starport"
+        );
+        assert!(
+            !has_starport("X788899-A"),
+            "X-port world must place no starport"
+        );
+        assert!(
+            !has_starport("Y788899-A"),
+            "Y-port world must place no starport"
+        );
     }
 
     #[test]

@@ -533,10 +533,7 @@ pub fn SystemMain(
 /// labelled subsection containing the recursive SystemMain for that
 /// subsystem. Returns nothing for contact-binary companions or absent
 /// stars.
-fn render_companion_subsystem(
-    companion: Option<Box<System>>,
-    role: &'static str,
-) -> impl IntoView {
+fn render_companion_subsystem(companion: Option<Box<System>>, role: &'static str) -> impl IntoView {
     let Some(companion) = companion else {
         return ().into_any();
     };

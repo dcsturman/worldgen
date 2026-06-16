@@ -77,7 +77,10 @@ mod tests {
         // Snapshot test — if the hash recipe ever changes, this fails
         // loudly so we know to bump a version marker and warn consumers.
         let s = system_seed("Trojan Reach", 31, 28);
-        assert_eq!(s, 17167651877345473143_u64, "hash recipe changed; bump version");
+        assert_eq!(
+            s, 17167651877345473143_u64,
+            "hash recipe changed; bump version"
+        );
     }
 
     #[test]
@@ -110,7 +113,10 @@ mod tests {
     fn planet_seed_is_stable() {
         let sys = system_seed("Trojan Reach", 31, 28);
         let p = planet_seed(sys, 3, "Noricum");
-        assert_eq!(p, 1901839566870135919_u64, "hash recipe changed; bump version");
+        assert_eq!(
+            p, 1901839566870135919_u64,
+            "hash recipe changed; bump version"
+        );
     }
 
     #[test]

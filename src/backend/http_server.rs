@@ -38,8 +38,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
 use crate::api::{
-    build_constraints, generate_planet_png_scaled, generate_system_png_scaled,
-    generate_system_svg, parse_stellar,
+    build_constraints, generate_planet_png_scaled, generate_system_png_scaled, generate_system_svg,
+    parse_stellar,
 };
 use crate::backend::gcs::GcsClient;
 use crate::seed::{planet_seed, system_seed};
@@ -109,8 +109,13 @@ pub async fn handle_http(
     let (method, target) = match parse_request_line(&request_line) {
         Some(p) => p,
         None => {
-            return write_simple(reader.get_mut(), 400, "Bad Request", "Malformed request line")
-                .await;
+            return write_simple(
+                reader.get_mut(),
+                400,
+                "Bad Request",
+                "Malformed request line",
+            )
+            .await;
         }
     };
 
@@ -314,7 +319,10 @@ async fn handle_world(
 
     let sector = match params.get("sector") {
         Some(s) if !s.is_empty() => s.as_str(),
-        _ => return write_simple(stream, 400, "Bad Request", "missing required param: sector").await,
+        _ => {
+            return write_simple(stream, 400, "Bad Request", "missing required param: sector")
+                .await;
+        }
     };
     let hex = match params.get("hex") {
         Some(h) if !h.is_empty() => h.as_str(),
@@ -376,27 +384,19 @@ async fn handle_world(
     let (canonical_bytes, cache_status) = match gcs.get(&cache_object).await {
         Ok(Some(bytes)) => (bytes, "HIT"),
         Ok(None) if gcs.is_disabled() => {
-            let bytes = match generate_planet_png_scaled(
-                seed,
-                uwp,
-                Some(name),
-                PLANET_CANONICAL_SCALE,
-            ) {
-                Ok(b) => b,
-                Err(e) => return classify_render_error(stream, e).await,
-            };
+            let bytes =
+                match generate_planet_png_scaled(seed, uwp, Some(name), PLANET_CANONICAL_SCALE) {
+                    Ok(b) => b,
+                    Err(e) => return classify_render_error(stream, e).await,
+                };
             (bytes, "DISABLED")
         }
         Ok(None) => {
-            let bytes = match generate_planet_png_scaled(
-                seed,
-                uwp,
-                Some(name),
-                PLANET_CANONICAL_SCALE,
-            ) {
-                Ok(b) => b,
-                Err(e) => return classify_render_error(stream, e).await,
-            };
+            let bytes =
+                match generate_planet_png_scaled(seed, uwp, Some(name), PLANET_CANONICAL_SCALE) {
+                    Ok(b) => b,
+                    Err(e) => return classify_render_error(stream, e).await,
+                };
             // Fire-and-forget upload so the response ships immediately.
             // A failed upload just means the next request is another
             // cache miss — correctness is preserved, only the next
@@ -413,15 +413,11 @@ async fn handle_world(
         }
         Err(e) => {
             log::warn!("GCS get failed for {cache_object}: {e}; regenerating");
-            let bytes = match generate_planet_png_scaled(
-                seed,
-                uwp,
-                Some(name),
-                PLANET_CANONICAL_SCALE,
-            ) {
-                Ok(b) => b,
-                Err(e) => return classify_render_error(stream, e).await,
-            };
+            let bytes =
+                match generate_planet_png_scaled(seed, uwp, Some(name), PLANET_CANONICAL_SCALE) {
+                    Ok(b) => b,
+                    Err(e) => return classify_render_error(stream, e).await,
+                };
             (bytes, "BYPASS")
         }
     };
@@ -461,9 +457,7 @@ async fn classify_render_error(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use crate::api::WorldgenError::*;
     match e {
-        Map(m) => {
-            write_simple(stream, 422, "Unprocessable Entity", &format!("{m:?}")).await
-        }
+        Map(m) => write_simple(stream, 422, "Unprocessable Entity", &format!("{m:?}")).await,
         Constraints(_) | Render(_) => {
             write_simple(stream, 500, "Internal Server Error", &format!("{e}")).await
         }
@@ -491,8 +485,7 @@ fn planet_cache_key(seed: u64, uwp: &str, name: &str) -> u64 {
 /// Bilinear filtering is good enough for our 2.0 → 1.0 downsample;
 /// upgrade to a higher-quality filter later if it matters.
 fn downsample_png(bytes: &[u8], factor: f32) -> Result<Vec<u8>, String> {
-    let src = tiny_skia::Pixmap::decode_png(bytes)
-        .map_err(|e| format!("decode: {e}"))?;
+    let src = tiny_skia::Pixmap::decode_png(bytes).map_err(|e| format!("decode: {e}"))?;
     let target_w = ((src.width() as f32) * factor).round().max(1.0) as u32;
     let target_h = ((src.height() as f32) * factor).round().max(1.0) as u32;
     let mut dst = tiny_skia::Pixmap::new(target_w, target_h)

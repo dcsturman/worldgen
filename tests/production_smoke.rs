@@ -53,14 +53,12 @@ fn client() -> reqwest::Client {
 /// Canonical Noricum query for `/api/system` — the spec example. If
 /// this URL stops returning a valid PNG, external consumers (Traveller
 /// Map) break.
-const NORICUM_QUERY: &str =
-    "sector=Trojan+Reach&hex=2018&name=Noricum&uwp=D8867BB-1&pbg=804&stellar=G2+V+M9+V+M6+V&worlds=14";
+const NORICUM_QUERY: &str = "sector=Trojan+Reach&hex=2018&name=Noricum&uwp=D8867BB-1&pbg=804&stellar=G2+V+M9+V+M6+V&worlds=14";
 
 /// `/api/world` query — only needs the world identity (no PBG /
 /// stellar / system worlds) because the planet renderer takes the UWP
 /// directly.
-const NORICUM_WORLD_QUERY: &str =
-    "sector=Trojan+Reach&hex=2018&name=Noricum&uwp=D8867BB-1";
+const NORICUM_WORLD_QUERY: &str = "sector=Trojan+Reach&hex=2018&name=Noricum&uwp=D8867BB-1";
 
 #[tokio::test]
 #[ignore]
@@ -86,9 +84,21 @@ async fn live_system_endpoint_returns_valid_3200x1800_png() {
         "content-type should be image/png, got {ct}"
     );
 
-    let bytes = resp.bytes().await.expect("response body downloads").to_vec();
-    assert!(bytes.len() > 10_000, "PNG suspiciously small: {} bytes", bytes.len());
-    assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n", "missing PNG magic header");
+    let bytes = resp
+        .bytes()
+        .await
+        .expect("response body downloads")
+        .to_vec();
+    assert!(
+        bytes.len() > 10_000,
+        "PNG suspiciously small: {} bytes",
+        bytes.len()
+    );
+    assert_eq!(
+        &bytes[..8],
+        b"\x89PNG\r\n\x1a\n",
+        "missing PNG magic header"
+    );
 
     // PNG IHDR width/height — big-endian u32s at byte offsets 16..24.
     let w = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
@@ -268,7 +278,8 @@ async fn live_system_endpoint_is_byte_deterministic() {
         .unwrap()
         .to_vec();
     assert_eq!(
-        a, b,
+        a,
+        b,
         "same query produced different PNG bytes (len {} vs {}) — determinism contract broken",
         a.len(),
         b.len()
@@ -320,7 +331,11 @@ fn slow_client() -> reqwest::Client {
 #[ignore]
 async fn live_world_endpoint_returns_valid_png_with_cors_headers() {
     let url = format!("{}/api/world?{NORICUM_WORLD_QUERY}", base_url());
-    let resp = slow_client().get(&url).send().await.expect("HTTP GET succeeds");
+    let resp = slow_client()
+        .get(&url)
+        .send()
+        .await
+        .expect("HTTP GET succeeds");
 
     assert_eq!(
         resp.status().as_u16(),
@@ -335,7 +350,10 @@ async fn live_world_endpoint_returns_valid_png_with_cors_headers() {
         .to_str()
         .unwrap()
         .to_string();
-    assert!(ct.starts_with("image/png"), "content-type should be image/png, got {ct}");
+    assert!(
+        ct.starts_with("image/png"),
+        "content-type should be image/png, got {ct}"
+    );
     let headers = resp.headers().clone();
     assert_eq!(
         headers
@@ -351,8 +369,16 @@ async fn live_world_endpoint_returns_valid_png_with_cors_headers() {
         "expected X-Cache header on /world response"
     );
 
-    let bytes = resp.bytes().await.expect("response body downloads").to_vec();
-    assert!(bytes.len() > 10_000, "PNG suspiciously small: {} bytes", bytes.len());
+    let bytes = resp
+        .bytes()
+        .await
+        .expect("response body downloads")
+        .to_vec();
+    assert!(
+        bytes.len() > 10_000,
+        "PNG suspiciously small: {} bytes",
+        bytes.len()
+    );
     assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
 }
 
@@ -464,7 +490,8 @@ async fn live_world_endpoint_is_byte_deterministic() {
         .unwrap()
         .to_vec();
     assert_eq!(
-        a, b,
+        a,
+        b,
         "/world bytes drifted between calls — determinism broken (len {} vs {})",
         a.len(),
         b.len()
@@ -509,7 +536,11 @@ async fn live_world_endpoint_rejects_bad_uwp_with_422() {
         "{}/api/world?sector=x&hex=0000&name=x&uwp=X???????-?",
         base_url()
     );
-    let resp = slow_client().get(&url).send().await.expect("HTTP GET succeeds");
+    let resp = slow_client()
+        .get(&url)
+        .send()
+        .await
+        .expect("HTTP GET succeeds");
     assert_eq!(
         resp.status().as_u16(),
         422,

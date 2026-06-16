@@ -387,14 +387,54 @@ pub struct WorldDataResponse {
 /// let results = fetch_search_results(&url).await?;
 /// println!("Found {} results", results.results.count);
 /// ```
-pub async fn fetch_search_results(url: &str) -> Result<TravellerMapResponse, JsValue> {
+/// GET `url` and return the decoded JSON value, logging a categorized error
+/// (to the browser console via `log`) on any failure so problems with the
+/// configured TravellerMap service are diagnosable. Distinguishes:
+/// - couldn't reach the server at all (network / CORS / DNS / wrong host),
+/// - reached it but got a non-2xx HTTP status (404, 500, …),
+/// - got a body that isn't valid JSON (e.g. an HTML error page).
+///
+/// Every message includes the full request URL so a misconfigured
+/// `TRAVELLERMAP_URL` is obvious in the console.
+async fn fetch_json(url: &str) -> Result<JsValue, JsValue> {
     let request = web_sys::Request::new_with_str(url)?;
     let window = web_sys::window().unwrap();
-    let response_value = JsFuture::from(window.fetch_with_request(&request)).await?;
+    let response_value = JsFuture::from(window.fetch_with_request(&request))
+        .await
+        .map_err(|e| {
+            log::error!(
+                "TravellerMap request to {url} could not reach the server \
+                 (network/CORS/DNS — is the TravellerMap URL correct and CORS-enabled?): {e:?}"
+            );
+            e
+        })?;
     let response: web_sys::Response = response_value.dyn_into()?;
-    let json = JsFuture::from(response.json()?).await?;
-    let result: TravellerMapResponse = serde_wasm_bindgen::from_value(json)?;
-    Ok(result)
+    if !response.ok() {
+        let msg = format!(
+            "TravellerMap request to {url} returned HTTP {} {}",
+            response.status(),
+            response.status_text(),
+        );
+        log::error!("{msg}");
+        return Err(JsValue::from_str(&msg));
+    }
+    JsFuture::from(response.json()?).await.map_err(|e| {
+        log::error!(
+            "TravellerMap response from {url} was not valid JSON \
+             (is this a TravellerMap-compatible endpoint?): {e:?}"
+        );
+        e
+    })
+}
+
+pub async fn fetch_search_results(url: &str) -> Result<TravellerMapResponse, JsValue> {
+    let json = fetch_json(url).await?;
+    serde_wasm_bindgen::from_value(json).map_err(|e| {
+        log::error!(
+            "TravellerMap search response from {url} didn't match the expected schema: {e}"
+        );
+        JsValue::from(e)
+    })
 }
 
 /// Fetch detailed world data from Traveller Map data API
@@ -442,21 +482,17 @@ pub async fn fetch_data_world(sector: &str, hex: &str) -> Result<WorldDataRespon
         hex
     );
 
-    let request = web_sys::Request::new_with_str(&url)?;
-    let window = web_sys::window().unwrap();
-    let response_value = JsFuture::from(window.fetch_with_request(&request)).await?;
-    let response: web_sys::Response = response_value.dyn_into()?;
-    let json = JsFuture::from(response.json()?).await?;
-    let api_response: WorldDataApiResponse = serde_wasm_bindgen::from_value(json)?;
+    let json = fetch_json(&url).await?;
+    let api_response: WorldDataApiResponse = serde_wasm_bindgen::from_value(json).map_err(|e| {
+        log::error!("TravellerMap world data from {url} didn't match the expected schema: {e}");
+        JsValue::from(e)
+    })?;
 
     // Take the first world from the array
-    let result = api_response
-        .worlds
-        .into_iter()
-        .next()
-        .ok_or_else(|| JsValue::from_str("No worlds found in response"))?;
-
-    Ok(result)
+    api_response.worlds.into_iter().next().ok_or_else(|| {
+        log::warn!("TravellerMap returned no world for {url} (empty 'worlds' array)");
+        JsValue::from_str("No worlds found in response")
+    })
 }
 
 /// Creates a world search component with TravellerMap integration

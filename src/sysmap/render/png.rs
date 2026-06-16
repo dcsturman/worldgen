@@ -78,10 +78,38 @@ impl Renderer for PngRenderer {
         const KAPPA: f32 = 0.552_284_8;
         let mut pb = PathBuilder::new();
         pb.move_to(cx + rx, cy);
-        pb.cubic_to(cx + rx, cy + KAPPA * ry, cx + KAPPA * rx, cy + ry, cx, cy + ry);
-        pb.cubic_to(cx - KAPPA * rx, cy + ry, cx - rx, cy + KAPPA * ry, cx - rx, cy);
-        pb.cubic_to(cx - rx, cy - KAPPA * ry, cx - KAPPA * rx, cy - ry, cx, cy - ry);
-        pb.cubic_to(cx + KAPPA * rx, cy - ry, cx + rx, cy - KAPPA * ry, cx + rx, cy);
+        pb.cubic_to(
+            cx + rx,
+            cy + KAPPA * ry,
+            cx + KAPPA * rx,
+            cy + ry,
+            cx,
+            cy + ry,
+        );
+        pb.cubic_to(
+            cx - KAPPA * rx,
+            cy + ry,
+            cx - rx,
+            cy + KAPPA * ry,
+            cx - rx,
+            cy,
+        );
+        pb.cubic_to(
+            cx - rx,
+            cy - KAPPA * ry,
+            cx - KAPPA * rx,
+            cy - ry,
+            cx,
+            cy - ry,
+        );
+        pb.cubic_to(
+            cx + KAPPA * rx,
+            cy - ry,
+            cx + rx,
+            cy - KAPPA * ry,
+            cx + rx,
+            cy,
+        );
         pb.close();
         if let Some(path) = pb.finish() {
             let mut paint = Paint::default();

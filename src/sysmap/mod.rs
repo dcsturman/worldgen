@@ -60,7 +60,9 @@ pub fn render_png(system: &System) -> Result<Vec<u8>, String> {
 /// into any RNG — same `(system, scale)` always produces the same bytes.
 pub fn render_png_scaled(system: &System, scale: f32) -> Result<Vec<u8>, String> {
     if !scale.is_finite() || scale < 1.0 {
-        return Err(format!("render scale must be a finite value >= 1.0, got {scale}"));
+        return Err(format!(
+            "render scale must be a finite value >= 1.0, got {scale}"
+        ));
     }
     let mut r = PngRenderer::new(CANVAS_W, CANVAS_H, scale)?;
     render::render_scene(&mut r, system);
@@ -211,7 +213,10 @@ mod tests {
         let svg = render_svg(&sys);
         assert!(svg.contains(r#"data-kind="world""#), "no world group");
         assert!(svg.contains("data-uwp="), "world group missing data-uwp");
-        assert!(svg.contains("data-orbit="), "world group missing data-orbit");
+        assert!(
+            svg.contains("data-orbit="),
+            "world group missing data-orbit"
+        );
         assert!(
             svg.contains("data-distance-mkm="),
             "world group missing data-distance-mkm"

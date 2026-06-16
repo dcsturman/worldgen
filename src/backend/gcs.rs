@@ -69,7 +69,10 @@ pub enum GcsError {
     /// error — it's surfaced as `Ok(None)`. Anything else (403, 5xx,
     /// etc.) lands here with the status code and (truncated) body so
     /// the caller can log a usable diagnostic.
-    Storage { status: u16, body: String },
+    Storage {
+        status: u16,
+        body: String,
+    },
 }
 
 impl std::fmt::Display for GcsError {
@@ -117,9 +120,7 @@ impl GcsClient {
             // back to disabled mode so the rest of the backend can
             // still serve traffic.
             if let Err(e) = auth_provider().await {
-                log::warn!(
-                    "GCS auth provider init failed; falling back to disabled mode: {e}"
-                );
+                log::warn!("GCS auth provider init failed; falling back to disabled mode: {e}");
                 return Ok(Self { bucket: None, http });
             }
         }
