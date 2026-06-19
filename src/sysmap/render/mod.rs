@@ -73,6 +73,7 @@ pub struct BodyMeta {
     pub uwp: Option<String>,
     pub orbit: Option<usize>,
     pub distance_mkm: Option<f32>,
+    pub spectral: Option<String>,
 }
 
 impl BodyMeta {
@@ -83,6 +84,7 @@ impl BodyMeta {
             uwp: None,
             orbit: None,
             distance_mkm: None,
+            spectral: None,
         }
     }
 
@@ -96,6 +98,13 @@ impl BodyMeta {
 
     fn uwp(mut self, uwp: impl Into<String>) -> Self {
         self.uwp = Some(uwp.into());
+        self
+    }
+
+    /// Attach the star's spectral classification (e.g. `"G2 V"`), serialised
+    /// as the SVG `data-spectral` attribute on a star group.
+    fn spectral(mut self, s: impl Into<String>) -> Self {
+        self.spectral = Some(s.into());
         self
     }
 }
@@ -170,7 +179,7 @@ pub(crate) fn render_scene<R: Renderer + ?Sized>(r: &mut R, system: &System) {
     draw_orbit_rings(r, system, max_orbit, min_orbit);
     draw_jump_shadows(r, system, max_orbit, min_orbit, &cluster);
     for member in &cluster.members {
-        r.begin_group(&BodyMeta::new(BodyKind::Star, member.name));
+        r.begin_group(&BodyMeta::new(BodyKind::Star, member.name).spectral(member.star.to_string()));
         draw_star(r, member.star, member.cx, member.cy, member.radius);
         if cluster.members.len() > 1 {
             // For a multi-star contact group, label each star with its own
@@ -444,14 +453,22 @@ fn draw_bodies<R: Renderer + ?Sized>(r: &mut R, system: &System, max_orbit: usiz
             }
             OrbitContent::Secondary => {
                 if let Some(sec) = system.secondary.as_deref() {
-                    r.begin_group(&BodyMeta::new(BodyKind::Star, sec.name.clone()).orbit(orbit));
+                    r.begin_group(
+                        &BodyMeta::new(BodyKind::Star, sec.name.clone())
+                            .orbit(orbit)
+                            .spectral(sec.star.to_string()),
+                    );
                     draw_companion_star(r, &sec.star, &sec.name, cx, cy);
                     r.end_group();
                 }
             }
             OrbitContent::Tertiary => {
                 if let Some(ter) = system.tertiary.as_deref() {
-                    r.begin_group(&BodyMeta::new(BodyKind::Star, ter.name.clone()).orbit(orbit));
+                    r.begin_group(
+                        &BodyMeta::new(BodyKind::Star, ter.name.clone())
+                            .orbit(orbit)
+                            .spectral(ter.star.to_string()),
+                    );
                     draw_companion_star(r, &ter.star, &ter.name, cx, cy);
                     r.end_group();
                 }
@@ -570,7 +587,7 @@ fn draw_far_companion<R: Renderer + ?Sized>(
 ) {
     let radius = star_radius_px(comp.star.size);
     let (sr, sg, sb) = star_color(comp.star.star_type);
-    r.begin_group(&BodyMeta::new(BodyKind::Star, comp.name.clone()));
+    r.begin_group(&BodyMeta::new(BodyKind::Star, comp.name.clone()).spectral(comp.star.to_string()));
     r.fill_circle(cx, cy, radius * 2.4, (sr, sg, sb, 24));
     r.fill_circle(cx, cy, radius * 1.5, (sr, sg, sb, 90));
     r.fill_circle(cx, cy, radius, (sr, sg, sb, 255));
@@ -638,20 +655,34 @@ fn draw_inline_subsystem<R: Renderer + ?Sized>(
         match content {
             OrbitContent::World(w) => {
                 if is_belt(w) {
+                    r.begin_group(
+                        &BodyMeta::new(BodyKind::Belt, w.name.clone())
+                            .orbit(o)
+                            .uwp(w.to_uwp()),
+                    );
                     draw_inline_belt(r, cx, cy, ring_r, o);
+                    r.end_group();
                 } else {
                     let wr = (world_radius_px(w.size) * 0.5).max(1.0);
+                    r.begin_group(
+                        &BodyMeta::new(BodyKind::World, w.name.clone())
+                            .orbit(o)
+                            .uwp(w.to_uwp()),
+                    );
                     r.fill_circle(bx, by, wr, (WORLD_DISC.0, WORLD_DISC.1, WORLD_DISC.2, 255));
+                    r.end_group();
                 }
             }
             OrbitContent::GasGiant(gg) => {
                 let gr = (gas_giant_radius_px(gg) * 0.55).max(2.0);
+                r.begin_group(&BodyMeta::new(BodyKind::GasGiant, gg.name.clone()).orbit(o));
                 r.fill_circle(
                     bx,
                     by,
                     gr,
                     (GAS_GIANT_DISC.0, GAS_GIANT_DISC.1, GAS_GIANT_DISC.2, 255),
                 );
+                r.end_group();
             }
             _ => {}
         }

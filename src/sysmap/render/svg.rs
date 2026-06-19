@@ -123,6 +123,9 @@ impl Renderer for SvgRenderer {
         if let Some(uwp) = &meta.uwp {
             let _ = write!(self.body, r#" data-uwp="{}""#, escape_xml(uwp));
         }
+        if let Some(spectral) = &meta.spectral {
+            let _ = write!(self.body, r#" data-spectral="{}""#, escape_xml(spectral));
+        }
         if let Some(orbit) = meta.orbit {
             let _ = write!(self.body, r#" data-orbit="{orbit}""#);
         }

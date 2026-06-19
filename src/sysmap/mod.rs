@@ -75,8 +75,10 @@ pub fn render_png_scaled(system: &System, scale: f32) -> Result<Vec<u8>, String>
 /// so there's no scale parameter — the browser scales the whole document.
 /// Each interactive body (star, world, gas giant, belt, moon) is wrapped
 /// in a `<g class="sysmap-body" data-kind=… data-name=… data-uwp=…
-/// data-orbit=… data-distance-mkm=…>` element so a consuming web app can
-/// attach click/hover handlers and read the body's identity off the DOM.
+/// data-orbit=… data-distance-mkm=… data-spectral=…>` element so a
+/// consuming web app can attach click/hover handlers and read the body's
+/// identity off the DOM. `data-spectral` (e.g. `"G2 V"`) is emitted on
+/// star groups only.
 ///
 /// Pure: same `&System` always produces the same string.
 pub fn render_svg(system: &System) -> String {
@@ -236,6 +238,7 @@ mod tests {
             uwp: Some("X<1>".to_string()),
             orbit: None,
             distance_mkm: None,
+            spectral: None,
         });
         r.fill_text(0.0, 0.0, 12.0, "A & B <test>", (255, 255, 255));
         r.end_group();
