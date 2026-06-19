@@ -408,6 +408,24 @@ pub fn travellermap_base_url() -> &'static str {
     raw.trim_end_matches('/')
 }
 
+/// The base URL of our self-hosted TravellerMap instance, but **only** when
+/// it differs from the canonical `https://travellermap.com`.
+///
+/// Returns `Some(url)` when this build was compiled with a custom
+/// `TRAVELLERMAP_URL` (i.e. it points at our own reimplementation), and
+/// `None` when it targets the upstream site. The frontend uses this to
+/// decide whether to surface the "independent reimplementation" banner —
+/// there's no point advertising our instance when we're just proxying the
+/// real one.
+pub fn custom_travellermap_url() -> Option<&'static str> {
+    let url = travellermap_base_url();
+    if url == DEFAULT_TRAVELLERMAP_URL {
+        None
+    } else {
+        Some(url)
+    }
+}
+
 /// Decode a single Traveller "extended hex" (ehex) digit to its value.
 ///
 /// Traveller uses pseudo-hex that runs past `F`: `0`-`9` then the letters

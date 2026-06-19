@@ -41,6 +41,11 @@
 
 use leptos::prelude::*;
 
+use crate::util::custom_travellermap_url;
+
+/// Canonical upstream site, linked from the Traveller Map card.
+const UPSTREAM_TRAVELLERMAP_URL: &str = "https://travellermap.com";
+
 /// Selector component that provides a user interface for selecting between different tools
 #[component]
 pub fn Selector() -> impl IntoView {
@@ -59,6 +64,31 @@ pub fn Selector() -> impl IntoView {
     let navigate_to_worldmap = move |_| {
         let _ = web_sys::window().unwrap().location().set_href("/worldmap");
     };
+
+    // Only surface the Traveller Map card when this build points at our own
+    // self-hosted instance (a custom TRAVELLERMAP_URL). On a stock build that
+    // targets the upstream https://travellermap.com there's nothing of ours to
+    // launch, so the card is absent.
+    let traveller_map_card = custom_travellermap_url().map(|url| {
+        let navigate_to_traveller_map = move |_| {
+            let _ = web_sys::window().unwrap().location().set_href(url);
+        };
+        view! {
+            <div class="tool-card">
+                <h2>"Traveller Map"</h2>
+                <p>
+                    "This is an independent, client-side reimplementation of "
+                    <a href=UPSTREAM_TRAVELLERMAP_URL target="_blank" rel="noopener noreferrer">
+                        "The Traveller Map"
+                    </a>
+                    ", written with client-side rendering and Rust + WebAssembly to be much faster."
+                </p>
+                <button class="blue-button" on:click=navigate_to_traveller_map>
+                    "Launch Traveller Map"
+                </button>
+            </div>
+        }
+    });
 
     view! {
         <div class:App>
@@ -92,6 +122,7 @@ pub fn Selector() -> impl IntoView {
                         "Launch World Map"
                     </button>
                 </div>
+                {traveller_map_card}
             </div>
         </div>
     }
