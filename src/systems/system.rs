@@ -1827,6 +1827,12 @@ mod tests {
         assert_eq!(arabic_to_roman(18), "XVIII");
         assert_eq!(arabic_to_roman(19), "XIX");
         assert_eq!(arabic_to_roman(20), "XX");
+        // 0 is the Roman zero "N"; values past 20 must not panic — a star
+        // can roll up to 21 orbit slots (indices 0..=20, named orbit+1).
+        assert_eq!(arabic_to_roman(0), "N");
+        assert_eq!(arabic_to_roman(21), "XXI");
+        assert_eq!(arabic_to_roman(24), "XXIV");
+        assert_eq!(arabic_to_roman(40), "XL");
     }
 
     #[test_log::test]

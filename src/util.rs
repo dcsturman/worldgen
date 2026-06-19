@@ -71,22 +71,21 @@ pub fn rng_choose<T>(slice: &[T]) -> Option<&T> {
         }
     })
 }
-/// Converts Arabic numerals to Roman numerals for numbers 0-20
+/// Converts Arabic numerals to Roman numerals.
 ///
 /// Used primarily for displaying orbital positions and other small numbers
 /// in a classical format appropriate for the Traveller universe aesthetic.
+/// Handles any non-negative integer via standard subtractive notation;
+/// `0` renders as `"N"` (nulla), the conventional Roman zero. There's no
+/// upper bound — a high orbit count (e.g. orbit 21) renders as `"XXI"`.
 ///
 /// # Arguments
 ///
-/// * `num` - Integer between 0 and 20 to convert
+/// * `num` - Non-negative integer to convert
 ///
 /// # Returns
 ///
 /// String containing the Roman numeral representation
-///
-/// # Panics
-///
-/// Panics if the input number is greater than 20
 ///
 /// # Examples
 ///
@@ -97,40 +96,38 @@ pub fn rng_choose<T>(slice: &[T]) -> Option<&T> {
 /// assert_eq!(arabic_to_roman(4), "IV");
 /// assert_eq!(arabic_to_roman(9), "IX");
 /// assert_eq!(arabic_to_roman(0), "N");
+/// assert_eq!(arabic_to_roman(21), "XXI");
 /// ```
 pub fn arabic_to_roman(num: usize) -> String {
-    if num > 20 {
-        panic!("Input ({num}) must be an integer between 0 and 20");
+    if num == 0 {
+        return "N".to_string();
     }
-    let roman_numerals: [(usize, &str); 21] = [
-        (20, "XX"),
-        (19, "XIX"),
-        (18, "XVIII"),
-        (17, "XVII"),
-        (16, "XVI"),
-        (15, "XV"),
-        (14, "XIV"),
-        (13, "XIII"),
-        (12, "XII"),
-        (11, "XI"),
+    // Subtractive notation: greedily emit the largest symbol that fits,
+    // looping so each value can repeat (III, XXX, …). Works for any size.
+    const ROMAN_NUMERALS: [(usize, &str); 13] = [
+        (1000, "M"),
+        (900, "CM"),
+        (500, "D"),
+        (400, "CD"),
+        (100, "C"),
+        (90, "XC"),
+        (50, "L"),
+        (40, "XL"),
         (10, "X"),
         (9, "IX"),
-        (8, "VIII"),
-        (7, "VII"),
-        (6, "VI"),
         (5, "V"),
         (4, "IV"),
-        (3, "III"),
-        (2, "II"),
         (1, "I"),
-        (0, "N"),
     ];
-    for (value, symbol) in roman_numerals {
-        if num >= value {
-            return symbol.to_string();
+    let mut remaining = num;
+    let mut result = String::new();
+    for (value, symbol) in ROMAN_NUMERALS {
+        while remaining >= value {
+            result.push_str(symbol);
+            remaining -= value;
         }
     }
-    "".to_string()
+    result
 }
 
 /// Utility type to easily format and convert things from credits into MCr
