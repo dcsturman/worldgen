@@ -211,10 +211,16 @@ fn parse_system_request(query: &str) -> Result<SystemRequest, HttpError> {
 
     // `worlds` is the system's `W` digit (total body count) from Traveller
     // Map. We back out the main world, the belts and the gas giants to leave
-    // just the extra rocky planets the caller wants placed.
+    // just the extra rocky planets the caller wants placed. The generator
+    // grows its orbit list to fit every requested body, so clamp this
+    // untrusted query param to a generous ceiling — real Traveller systems
+    // top out around two dozen bodies — to keep a bogus `worlds=99999` from
+    // allocating a giant orbit vector and generating that many worlds.
+    const MAX_WORLDS: i32 = 64;
     let worlds = params
         .get("worlds")
-        .and_then(|s| s.trim().parse::<i32>().ok());
+        .and_then(|s| s.trim().parse::<i32>().ok())
+        .map(|w| w.min(MAX_WORLDS));
     let planets = match worlds {
         Some(w) => (w - 1 - belts as i32 - giants as i32).max(0) as usize,
         None => 0,

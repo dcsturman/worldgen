@@ -750,6 +750,18 @@ impl System {
             self.apply_empty_constraints(&overrides.empties);
         }
 
+        // The star's orbit count is rolled at random (`gen_max_orbits`)
+        // with no regard for how many bodies the constraints demand. When
+        // a Traveller-Map autopop system asks for more bodies than the
+        // star happened to roll slots for, grow the orbit list so every
+        // constrained body has somewhere to land. Without this, the
+        // planets (placed first) fill the few slots and the gas giants
+        // and belts (placed afterwards) silently get zero — e.g. a
+        // pbg=624 system (2 belts, 4 gas giants) rendering with neither.
+        if is_primary {
+            self.ensure_orbits_for_constraints(overrides);
+        }
+
         // Place user-pinned non-main planets and belts FIRST so the
         // random gas-giant / planetoid passes route around them.
         // Without this, a Planet constraint at orbit 1 can lose to a
@@ -772,8 +784,20 @@ impl System {
         let (num_gas_giants, gg_moon_overrides) =
             self.gen_gas_giants(overrides.gas_giants.as_deref());
 
-        // Next generate planetoids
-        self.gen_planetoids(num_gas_giants, &main_world_copy);
+        // Random planetoid-belt generation only runs when the belt count
+        // wasn't pinned by constraints. Traveller-Map autopop carries an
+        // authoritative belt count in the `pbg` digit (placed already by
+        // place_belt_constraints), and the random pass would both add
+        // extra belts and overwrite gas giants — it prefers gas-giant
+        // orbits and replaces them with belts — undoing the explicit
+        // pbg gas-giant count. Skip it whenever belts or gas giants were
+        // constrained; the pure generate_system(World) path (no
+        // overrides) is unaffected and still rolls planetoids.
+        let belts_or_giants_constrained =
+            !overrides.belts.is_empty() || overrides.gas_giants.is_some();
+        if !belts_or_giants_constrained {
+            self.gen_planetoids(num_gas_giants, &main_world_copy);
+        }
 
         if is_primary {
             self.place_main_world(main_world);
@@ -1117,6 +1141,34 @@ impl System {
             }
 
             self.set_orbit_slot(orbit, OrbitContent::World(new_world));
+        }
+    }
+
+    /// Grow the primary star's orbit list, if needed, so it has at least
+    /// one empty slot for every constrained body — the main world, the
+    /// pinned planets, the belts, and the gas giants. `gen_max_orbits`
+    /// rolls the slot count at random and can come up short of what a
+    /// Traveller-Map autopop system (which carries explicit belt and
+    /// gas-giant counts in its `pbg`) requires; the planet pass then
+    /// consumes the few slots and the later belt and gas-giant passes
+    /// find nothing open. Appending slots costs no RNG, so unconstrained
+    /// generation (required == 1, almost always already satisfied) is
+    /// unaffected and stays byte-identical.
+    fn ensure_orbits_for_constraints(&mut self, overrides: &SystemOverrides) {
+        let required = 1 // the main world
+            + overrides.planets.len()
+            + overrides.belts.len()
+            + overrides.gas_giants.as_ref().map_or(0, |g| g.len());
+        let empty = self.get_unused_orbits().len();
+        if empty < required {
+            let deficit = required - empty;
+            // get_max_orbits() returns the slot-vec length; set_max_orbits(n)
+            // resizes it to n+1. Adding `deficit` slots → new length
+            // (len + deficit) → set_max_orbits(len + deficit - 1). Orbits
+            // past the classic 20-slot table get extrapolated distances
+            // (see system_tables::get_orbital_distance), so the list can
+            // grow as far as the constraints demand.
+            self.set_max_orbits(self.get_max_orbits() + deficit - 1);
         }
     }
 
@@ -1886,6 +1938,115 @@ mod tests {
         let system = System::generate_from_constraints(constraints)
             .expect("single fully-specified mainworld should always generate");
         println!("{system}");
+    }
+
+    #[test]
+    fn test_constrained_gas_giants_and_belts_always_placed() {
+        // Regression: Torpol (Trojan Reach 2221), pbg=624 → 2 belts +
+        // 4 gas giants, worlds=16. The F4 V primary sometimes rolls only
+        // a handful of orbit slots; the planet pass then filled them and
+        // the gas-giant and belt passes (which run afterwards) silently
+        // got zero — the system rendered with no gas giants and no belts.
+        // `gen_max_orbits` is random, so loop to reliably hit the
+        // few-orbits roll that triggered the bug.
+        for _ in 0..200 {
+            let mut cs = SystemConstraints::from_main_world("Torpol", "B55A77A-8").unwrap();
+            cs.bodies.push(Constraint::Star {
+                orbit: Some(StarOrbit::Primary),
+                spectral: Some(StarType::F),
+                subtype: Some(4),
+                size: Some(StarSize::V),
+            });
+            for _ in 0..4 {
+                cs.bodies.push(Constraint::GasGiant {
+                    name: None,
+                    orbit: None,
+                    size: None,
+                    num_satellites: None,
+                });
+            }
+            for _ in 0..2 {
+                cs.bodies.push(Constraint::Belt {
+                    name: None,
+                    orbit: None,
+                    uwp: None,
+                    num_satellites: None,
+                });
+            }
+            // 16 worlds − 1 main − 2 belts − 4 gas giants = 9 planets.
+            for _ in 0..9 {
+                cs.bodies.push(Constraint::Planet {
+                    name: None,
+                    orbit: None,
+                    uwp: None,
+                    num_satellites: None,
+                    is_mainworld: false,
+                });
+            }
+
+            let system = System::generate_from_constraints(cs).expect("must generate");
+            let gg = system
+                .orbit_slots
+                .iter()
+                .filter(|s| matches!(s, Some(OrbitContent::GasGiant(_))))
+                .count();
+            let belts = system
+                .orbit_slots
+                .iter()
+                .filter(|s| matches!(s, Some(OrbitContent::World(w)) if w.name.contains("Belt")))
+                .count();
+            assert_eq!(gg, 4, "all four gas giants must be placed");
+            assert_eq!(belts, 2, "both belts must be placed");
+        }
+    }
+
+    #[test]
+    fn test_constraints_grow_orbits_past_classic_table() {
+        // A system can demand more bodies than the classic 20-slot orbit
+        // table holds. The orbit list must grow to fit them and the high
+        // orbits must render distances (no out-of-bounds panic on the
+        // ORBITAL_DISTANCE lookup, which now extrapolates past slot 19).
+        let mut cs = SystemConstraints::from_main_world("Crowded", "A788899-A").unwrap();
+        cs.bodies.push(Constraint::Star {
+            orbit: Some(StarOrbit::Primary),
+            spectral: Some(StarType::G),
+            subtype: Some(2),
+            size: Some(StarSize::V),
+        });
+        for _ in 0..6 {
+            cs.bodies.push(Constraint::GasGiant {
+                name: None,
+                orbit: None,
+                size: None,
+                num_satellites: None,
+            });
+        }
+        // 30 bodies total → forces the orbit list well past 20 slots.
+        for _ in 0..23 {
+            cs.bodies.push(Constraint::Planet {
+                name: None,
+                orbit: None,
+                uwp: None,
+                num_satellites: None,
+                is_mainworld: false,
+            });
+        }
+
+        let system = System::generate_from_constraints(cs).expect("must generate");
+        assert!(
+            system.get_max_orbits() > 20,
+            "orbit list should have grown past the classic 20-slot table, got {}",
+            system.get_max_orbits()
+        );
+        let gg = system
+            .orbit_slots
+            .iter()
+            .filter(|s| matches!(s, Some(OrbitContent::GasGiant(_))))
+            .count();
+        assert_eq!(gg, 6, "all six gas giants must be placed");
+        // Rendering touches get_orbital_distance for every occupied slot,
+        // including the ones past slot 19 — must not panic.
+        crate::sysmap::render_png(&system).expect("render past-table system");
     }
 
     #[test]

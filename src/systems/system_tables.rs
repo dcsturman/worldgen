@@ -190,18 +190,34 @@ pub(crate) fn get_solar_mass(star: &Star) -> f32 {
 
 /// Converts orbital position to distance in millions of kilometers
 ///
-/// Translates abstract orbital positions (0-19) used in world generation
-/// to actual distances for astronomical calculations and display.
+/// Translates abstract orbital positions to actual distances for
+/// astronomical calculations and display. Slots 0..=19 are tabulated;
+/// orbits beyond the table are extrapolated (see below) so a system with
+/// more bodies than the classic 20-slot table can still place and render
+/// them rather than panicking on an out-of-range index.
 ///
 /// # Arguments
 ///
-/// * `orbit` - Orbital position (0-19)
+/// * `orbit` - Orbital position (0 and up; negatives clamp to 0)
 ///
 /// # Returns
 ///
 /// Distance from star in millions of kilometers
 pub fn get_orbital_distance(orbit: i32) -> f32 {
-    ORBITAL_DISTANCE[orbit as usize]
+    let idx = orbit.max(0) as usize;
+    if idx < ORBITAL_DISTANCE.len() {
+        return ORBITAL_DISTANCE[idx];
+    }
+    // Past the tabulated slots, Traveller's orbit spacing follows the
+    // doubling recurrence d(n) = 2·d(n-1) − 0.4 AU — the same step baked
+    // into ORBITAL_DISTANCE[1] (0.4 AU ≈ 59.84 Mkm). Walk it forward from
+    // the last tabulated slot so any orbit index gets a sane distance.
+    const STEP_MKM: f32 = 0.4 * 149.6; // 0.4 AU in millions of km
+    let mut dist = ORBITAL_DISTANCE[ORBITAL_DISTANCE.len() - 1];
+    for _ in ORBITAL_DISTANCE.len()..=idx {
+        dist = 2.0 * dist - STEP_MKM;
+    }
+    dist
 }
 
 /// Retrieves cloud coverage percentage for atmosphere type
@@ -1716,6 +1732,23 @@ lazy_static! {
 mod tests {
     use super::*;
     use crate::systems::system::{Star, System};
+
+    #[test]
+    fn test_get_orbital_distance_extrapolates_past_table() {
+        // Tabulated slots return the table verbatim.
+        assert_eq!(get_orbital_distance(0), 29.9);
+        assert_eq!(get_orbital_distance(19), 5882488.0);
+        // Negative orbits clamp to slot 0 rather than panicking.
+        assert_eq!(get_orbital_distance(-3), 29.9);
+        // Past the table, orbits extrapolate via d(n) = 2·d(n-1) − 0.4 AU
+        // instead of panicking on an out-of-range index.
+        let step = 0.4 * 149.6;
+        let d20 = 2.0 * 5882488.0 - step;
+        assert!((get_orbital_distance(20) - d20).abs() < 0.1);
+        assert!((get_orbital_distance(21) - (2.0 * d20 - step)).abs() < 1.0);
+        // Strictly increasing well past the old 20-slot ceiling.
+        assert!(get_orbital_distance(30) > get_orbital_distance(25));
+    }
 
     #[test_log::test]
     fn test_get_zone() {
