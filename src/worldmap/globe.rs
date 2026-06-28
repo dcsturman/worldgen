@@ -60,10 +60,12 @@ const GLOW: f64 = 0.06;
 const ATMO: (f64, f64, f64) = (130.0, 175.0, 255.0);
 
 /// Directional "sun" in camera space (x right, y up, z toward viewer):
-/// upper-left and slightly toward the camera. Normalized at use. Fixed in
-/// camera space, so as the planet spins its terrain rotates through day and
-/// night.
-const LIGHT: (f64, f64, f64) = (-0.55, 0.55, 0.62);
+/// lower-left and toward the camera. The negative `y` drops the sun below
+/// the horizon enough that the terminator sweeps up *through* the (viewer-
+/// tilted) north pole, while the `x` term keeps the day/night line at a
+/// diagonal rather than a vertical edge. Normalized at use; fixed in camera
+/// space, so terrain rotates through day and night as the planet spins.
+const LIGHT: (f64, f64, f64) = (-0.5, -0.3, 0.6);
 /// Brightness of the night side relative to the fully-lit day side. The dark
 /// half stays just readable (~18%) without going fully black; set to 1.0 to
 /// disable the day/night effect entirely.
