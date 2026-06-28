@@ -19,6 +19,7 @@ pub mod biome;
 pub mod climate;
 pub mod colormap;
 pub mod features;
+pub mod globe;
 pub mod grid;
 pub mod noise;
 pub mod raster;
@@ -237,6 +238,9 @@ pub fn render_png_scaled(map: &WorldMap, scale: f32) -> Result<Vec<u8>, String> 
 /// flight.
 pub use raster::RasterJob;
 pub use render::{SVG_RASTER_H, SVG_RASTER_W, assemble_svg};
+pub use globe::{
+    GlobeTexture, GlobeTextureJob, build_equirect_texture, render_globe_apng, render_globe_png,
+};
 
 #[cfg(test)]
 mod tests {

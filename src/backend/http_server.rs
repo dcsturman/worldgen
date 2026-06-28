@@ -38,8 +38,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
 use crate::api::{
-    build_constraints, generate_planet_png_scaled, generate_system_png_scaled, generate_system_svg,
-    parse_stellar,
+    build_constraints, generate_globe_apng, generate_globe_png, generate_planet_png_scaled,
+    generate_system_png_scaled, generate_system_svg, parse_stellar,
 };
 use crate::backend::gcs::GcsClient;
 use crate::seed::{planet_seed, system_seed};
@@ -60,6 +60,19 @@ const PLANET_CANONICAL_SCALE: f32 = 2.0;
 /// (`v1`) lets us bust the cache on a worldgen version bump by
 /// changing the prefix instead of deleting objects.
 const PLANET_CACHE_PREFIX: &str = "world/v1";
+
+/// Globe (orthographic projection) render parameters for `?projection=globe`.
+/// Fixed server-side so the cache key stays `(seed, uwp, name)` per variant
+/// rather than fanning out over arbitrary sizes. The static PNG renders a bit
+/// larger than the animation, which is kept smaller to bound the APNG size
+/// (one full RGBA frame per `GLOBE_FRAMES`).
+const GLOBE_PNG_SIZE: u32 = 512;
+const GLOBE_APNG_SIZE: u32 = 400;
+const GLOBE_FRAMES: u32 = 36;
+/// Per-frame hold = `GLOBE_DELAY_NUM / GLOBE_DELAY_DEN` seconds. 1/5 s × 36
+/// frames ≈ 7.2 s per rotation — a slow, readable spin.
+const GLOBE_DELAY_NUM: u16 = 1;
+const GLOBE_DELAY_DEN: u16 = 5;
 
 /// SipHash key for cache-key derivation. Separate from the keys in
 /// `src/seed.rs` so a future change to one doesn't accidentally
@@ -402,6 +415,22 @@ async fn handle_world(
         .and_then(|s| s.trim().parse::<i32>().ok())
         .unwrap_or(3);
 
+    // Projection: `flat` (default — the equirectangular map every existing
+    // consumer already gets) or `globe` (orthographic spinning planet). The
+    // globe path has its own cache namespace and output (static PNG or
+    // animated APNG), so it branches off before the flat-only `scale`
+    // handling below.
+    if params
+        .get("projection")
+        .map(|s| s.trim().to_ascii_lowercase())
+        .as_deref()
+        == Some("globe")
+    {
+        let sys_seed = system_seed(sector, hex_x, hex_y);
+        let seed = planet_seed(sys_seed, orbit, name);
+        return handle_world_globe(stream, &params, seed, uwp, name, head_only, gcs).await;
+    }
+
     // Requested scale: defaults to 1.0 to match `generate_planet_png`'s
     // legacy native resolution. Values > CANONICAL_SCALE are clamped
     // (we don't upsample — the cache holds canonical-scale bytes and
@@ -506,6 +535,105 @@ async fn handle_world(
     };
 
     write_png(stream, &response_bytes, head_only, Some(cache_status)).await
+}
+
+/// Globe sub-handler for `GET /api/world?projection=globe`.
+///
+/// Renders the planet as an orthographic globe — either a static PNG
+/// (`format=png`/`static`) or a spinning animated PNG (default, or
+/// `format=apng`). Both are cached in GCS under a projection-specific path
+/// (`world/v1/globe[-anim]/…`) so they never collide with the flat map's
+/// cache. The render size and frame count are fixed server-side
+/// ([`GLOBE_PNG_SIZE`] etc.) so the cache key stays `(seed, uwp, name)` per
+/// variant.
+async fn handle_world_globe(
+    stream: &mut TcpStream,
+    params: &HashMap<String, String>,
+    seed: u64,
+    uwp: &str,
+    name: &str,
+    head_only: bool,
+    gcs: Arc<GcsClient>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Animated by default; `format=png`/`static` asks for a single frame.
+    let animated = !matches!(
+        params
+            .get("format")
+            .map(|s| s.trim().to_ascii_lowercase())
+            .as_deref(),
+        Some("png") | Some("static")
+    );
+    let variant = if animated { "globe-anim" } else { "globe" };
+    let cache_key = planet_cache_key(seed, uwp, name);
+    let cache_object = format!("{PLANET_CACHE_PREFIX}/{variant}/{cache_key:016x}.png");
+
+    let uwp_owned = uwp.to_string();
+    let name_owned = name.to_string();
+    let render = move || {
+        if animated {
+            generate_globe_apng(
+                seed,
+                &uwp_owned,
+                Some(&name_owned),
+                GLOBE_APNG_SIZE,
+                GLOBE_FRAMES,
+                GLOBE_DELAY_NUM,
+                GLOBE_DELAY_DEN,
+            )
+        } else {
+            generate_globe_png(seed, &uwp_owned, Some(&name_owned), GLOBE_PNG_SIZE, 0.0)
+        }
+    };
+
+    serve_planet_cached(stream, &gcs, &cache_object, head_only, render).await
+}
+
+/// Cache-or-render-then-serve for planet PNG/APNG bytes. Mirrors the flat
+/// `/api/world` cache logic (HIT / DISABLED / MISS+upload / BYPASS) but
+/// without the flat path's scale-downsample tail, so the globe variants reuse
+/// it directly. The render closure is run through [`catch_render`] so a panic
+/// in one bad request becomes a clean 500 instead of aborting the process.
+async fn serve_planet_cached(
+    stream: &mut TcpStream,
+    gcs: &Arc<GcsClient>,
+    cache_object: &str,
+    head_only: bool,
+    render: impl Fn() -> Result<Vec<u8>, crate::api::WorldgenError>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let (bytes, status, do_upload) = match gcs.get(cache_object).await {
+        Ok(Some(b)) => (b, "HIT", false),
+        Ok(None) if gcs.is_disabled() => match catch_render(&render) {
+            Ok(Ok(b)) => (b, "DISABLED", false),
+            Ok(Err(e)) => return classify_render_error(stream, e).await,
+            Err(panic_msg) => return render_panic_500(stream, "/api/world", &panic_msg).await,
+        },
+        Ok(None) => match catch_render(&render) {
+            Ok(Ok(b)) => (b, "MISS", true),
+            Ok(Err(e)) => return classify_render_error(stream, e).await,
+            Err(panic_msg) => return render_panic_500(stream, "/api/world", &panic_msg).await,
+        },
+        Err(e) => {
+            log::warn!("GCS get failed for {cache_object}: {e}; regenerating");
+            match catch_render(&render) {
+                Ok(Ok(b)) => (b, "BYPASS", false),
+                Ok(Err(e)) => return classify_render_error(stream, e).await,
+                Err(panic_msg) => return render_panic_500(stream, "/api/world", &panic_msg).await,
+            }
+        }
+    };
+
+    if do_upload {
+        let gcs2 = gcs.clone();
+        let key2 = cache_object.to_string();
+        let bytes2 = bytes.clone();
+        tokio::spawn(async move {
+            if let Err(e) = gcs2.put(&key2, bytes2, "image/png").await {
+                log::warn!("GCS put failed for {key2}: {e}");
+            }
+        });
+    }
+
+    write_png(stream, &bytes, head_only, Some(status)).await
 }
 
 /// Map a `WorldgenError` from the planet generator into the right HTTP

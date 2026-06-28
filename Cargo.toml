@@ -40,6 +40,11 @@ serde_json = "1.0"
 backtrace = "0.3.75"
 thiserror = "2.0.18"
 siphasher = "1.0"
+# Direct dep (also pulled transitively by tiny-skia). Used by worldmap::globe
+# to encode the spinning-globe flipbook as an animated PNG (APNG) — full color
+# and natively looping in every modern browser. Compiles on both wasm and
+# native, so it's always-on rather than feature-gated.
+png = "0.17"
 
 # Frontend-only deps (gated behind `frontend` feature). The deployed app
 # enables this via `default = ["frontend"]`; library consumers turn it off
@@ -54,7 +59,7 @@ codee = { version = "0.3.2", optional = true }
 wasm-bindgen = { version = "0.2", features = ["serde-serialize"], optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 serde-wasm-bindgen = { version = "0.6", optional = true }
-web-sys = { version = "0.3", features = ["Request", "RequestInit", "RequestMode", "Response", "Window", "Headers", "Storage", "WebSocket", "MessageEvent", "CloseEvent", "ErrorEvent", "BinaryType", "Blob", "BlobPropertyBag", "Url", "HtmlAnchorElement", "Document", "Element"], optional = true }
+web-sys = { version = "0.3", features = ["Request", "RequestInit", "RequestMode", "Response", "Window", "Headers", "Storage", "WebSocket", "MessageEvent", "CloseEvent", "ErrorEvent", "BinaryType", "Blob", "BlobPropertyBag", "Url", "HtmlAnchorElement", "Document", "Element", "HtmlCanvasElement", "CanvasRenderingContext2d", "ImageData"], optional = true }
 js-sys = { version = "0.3", optional = true }
 wasm-logger = { version = "0.2", optional = true }
 

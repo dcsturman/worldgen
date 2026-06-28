@@ -152,6 +152,43 @@ pub fn generate_planet_png_scaled(
     crate::worldmap::render_png_scaled(&map, scale).map_err(WorldgenError::Render)
 }
 
+/// Generate a **static globe** of a planet surface: an orthographic
+/// projection of the same terrain the flat map shows, rendered as a square
+/// PNG of side `size`, viewed at sub-viewer longitude `spin` (radians).
+///
+/// Same `(seed, uwp, name)` always produces the same globe — the projection
+/// is a deterministic re-view of the deterministic surface, no extra RNG.
+pub fn generate_globe_png(
+    seed: u64,
+    uwp: &str,
+    name: Option<&str>,
+    size: u32,
+    spin: f64,
+) -> Result<Vec<u8>, WorldgenError> {
+    let map: WorldMap = crate::worldmap::generate(uwp, seed, name)?;
+    crate::worldmap::render_globe_png(&map, size, spin).map_err(WorldgenError::Render)
+}
+
+/// Generate a **spinning globe** of a planet surface as an animated PNG
+/// (APNG): `frames` evenly-spaced views over a full 360° turn, each held for
+/// `delay_num/delay_den` seconds, looping forever. APNG is a PNG (served as
+/// `image/png`) and animates natively in every modern browser.
+///
+/// Deterministic for fixed `(seed, uwp, name, size, frames, delay)`.
+pub fn generate_globe_apng(
+    seed: u64,
+    uwp: &str,
+    name: Option<&str>,
+    size: u32,
+    frames: u32,
+    delay_num: u16,
+    delay_den: u16,
+) -> Result<Vec<u8>, WorldgenError> {
+    let map: WorldMap = crate::worldmap::generate(uwp, seed, name)?;
+    crate::worldmap::render_globe_apng(&map, size, frames, delay_num, delay_den)
+        .map_err(WorldgenError::Render)
+}
+
 /// One star's classification, as the convenience builder expects it.
 ///
 /// Mirrors a single `Constraint::Star` row but with the fields the

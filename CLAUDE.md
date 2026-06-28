@@ -119,6 +119,7 @@ The WebSocket URL is constructed at runtime from `window.location`:
 ### Crate layout
 
 - `src/systems/` — Traveller system generation: stars, worlds, gas giants, satellites, name tables, lookup tables. Entry point is `systems::system::System`. `world::World` carries the UWP and is the unit shared across modules.
+- `src/worldmap/` — Per-planet surface maps from a UWP + seed. Terrain is sampled on a 3D unit sphere (icosahedral grid + simplex-fBm elevation, climate, biome — see `grid::xy_to_sphere`) and rendered two ways: the **flat** equirectangular SVG/PNG (`render`, `raster::RasterJob`) and a **globe** (`globe`) that orthographically warps a once-built equirectangular texture onto a spinning sphere. The globe ships as a static PNG or a looping animated PNG (APNG) via `render_globe_png` / `render_globe_apng`; the frontend animates live by re-warping the texture on a `<canvas>` each frame. Both projections are deterministic from `(uwp, seed)`.
 - `src/trade/` — Trade rules: `TradeClass`, `PortCode`, `ZoneClassification`, UWP→trade-class derivation (`upp_to_trade_classes`), `available_goods`, `available_passengers`, `ship_manifest`, and the master `table` of trade goods.
 - `src/components/` — Leptos components. `selector` is the landing page; `system_generator` (`World` component) and `trade_computer` (`Trade` component) are the two tool screens; `system_view`, `world_list`, `traveller_map` are sub-views.
 - `src/comms/` — WebSocket client (`Client`) and the shared `TradeState`. Compiles for both wasm and native.
@@ -138,7 +139,7 @@ The cache **mounts** persist only in the local BuildKit daemon — they are not 
 
 Server env vars (see `src/bin/server.rs`):
 - `GOOGLE_APPLICATION_CREDENTIALS`, `GCP_PROJECT`, `FIRESTORE_DATABASE_ID` (`"debug"` to skip Firestore)
-- `GCS_BUCKET` (cache for `/world` planet PNGs; `"debug"` or unset → no cache, every request regenerates)
+- `GCS_BUCKET` (cache for `/api/world` planet renders; `"debug"` or unset → no cache, every request regenerates). The endpoint takes `projection=flat` (default — the equirectangular PNG every existing consumer already gets) or `projection=globe` (orthographic), with `format=apng` (default for globe, a spinning APNG) or `format=png` (a static globe frame). Each variant caches under its own path (`world/v1/`, `world/v1/globe/`, `world/v1/globe-anim/`) so they never collide.
 - `WS_PORT` (default 8081), `WS_HOST` (default `0.0.0.0`)
 - `RUST_LOG`
 

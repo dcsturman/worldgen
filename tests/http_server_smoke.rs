@@ -371,6 +371,47 @@ async fn get_world_with_missing_required_param_returns_400() {
 }
 
 #[tokio::test]
+async fn get_world_globe_static_returns_square_png() {
+    // projection=globe&format=png → a single orthographic frame, served as a
+    // square PNG (GLOBE_PNG_SIZE²). Flat consumers are unaffected; this is an
+    // opt-in projection.
+    let addr = spawn_http_server().await;
+    let req = format!(
+        "GET /api/world?{NORICUM_WORLD_QUERY}&projection=globe&format=png HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
+    );
+    let buf = send_request(addr, &req).await;
+    let (head, body) = split_response(&buf);
+    assert!(head.starts_with("HTTP/1.1 200 OK\r\n"), "head:\n{head}");
+    assert!(head.contains("Content-Type: image/png"));
+    assert!(head.contains("Access-Control-Allow-Origin: *"));
+    assert_eq!(&body[..8], b"\x89PNG\r\n\x1a\n");
+    let w = u32::from_be_bytes([body[16], body[17], body[18], body[19]]);
+    let h = u32::from_be_bytes([body[20], body[21], body[22], body[23]]);
+    assert_eq!(w, h, "globe frame must be square");
+    assert_eq!(w, 512, "static globe is GLOBE_PNG_SIZE (512) wide");
+}
+
+#[tokio::test]
+async fn get_world_globe_default_is_animated_apng() {
+    // projection=globe with no format → the spinning APNG. It's still served
+    // as image/png (APNG is a PNG) but carries an animation-control (`acTL`)
+    // chunk, which a plain PNG never has.
+    let addr = spawn_http_server().await;
+    let req = format!(
+        "GET /api/world?{NORICUM_WORLD_QUERY}&projection=globe HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
+    );
+    let buf = send_request(addr, &req).await;
+    let (head, body) = split_response(&buf);
+    assert!(head.starts_with("HTTP/1.1 200 OK\r\n"), "head:\n{head}");
+    assert!(head.contains("Content-Type: image/png"));
+    assert_eq!(&body[..8], b"\x89PNG\r\n\x1a\n");
+    assert!(
+        body.windows(4).any(|w| w == b"acTL"),
+        "spinning globe must be an animated PNG (acTL chunk present)"
+    );
+}
+
+#[tokio::test]
 async fn get_world_with_scale_above_canonical_is_clamped() {
     // Request scale=4.0 — that's > CANONICAL (2.0), so the handler
     // clamps to canonical rather than upsampling (which would just
