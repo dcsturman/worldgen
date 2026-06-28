@@ -165,6 +165,44 @@ struct SystemRequest {
 /// HTTP error to surface to the client: `(status code, reason, body)`.
 type HttpError = (u16, &'static str, String);
 
+/// Run a synchronous render closure, turning a panic into a recoverable
+/// `Err(message)` instead of letting it tear down the whole server.
+///
+/// The render pipeline (system generation, sysmap/worldmap rasterizing)
+/// is a large body of index-and-unwrap code reachable from untrusted
+/// query params; a single pathological world must not be able to take
+/// the service down for every other connected client. This catches any
+/// `panic!` from one request at the boundary and lets the handler answer
+/// `500` instead. It only works when the binary is built with
+/// `panic = "unwind"` — the `release-server` profile (and the default
+/// dev/test profile). The size-optimized `[profile.release]` keeps
+/// `panic = "abort"` for the WASM bundle, so this is paired with input
+/// validation in the generators themselves rather than relied on alone.
+fn catch_render<T>(f: impl FnOnce() -> T) -> Result<T, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).map_err(|payload| {
+        if let Some(s) = payload.downcast_ref::<&str>() {
+            (*s).to_string()
+        } else if let Some(s) = payload.downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "unknown panic".to_string()
+        }
+    })
+}
+
+/// Log a caught render panic and answer with a generic `500` (which still
+/// carries CORS headers via `write_simple`, so the browser sees a clean
+/// error instead of a CORS failure from a dropped upstream connection).
+/// The panic message is logged server-side, not leaked to the client.
+async fn render_panic_500(
+    stream: &mut TcpStream,
+    route: &str,
+    panic_msg: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    log::error!("panic while rendering {route}: {panic_msg}");
+    write_simple(stream, 500, "Internal Server Error", "internal render error").await
+}
+
 /// Parse + validate the shared `/api/system*` query params. On success
 /// returns the deterministic seed, the constraint set, and the requested
 /// scale. On failure returns the status/reason/body the caller should write.
@@ -256,11 +294,13 @@ async fn handle_system(
         Err((code, reason, body)) => return write_simple(stream, code, reason, &body).await,
     };
 
-    let png = match generate_system_png_scaled(req.seed, req.constraints, req.scale) {
-        Ok(b) => b,
-        Err(e) => {
+    let png = match catch_render(|| generate_system_png_scaled(req.seed, req.constraints, req.scale))
+    {
+        Ok(Ok(b)) => b,
+        Ok(Err(e)) => {
             return write_simple(stream, 500, "Internal Server Error", &format!("{e}")).await;
         }
+        Err(panic_msg) => return render_panic_500(stream, "/api/system", &panic_msg).await,
     };
 
     write_png(stream, &png, head_only, None).await
@@ -282,11 +322,12 @@ async fn handle_system_svg(
         Err((code, reason, body)) => return write_simple(stream, code, reason, &body).await,
     };
 
-    let svg = match generate_system_svg(req.seed, req.constraints) {
-        Ok(s) => s,
-        Err(e) => {
+    let svg = match catch_render(|| generate_system_svg(req.seed, req.constraints)) {
+        Ok(Ok(s)) => s,
+        Ok(Err(e)) => {
             return write_simple(stream, 500, "Internal Server Error", &format!("{e}")).await;
         }
+        Err(panic_msg) => return render_panic_500(stream, "/api/system_svg", &panic_msg).await,
     };
 
     write_svg(stream, svg.as_bytes(), head_only).await
@@ -391,17 +432,27 @@ async fn handle_world(
         Ok(Some(bytes)) => (bytes, "HIT"),
         Ok(None) if gcs.is_disabled() => {
             let bytes =
-                match generate_planet_png_scaled(seed, uwp, Some(name), PLANET_CANONICAL_SCALE) {
-                    Ok(b) => b,
-                    Err(e) => return classify_render_error(stream, e).await,
+                match catch_render(|| {
+                    generate_planet_png_scaled(seed, uwp, Some(name), PLANET_CANONICAL_SCALE)
+                }) {
+                    Ok(Ok(b)) => b,
+                    Ok(Err(e)) => return classify_render_error(stream, e).await,
+                    Err(panic_msg) => {
+                        return render_panic_500(stream, "/api/world", &panic_msg).await;
+                    }
                 };
             (bytes, "DISABLED")
         }
         Ok(None) => {
             let bytes =
-                match generate_planet_png_scaled(seed, uwp, Some(name), PLANET_CANONICAL_SCALE) {
-                    Ok(b) => b,
-                    Err(e) => return classify_render_error(stream, e).await,
+                match catch_render(|| {
+                    generate_planet_png_scaled(seed, uwp, Some(name), PLANET_CANONICAL_SCALE)
+                }) {
+                    Ok(Ok(b)) => b,
+                    Ok(Err(e)) => return classify_render_error(stream, e).await,
+                    Err(panic_msg) => {
+                        return render_panic_500(stream, "/api/world", &panic_msg).await;
+                    }
                 };
             // Fire-and-forget upload so the response ships immediately.
             // A failed upload just means the next request is another
@@ -420,9 +471,14 @@ async fn handle_world(
         Err(e) => {
             log::warn!("GCS get failed for {cache_object}: {e}; regenerating");
             let bytes =
-                match generate_planet_png_scaled(seed, uwp, Some(name), PLANET_CANONICAL_SCALE) {
-                    Ok(b) => b,
-                    Err(e) => return classify_render_error(stream, e).await,
+                match catch_render(|| {
+                    generate_planet_png_scaled(seed, uwp, Some(name), PLANET_CANONICAL_SCALE)
+                }) {
+                    Ok(Ok(b)) => b,
+                    Ok(Err(e)) => return classify_render_error(stream, e).await,
+                    Err(panic_msg) => {
+                        return render_panic_500(stream, "/api/world", &panic_msg).await;
+                    }
                 };
             (bytes, "BYPASS")
         }
@@ -743,6 +799,26 @@ mod tests {
         let (m, t) = parse_request_line("GET /system?foo=bar HTTP/1.1\r\n").unwrap();
         assert_eq!(m, "GET");
         assert_eq!(t, "/system?foo=bar");
+    }
+
+    #[test]
+    fn catch_render_returns_value_on_success() {
+        assert_eq!(catch_render(|| 1 + 2).unwrap(), 3);
+    }
+
+    #[test]
+    fn catch_render_traps_panic_into_err() {
+        // A render that panics (e.g. an out-of-bounds table lookup) must
+        // come back as Err with the message instead of unwinding past the
+        // boundary. Requires the test/dev profile's panic = "unwind".
+        let got = catch_render(|| -> i32 { panic!("boom: index out of bounds") });
+        let msg = got.expect_err("panic must be trapped");
+        assert!(msg.contains("boom"), "panic message preserved, got: {msg}");
+        // The out-of-bounds index panic from a real array also traps.
+        let arr = [0_i32; 3];
+        let idx = 9usize;
+        let oob = catch_render(|| arr[idx]);
+        assert!(oob.is_err(), "array OOB panic must be trapped");
     }
 
     #[test]

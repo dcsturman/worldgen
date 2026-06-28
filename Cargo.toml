@@ -98,6 +98,18 @@ codegen-units = 1
 strip = "symbols"
 panic = "abort"
 
+# The native server is built with this profile (see Dockerfile's server
+# stage: `cargo build --profile release-server --bin server`). It inherits
+# all of release's size/opt settings but restores stack unwinding, so the
+# HTTP layer's catch_unwind (http_server::catch_render) can turn a panic
+# from one bad request into a 500 instead of SIGABRT-ing the whole process
+# and dropping every other in-flight connection. panic = "abort" stays on
+# [profile.release] because the WASM bundle — the dominant payload — wants
+# the unwinder elided for size; the native server binary isn't size-bound.
+[profile.release-server]
+inherits = "release"
+panic = "unwind"
+
 [[bin]]
 name = "main"
 path = "src/bin/main.rs"

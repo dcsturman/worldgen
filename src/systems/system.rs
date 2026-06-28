@@ -581,7 +581,12 @@ impl System {
                     } else {
                         0
                     })
-                .clamp(0, main_world.get_population() - 1)
+                // `max(0)` guards a population-0 main world: `get_population()
+                // - 1` is -1, and `clamp(0, -1)` (lo > hi) panics in every
+                // build mode. A pop-0 world with TL >= 7 reaches here (low TL
+                // would have been zeroed by force_lifeless above). Mirrors the
+                // same guard in world.rs's subordinate-population clamp.
+                .clamp(0, (main_world.get_population() - 1).max(0))
             };
 
             let mut planetoid = World::new(
@@ -1907,6 +1912,22 @@ mod tests {
         let main_uwp = "E410000-0";
         for _ in 0..100 {
             let main_world = World::from_uwp("Aacheon", main_uwp, false, true).unwrap();
+            let _ = System::generate_system(main_world);
+        }
+    }
+
+    #[test]
+    fn test_generate_system_pop_zero_high_tl_main_world_does_not_panic() {
+        // Regression: the Aacheon case above only exercises a *low*-TL
+        // pop-0 world, where force_lifeless zeroes subordinate populations
+        // before the clamp. A pop-0 world with TL >= 7 instead reaches
+        // gen_planetoids' `clamp(0, get_population() - 1)` = `clamp(0, -1)`,
+        // which panics (lo > hi) and aborted the whole server. UWP
+        // A780007-9: population 0, tech level 9. Loop to reliably fire the
+        // randomized planetoid-belt placement.
+        let main_uwp = "A780007-9";
+        for _ in 0..200 {
+            let main_world = World::from_uwp("Barren", main_uwp, false, true).unwrap();
             let _ = System::generate_system(main_world);
         }
     }

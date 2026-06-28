@@ -91,8 +91,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/server/target \
     MUSL_TARGET=$(cat /tmp/musl_target) && \
-    cargo build --release --bin server --features backend --target "$MUSL_TARGET" && \
-    cp "/server/target/$MUSL_TARGET/release/server" /server/server
+    cargo build --profile release-server --bin server --features backend --target "$MUSL_TARGET" && \
+    cp "/server/target/$MUSL_TARGET/release-server/server" /server/server
 
 FROM nginx:1.27-alpine
 
