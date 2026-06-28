@@ -122,6 +122,15 @@ pub struct SystemOverrides {
     /// after place_main_world resolves the world's orbit. `None` rolls
     /// the moon count as today.
     pub main_world_num_satellites: Option<i32>,
+    /// True when the system is built from explicit constraints (the
+    /// Traveller-Map autopop path via `generate_from_constraints`). In that
+    /// case the body counts are authoritative — the `W` (worlds) digit and
+    /// the `pbg` belt/gas-giant digits fix the exact population — so the
+    /// random passes that would pad the system (the world-fill loop, the
+    /// random planetoid pass, and the random gas-giant roll when none were
+    /// pinned) are suppressed. The plain `generate_system(World)` path
+    /// leaves this `false` and stays fully random.
+    pub autopop: bool,
 }
 
 /// A complete star system with primary star and optional companions
@@ -811,21 +820,23 @@ impl System {
             );
         }
 
-        let (num_gas_giants, gg_moon_overrides) =
-            self.gen_gas_giants(overrides.gas_giants.as_deref());
+        // In autopop the gas-giant count is authoritative. A `None` list
+        // there means the pbg gas-giant digit was 0, so force exactly zero
+        // rather than letting gen_gas_giants roll a random count (which
+        // would add bodies the `W` count never accounted for).
+        let gg_spec: Option<&[GasGiantOverride]> =
+            match (overrides.autopop, overrides.gas_giants.as_deref()) {
+                (true, None) => Some(&[]),
+                (_, other) => other,
+            };
+        let (num_gas_giants, gg_moon_overrides) = self.gen_gas_giants(gg_spec);
 
-        // Random planetoid-belt generation only runs when the belt count
-        // wasn't pinned by constraints. Traveller-Map autopop carries an
-        // authoritative belt count in the `pbg` digit (placed already by
-        // place_belt_constraints), and the random pass would both add
-        // extra belts and overwrite gas giants — it prefers gas-giant
-        // orbits and replaces them with belts — undoing the explicit
-        // pbg gas-giant count. Skip it whenever belts or gas giants were
-        // constrained; the pure generate_system(World) path (no
-        // overrides) is unaffected and still rolls planetoids.
-        let belts_or_giants_constrained =
-            !overrides.belts.is_empty() || overrides.gas_giants.is_some();
-        if !belts_or_giants_constrained {
+        // The random planetoid-belt pass adds belts and can overwrite gas
+        // giants. In autopop the belt count is authoritative (belts are
+        // placed exactly by place_belt_constraints, and a 0 belt digit means
+        // none), so skip it entirely. The pure generate_system(World) path
+        // is not autopop and still rolls planetoids.
+        if !overrides.autopop {
             self.gen_planetoids(num_gas_giants, &main_world_copy);
         }
 
@@ -883,7 +894,16 @@ impl System {
             }
         }
 
+        // Random fill of the remaining empty orbits with rolled worlds —
+        // the heart of the "generate a rich system" behavior. Skipped in
+        // autopop: the `W` digit fixes the exact body count (main world +
+        // planets + belts + gas giants), so padding every leftover orbit
+        // with a world would overshoot it. Those orbits stay empty (and are
+        // trimmed below if they trail past the outermost body).
         for i in (get_zone(&self.star).hot + 1)..self.get_max_orbits() as i32 {
+            if overrides.autopop {
+                break;
+            }
             let i = i as usize;
             if self.is_slot_empty(i) {
                 let mut new_world = World::generate(&self.star, i, &main_world_copy);
@@ -945,6 +965,22 @@ impl System {
             && tertiary.orbit != StarOrbit::Primary
         {
             tertiary.fill_system(main_world_copy, false);
+        }
+
+        // In autopop, a star that rolled more orbit slots than the `W` count
+        // needed leaves empty/blocked slots trailing past the outermost body.
+        // The world-fill no longer pads them, but the renderer would still
+        // draw them as bare orbit rings, so drop the trailing empties. Gaps
+        // *between* bodies are left intact — those are legitimate empty
+        // orbits. Only the primary owns the orbit list shown to the user.
+        if is_primary && overrides.autopop {
+            let last_body = self
+                .orbit_slots
+                .iter()
+                .rposition(|s| matches!(s, Some(OrbitContent::World(_)) | Some(OrbitContent::GasGiant(_)) | Some(OrbitContent::Secondary) | Some(OrbitContent::Tertiary)));
+            if let Some(last) = last_body {
+                self.orbit_slots.truncate(last + 1);
+            }
         }
     }
 
@@ -1895,6 +1931,9 @@ fn collect_overrides(constraints: &SystemConstraints) -> SystemOverrides {
         // Filled in by generate_from_constraints from the main-world
         // constraint after collect_overrides returns.
         main_world_num_satellites: None,
+        // This is the constraint-driven path, so the body counts are
+        // authoritative — suppress the random padding passes.
+        autopop: true,
     }
 }
 
@@ -2096,6 +2135,87 @@ mod tests {
                 |s| matches!(s, Some(OrbitContent::World(w)) if w.is_mainworld()),
             );
             assert_eq!(mw_orbit, Some(5), "main world must sit in the habitable zone");
+
+            // Total body count must equal the W digit exactly (1 main + 9
+            // planets + 2 belts + 4 gas giants = 16). The random world-fill
+            // is suppressed in autopop so the star's orbit roll can't pad
+            // the system past its W count.
+            let bodies = system
+                .orbit_slots
+                .iter()
+                .filter(|s| {
+                    matches!(s, Some(OrbitContent::World(_)) | Some(OrbitContent::GasGiant(_)))
+                })
+                .count();
+            assert_eq!(bodies, 16, "body count must equal the W (worlds) digit");
+        }
+    }
+
+    #[test]
+    fn test_autopop_body_count_matches_worlds_digit() {
+        // The body count of a constraint-driven (autopop) system must equal
+        // its W digit exactly, regardless of how many orbit slots the star
+        // happens to roll. Cover a star that tends to over-roll orbits
+        // (a bright giant) and authoritative-zero belt/gas-giant digits.
+        let cases = [
+            // (uwp, spectral, worlds, belts, gas_giants)
+            ("B55A77A-8", StarType::F, 5usize, 0usize, 1usize),
+            ("A788899-A", StarType::M, 8, 0, 3), // giant tends to over-roll orbits
+            ("B55A77A-8", StarType::G, 4, 0, 0), // belts & giants both zero → exact
+            ("B55A77A-8", StarType::G, 1, 0, 0), // lone main world
+        ];
+        for (uwp, spectral, worlds, belts, giants) in cases {
+            let planets = worlds - 1 - belts - giants;
+            for _ in 0..40 {
+                let mut cs = SystemConstraints::from_main_world("AutoPop", uwp).unwrap();
+                cs.bodies.push(Constraint::Star {
+                    orbit: Some(StarOrbit::Primary),
+                    spectral: Some(spectral),
+                    subtype: Some(2),
+                    size: Some(if spectral == StarType::M {
+                        StarSize::II
+                    } else {
+                        StarSize::V
+                    }),
+                });
+                for _ in 0..giants {
+                    cs.bodies.push(Constraint::GasGiant {
+                        name: None,
+                        orbit: None,
+                        size: None,
+                        num_satellites: None,
+                    });
+                }
+                for _ in 0..belts {
+                    cs.bodies.push(Constraint::Belt {
+                        name: None,
+                        orbit: None,
+                        uwp: None,
+                        num_satellites: None,
+                    });
+                }
+                for _ in 0..planets {
+                    cs.bodies.push(Constraint::Planet {
+                        name: None,
+                        orbit: None,
+                        uwp: None,
+                        num_satellites: None,
+                        is_mainworld: false,
+                    });
+                }
+                let system = System::generate_from_constraints(cs).expect("must generate");
+                let bodies = system
+                    .orbit_slots
+                    .iter()
+                    .filter(|s| {
+                        matches!(s, Some(OrbitContent::World(_)) | Some(OrbitContent::GasGiant(_)))
+                    })
+                    .count();
+                assert_eq!(
+                    bodies, worlds,
+                    "W={worlds} (b={belts},g={giants}) for {uwp}/{spectral:?} must yield exactly {worlds} bodies, got {bodies}"
+                );
+            }
         }
     }
 
