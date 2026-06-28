@@ -27,9 +27,12 @@
 //! Everything here is deterministic from the underlying `(uwp, seed)` — no
 //! RNG, no clock — so the same world always produces the same globe.
 
+use std::f64::consts::{FRAC_PI_2, PI};
+
 use super::WorldMap;
 use super::climate;
 use super::colormap;
+use super::features::{CityTier, Feature};
 use super::grid::{SHEET_HEIGHT, SHEET_WIDTH, xy_to_sphere};
 
 /// Default equirectangular texture width (longitude). 2:1 with the height.
@@ -57,22 +60,39 @@ const GLOW: f64 = 0.06;
 const ATMO: (f64, f64, f64) = (130.0, 175.0, 255.0);
 
 /// Directional "sun" in camera space (x right, y up, z toward viewer):
-/// upper-left and slightly toward the camera. Normalized at use.
+/// upper-left and slightly toward the camera. Normalized at use. Fixed in
+/// camera space, so as the planet spins its terrain rotates through day and
+/// night.
 const LIGHT: (f64, f64, f64) = (-0.55, 0.55, 0.62);
-/// Ambient term so the night side stays legible rather than black.
-const AMBIENT: f64 = 0.55;
-/// How much the directional term adds on top of ambient.
-const DIFFUSE_GAIN: f64 = 0.62;
+/// Brightness of the night side relative to the fully-lit day side. A
+/// "moderate" terminator: the dark half stays readable (~27%) rather than
+/// going black. Set to 1.0 to disable the day/night effect entirely.
+const NIGHT_LEVEL: f64 = 0.27;
+/// Half-width (in Lambert-cosine units) of the soft day→night transition band
+/// around the terminator. Larger = wider, softer twilight.
+const TERM_WIDTH: f64 = 0.18;
 /// Limb-darkening floor: edge pixels keep this fraction of their brightness.
 const LIMB_FLOOR: f64 = 0.74;
 
-/// A gap-free equirectangular RGB texture of a world's surface, suitable for
-/// projecting onto a sphere. Row-major, `width × height`, 3 bytes per pixel.
+/// Warm sodium-vapor tint of night-side city lights (added, not multiplied,
+/// on the dark side only).
+const CITY_LIGHT: (f64, f64, f64) = (255.0, 185.0, 110.0);
+/// Overall gain on the city-light contribution — keeps dense clusters from
+/// blowing straight out to white.
+const CITY_LIGHT_GAIN: f64 = 0.95;
+
+/// A gap-free equirectangular texture of a world's surface, suitable for
+/// projecting onto a sphere. Row-major, `width × height`.
 pub struct GlobeTexture {
     pub width: u32,
     pub height: u32,
-    /// `width * height * 3` bytes, RGB row-major.
+    /// `width * height * 3` bytes, RGB row-major — the daylight surface.
     pub rgb: Vec<u8>,
+    /// `width * height` bytes — a "Black Marble" emissive channel: the
+    /// intensity of artificial light (city glow) at each texel, scaled by
+    /// settlement size. Sampled and shown only on the night side during the
+    /// warp. All-zero for unpopulated worlds.
+    pub emissive: Vec<u8>,
 }
 
 /// Build a full equirectangular surface texture for `map` in one call.
@@ -91,6 +111,7 @@ pub fn build_equirect_texture(map: &WorldMap, width: u32, height: u32) -> GlobeT
     let mut job = GlobeTextureJob::new(width, height);
     job.step_elevation(map);
     job.step_color(map);
+    job.populate_city_lights(map);
     job.into_texture()
 }
 
@@ -103,6 +124,7 @@ pub struct GlobeTextureJob {
     height: u32,
     elev: Vec<f32>,
     color: Vec<(u8, u8, u8)>,
+    emissive: Vec<u8>,
 }
 
 impl GlobeTextureJob {
@@ -113,6 +135,7 @@ impl GlobeTextureJob {
             height,
             elev: vec![0f32; n],
             color: vec![(0u8, 0u8, 0u8); n],
+            emissive: vec![0u8; n],
         }
     }
 
@@ -165,8 +188,50 @@ impl GlobeTextureJob {
         }
     }
 
+    /// Optional step (run after [`Self::step_color`], before
+    /// [`Self::into_texture`]): rasterize a "Black Marble" emissive map from
+    /// the world's settlements. Each city splats a soft warm glow at its
+    /// lon/lat whose radius and peak scale with [`CityTier`], accumulating
+    /// where settlements cluster. Longitude wraps. Cheap — O(cities × radius²).
+    /// Skipping it leaves the emissive channel zero (no night lights).
+    pub fn populate_city_lights(&mut self, map: &WorldMap) {
+        let w = self.width as i32;
+        let h = self.height as i32;
+        for hex in &map.grid.hexes {
+            let Some(tier) = hex.features.iter().find_map(|f| match f {
+                Feature::City { tier, .. } => Some(*tier),
+                _ => None,
+            }) else {
+                continue;
+            };
+            let (rfrac, peak) = city_light_params(tier);
+            let p = hex.sphere_pos;
+            let lat = p[2].clamp(-1.0, 1.0).asin();
+            let lon = p[1].atan2(p[0]).rem_euclid(2.0 * PI);
+            let cx = (lon / (2.0 * PI) * self.width as f64) as i32;
+            let cy = ((FRAC_PI_2 - lat) / PI * self.height as f64) as i32;
+            let r = (rfrac * self.width as f64).max(1.5);
+            let ri = r.ceil() as i32;
+            for dy in -ri..=ri {
+                let ny = (cy + dy).clamp(0, h - 1);
+                for dx in -ri..=ri {
+                    let d2 = (dx * dx + dy * dy) as f64;
+                    let fall = (1.0 - d2 / (r * r)).max(0.0);
+                    if fall <= 0.0 {
+                        continue;
+                    }
+                    let nx = (cx + dx).rem_euclid(w);
+                    let idx = (ny as usize) * self.width as usize + nx as usize;
+                    let val = peak * fall * fall;
+                    self.emissive[idx] = (self.emissive[idx] as f64 + val).min(255.0) as u8;
+                }
+            }
+        }
+    }
+
     /// Step 3 (terminal): hillshade land + faint tide on shallow water, baking
-    /// the RGB texture. Longitude wraps; latitude clamps at the poles.
+    /// the RGB texture. Longitude wraps; latitude clamps at the poles. The
+    /// emissive channel (if [`Self::populate_city_lights`] ran) passes through.
     pub fn into_texture(self) -> GlobeTexture {
         let w = self.width as usize;
         let h = self.height as usize;
@@ -222,7 +287,19 @@ impl GlobeTextureJob {
             width: self.width,
             height: self.height,
             rgb,
+            emissive: self.emissive,
         }
+    }
+}
+
+/// City-light splat parameters by settlement size: `(radius as a fraction of
+/// texture width, peak intensity 0–255)`. Bigger, brighter for larger tiers.
+fn city_light_params(tier: CityTier) -> (f64, f64) {
+    match tier {
+        CityTier::Megacity => (0.0100, 255.0),
+        CityTier::Major => (0.0072, 210.0),
+        CityTier::Minor => (0.0050, 160.0),
+        CityTier::Small => (0.0034, 110.0),
     }
 }
 
@@ -247,16 +324,16 @@ fn continentality_wrapped(elev: &[f32], w: usize, h: usize, tx: usize, ty: usize
 
 impl GlobeTexture {
     /// Bilinearly sample the texture at a 3D unit-sphere position (in the
-    /// `xy_to_sphere` convention: `z` is the pole axis). Longitude wraps,
-    /// latitude clamps.
+    /// `xy_to_sphere` convention: `z` is the pole axis). Returns the surface
+    /// RGB plus the emissive (city-light) intensity at that point. Longitude
+    /// wraps, latitude clamps.
     #[inline]
-    fn sample(&self, p: [f64; 3]) -> (u8, u8, u8) {
-        use std::f64::consts::PI;
+    fn sample(&self, p: [f64; 3]) -> ((f64, f64, f64), f64) {
         let lat = p[2].clamp(-1.0, 1.0).asin();
         let lon = p[1].atan2(p[0]).rem_euclid(2.0 * PI);
         // Match xy_to_sphere: x∈[0,W)→lon∈[0,2π); y∈[0,H)→lat from +π/2 to -π/2.
         let fx = lon / (2.0 * PI) * self.width as f64 - 0.5;
-        let fy = (std::f64::consts::FRAC_PI_2 - lat) / PI * self.height as f64 - 0.5;
+        let fy = (FRAC_PI_2 - lat) / PI * self.height as f64 - 0.5;
 
         let w = self.width as i32;
         let h = self.height as i32;
@@ -265,36 +342,31 @@ impl GlobeTexture {
         let tx = fx - x0 as f64;
         let tyf = fy - y0 as f64;
 
-        let px = |x: i32, y: i32| -> (f64, f64, f64) {
+        // Sample one texel as (r, g, b, emissive), all f64.
+        let px = |x: i32, y: i32| -> [f64; 4] {
             let xi = x.rem_euclid(w) as usize;
             let yi = y.clamp(0, h - 1) as usize;
-            let i = (yi * self.width as usize + xi) * 3;
-            (
+            let flat = yi * self.width as usize + xi;
+            let i = flat * 3;
+            [
                 self.rgb[i] as f64,
                 self.rgb[i + 1] as f64,
                 self.rgb[i + 2] as f64,
-            )
+                self.emissive[flat] as f64,
+            ]
         };
         let c00 = px(x0, y0);
         let c10 = px(x0 + 1, y0);
         let c01 = px(x0, y0 + 1);
         let c11 = px(x0 + 1, y0 + 1);
         let lerp = |a: f64, b: f64, t: f64| a + (b - a) * t;
-        let top = (
-            lerp(c00.0, c10.0, tx),
-            lerp(c00.1, c10.1, tx),
-            lerp(c00.2, c10.2, tx),
-        );
-        let bot = (
-            lerp(c01.0, c11.0, tx),
-            lerp(c01.1, c11.1, tx),
-            lerp(c01.2, c11.2, tx),
-        );
-        (
-            lerp(top.0, bot.0, tyf).round() as u8,
-            lerp(top.1, bot.1, tyf).round() as u8,
-            lerp(top.2, bot.2, tyf).round() as u8,
-        )
+        let mut out = [0.0f64; 4];
+        for k in 0..4 {
+            let top = lerp(c00[k], c10[k], tx);
+            let bot = lerp(c01[k], c11[k], tx);
+            out[k] = lerp(top, bot, tyf);
+        }
+        ((out[0], out[1], out[2]), out[3])
     }
 
     /// Orthographically project the texture onto a sphere into a fresh
@@ -372,27 +444,43 @@ impl GlobeTexture {
                 let cl = lat.cos();
                 let sphere = [cl * lon.cos(), cl * lon.sin(), lat.sin()];
 
-                let (mut r, mut g, mut b) = {
-                    let (cr, cg, cb) = self.sample(sphere);
-                    (cr as f64, cg as f64, cb as f64)
-                };
+                let ((cr, cg, cb), emissive) = self.sample(sphere);
+                let (mut r, mut g, mut b) = (cr, cg, cb);
 
-                // Shade: ambient + directional, then limb darkening.
-                let diffuse = dot(p_cam, light).max(0.0);
-                let mut shade = (AMBIENT + DIFFUSE_GAIN * diffuse).clamp(0.0, 1.15);
+                // Day/night: `lambert` is the sun cosine at this point; a
+                // smoothstep across the terminator gives `day` ∈ [0,1] (1 =
+                // full daylight, 0 = night). The night side keeps NIGHT_LEVEL
+                // of its brightness so it stays readable. Then limb-darken.
+                let lambert = dot(p_cam, light);
+                let day = smoothstep(-TERM_WIDTH, TERM_WIDTH, lambert);
+                let mut shade = NIGHT_LEVEL + (1.0 - NIGHT_LEVEL) * day;
                 shade *= LIMB_FLOOR + (1.0 - LIMB_FLOOR) * nz;
-                r = (r * shade).clamp(0.0, 255.0);
-                g = (g * shade).clamp(0.0, 255.0);
-                b = (b * shade).clamp(0.0, 255.0);
+                r *= shade;
+                g *= shade;
+                b *= shade;
+
+                // City lights ("Black Marble"): warm sodium glow, additive and
+                // only on the night side, fading out through the terminator.
+                let night = 1.0 - day;
+                if night > 0.0 && emissive > 0.0 {
+                    let lit = (emissive / 255.0) * night * CITY_LIGHT_GAIN;
+                    r += CITY_LIGHT.0 * lit;
+                    g += CITY_LIGHT.1 * lit;
+                    b += CITY_LIGHT.2 * lit;
+                }
 
                 // Soft bright atmosphere rim on the lit limb (inner edge).
                 let edge = (dist / radius).clamp(0.0, 1.0);
                 if edge > 0.92 {
-                    let rim = ((edge - 0.92) / 0.08).clamp(0.0, 1.0) * 0.5 * diffuse;
-                    r = r + (ATMO.0 - r) * rim;
-                    g = g + (ATMO.1 - g) * rim;
-                    b = b + (ATMO.2 - b) * rim;
+                    let rim = ((edge - 0.92) / 0.08).clamp(0.0, 1.0) * 0.5 * day;
+                    r += (ATMO.0 - r) * rim;
+                    g += (ATMO.1 - g) * rim;
+                    b += (ATMO.2 - b) * rim;
                 }
+
+                let r = r.clamp(0.0, 255.0);
+                let g = g.clamp(0.0, 255.0);
+                let b = b.clamp(0.0, 255.0);
 
                 buf[i] = r.round() as u8;
                 buf[i + 1] = g.round() as u8;
@@ -406,6 +494,13 @@ impl GlobeTexture {
 #[inline]
 fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+/// Hermite smoothstep: 0 below `e0`, 1 above `e1`, smooth in between.
+#[inline]
+fn smoothstep(e0: f64, e1: f64, x: f64) -> f64 {
+    let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 #[inline]
@@ -542,6 +637,29 @@ mod tests {
     }
 
     #[test]
+    fn populated_world_emits_city_lights() {
+        // A high-population world (pop A) places many cities, so its emissive
+        // channel must be non-zero somewhere.
+        let map = super::super::generate("A8888AA-A", 1, None).unwrap();
+        let t = build_equirect_texture(&map, 256, 128);
+        assert_eq!(t.emissive.len(), 256 * 128);
+        let lit = t.emissive.iter().filter(|&&e| e > 0).count();
+        assert!(lit > 0, "populated world should have lit texels");
+    }
+
+    #[test]
+    fn unpopulated_world_has_no_city_lights() {
+        // Pop 0 → no settlements → emissive channel is entirely dark.
+        let map = super::super::generate("A8800A0-8", 1, None).unwrap();
+        assert_eq!(map.uwp.population(), 0);
+        let t = build_equirect_texture(&map, 256, 128);
+        assert!(
+            t.emissive.iter().all(|&e| e == 0),
+            "unpopulated world must have no city lights"
+        );
+    }
+
+    #[test]
     fn spin_changes_the_frame() {
         let t = tex();
         let a = t.warp_frame(96, 0.0);
@@ -597,6 +715,7 @@ mod tests {
             ("earth", "C886977-8"),
             ("waterworld", "A78A899-A"),
             ("desert", "A780899-A"),
+            ("urban", "A8888AA-A"), // pop A — lots of night-side city lights
         ];
         for (name, uwp) in cases {
             let map = super::super::generate(uwp, 1, None).unwrap();

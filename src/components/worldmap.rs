@@ -211,6 +211,7 @@ pub fn WorldMap() -> impl IntoView {
                 job.step_elevation(&map);
                 yield_to_browser().await;
                 job.step_color(&map);
+                job.populate_city_lights(&map);
                 yield_to_browser().await;
                 let tex = job.into_texture();
                 pending_render.set(false);
