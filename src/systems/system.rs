@@ -767,6 +767,31 @@ impl System {
             self.ensure_orbits_for_constraints(overrides);
         }
 
+        // The main world is placed LAST (after the planet / belt / gas-giant
+        // passes), but a habitable-zone main world has a fixed target orbit
+        // and must not lose it to an auto-placed body. In a system with many
+        // planet constraints, the unpinned planets greedily take the lowest
+        // empty orbits — including the habitable one — and the main world is
+        // then exiled to a far slot. Reserve its target orbit now (mark it
+        // Blocked so every auto pass routes around it) and release it again
+        // just before place_main_world. No RNG is consumed, and the auto
+        // passes draw the same number of random values — only the orbit they
+        // map to changes — so the rest of generation is unperturbed.
+        let reserved_main_orbit = if is_primary {
+            match self.main_world_habitable_orbit(&main_world_copy) {
+                Some(o) if o < self.orbit_slots.len() && self.orbit_slots[o].is_none() => {
+                    self.set_orbit_slot(o, OrbitContent::Blocked);
+                    Some(o)
+                }
+                // Slot already taken (a companion star, a pinned Empty, or
+                // out of range): leave it to place_main_world's own branch
+                // logic, which handles those cases.
+                _ => None,
+            }
+        } else {
+            None
+        };
+
         // Place user-pinned non-main planets and belts FIRST so the
         // random gas-giant / planetoid passes route around them.
         // Without this, a Planet constraint at orbit 1 can lose to a
@@ -802,6 +827,12 @@ impl System {
             !overrides.belts.is_empty() || overrides.gas_giants.is_some();
         if !belts_or_giants_constrained {
             self.gen_planetoids(num_gas_giants, &main_world_copy);
+        }
+
+        // Release the reserved habitable orbit so place_main_world sees it
+        // empty (None) and lands the main world there.
+        if let Some(o) = reserved_main_orbit {
+            self.orbit_slots[o] = None;
         }
 
         if is_primary {
@@ -915,6 +946,27 @@ impl System {
         {
             tertiary.fill_system(main_world_copy, false);
         }
+    }
+
+    /// The orbit `place_main_world` will target for a habitable-zone main
+    /// world, or `None` when the world doesn't require the habitable zone
+    /// (those are placed in a random empty orbit instead, so there's nothing
+    /// to reserve). Mirrors the habitable-orbit selection in
+    /// `place_main_world` so the reservation in `fill_system_with` blocks the
+    /// exact slot the main world will later claim.
+    fn main_world_habitable_orbit(&self, main_world: &World) -> Option<usize> {
+        let requires_habitable =
+            main_world.atmosphere > 1 && main_world.atmosphere < 10 && main_world.size > 0;
+        if !requires_habitable {
+            return None;
+        }
+        let zone = get_zone(&self.star);
+        let habitable = if zone.habitable <= 0 || zone.habitable == zone.inner {
+            zone.inner.max(0)
+        } else {
+            zone.habitable
+        };
+        Some(habitable as usize)
     }
 
     fn place_main_world(&mut self, mut main_world: World) {
@@ -2035,6 +2087,15 @@ mod tests {
                 .count();
             assert_eq!(gg, 4, "all four gas giants must be placed");
             assert_eq!(belts, 2, "both belts must be placed");
+
+            // The main world (Torpol, atmosphere 5 → habitable-zone world)
+            // must land in the habitable zone, not get exiled to a far orbit
+            // by the auto-placed planet constraints. F4 V's habitable orbit
+            // is 5; reserving it keeps the main world there.
+            let mw_orbit = system.orbit_slots.iter().position(
+                |s| matches!(s, Some(OrbitContent::World(w)) if w.is_mainworld()),
+            );
+            assert_eq!(mw_orbit, Some(5), "main world must sit in the habitable zone");
         }
     }
 

@@ -841,15 +841,20 @@ fn format_star_size(star: &Star) -> String {
 fn draw_legend<R: Renderer + ?Sized>(r: &mut R, system: &System) {
     let x_label = CANVAS_W - 360.0;
     let x_dist = CANVAS_W - 180.0;
+    // Right edge the distance column is aligned to. The data rows below
+    // right-align their numbers to this edge; the "Mkm" header and the
+    // central star's "0.0" must use the same edge or they sit left of the
+    // rest of the column (the misalignment the panel showed).
+    let x_dist_right = x_dist + 60.0;
     let mut y = 60.0;
     let line_h = 18.0;
     r.fill_text(x_label, y, 14.0, "System Objects", LABEL);
     y += 22.0;
     r.fill_text(x_label, y, 12.0, "Body", LABEL_DIM);
-    r.fill_text(x_dist, y, 12.0, "Mkm", LABEL_DIM);
+    r.fill_text(x_dist_right - text_width("Mkm", 12.0), y, 12.0, "Mkm", LABEL_DIM);
     y += line_h;
     r.fill_text(x_label, y, 12.0, &system.name, LABEL);
-    r.fill_text(x_dist, y, 12.0, "0.0", LABEL_DIM);
+    r.fill_text(x_dist_right - text_width("0.0", 12.0), y, 12.0, "0.0", LABEL_DIM);
     y += line_h;
     for (orbit, slot) in system.orbit_slots.iter().enumerate() {
         let Some(content) = slot else { continue };
@@ -880,7 +885,7 @@ fn draw_legend<R: Renderer + ?Sized>(r: &mut R, system: &System) {
         let dist_str = format_mkm(dist);
         let dw = text_width(&dist_str, 12.0);
         // right-align distance column
-        r.fill_text(x_dist + 60.0 - dw, y, 12.0, &dist_str, LABEL_DIM);
+        r.fill_text(x_dist_right - dw, y, 12.0, &dist_str, LABEL_DIM);
         y += line_h;
         if y > CANVAS_H - 24.0 {
             break;
@@ -901,7 +906,7 @@ fn draw_legend<R: Renderer + ?Sized>(r: &mut R, system: &System) {
         let row = format!("{}  (Star, {orbit_label})", companion.name);
         r.fill_text(x_label, y, 12.0, &row, LABEL);
         let dw = text_width(dist_str, 12.0);
-        r.fill_text(x_dist + 60.0 - dw, y, 12.0, dist_str, LABEL_DIM);
+        r.fill_text(x_dist_right - dw, y, 12.0, dist_str, LABEL_DIM);
         y += line_h;
         if y > CANVAS_H - 24.0 {
             break;
