@@ -1912,6 +1912,23 @@ mod tests {
     }
 
     #[test]
+    fn test_exotic_atmosphere_main_world_generates_and_renders() {
+        // Regression: Pourne (Trojan Reach 2324), UWP A9B2887-A — the
+        // main world's atmosphere is B (11), an exotic code. The astro
+        // pass indexed an 11-entry cloudiness table out of bounds and,
+        // under panic=abort, SIGABRT'd the whole server (502s + browser
+        // CORS errors). Must generate and render cleanly for every
+        // atmosphere code, exotic ones included.
+        for atmo in ['A', 'B', 'C', 'D', 'E', 'F'] {
+            let uwp = format!("A9{atmo}2887-A");
+            let cs = SystemConstraints::from_main_world("Exotic", &uwp).unwrap();
+            let system = System::generate_from_constraints(cs)
+                .unwrap_or_else(|e| panic!("atmosphere {atmo} ({uwp}) must generate: {e:?}"));
+            crate::sysmap::render_png(&system).expect("must render");
+        }
+    }
+
+    #[test]
     fn test_generate_from_constraints_x_starport_main_world() {
         // Regression: an `X` (no starport) main world used to be rejected
         // because the port parsed as a wildcard, leaving the UWP "partial".

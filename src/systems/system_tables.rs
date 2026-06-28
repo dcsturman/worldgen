@@ -233,7 +233,10 @@ pub fn get_orbital_distance(orbit: i32) -> f32 {
 ///
 /// Cloud coverage as percentage (0-70)
 pub(crate) fn get_cloudiness(atmosphere: i32) -> i32 {
-    CLOUDINESS[atmosphere as usize]
+    // Clamp rather than index raw: extended-hex UWPs can carry atmosphere
+    // codes above 15, and an out-of-range index here aborts the process.
+    let idx = (atmosphere.max(0) as usize).min(CLOUDINESS.len() - 1);
+    CLOUDINESS[idx]
 }
 
 /// Retrieves greenhouse effect multiplier for atmosphere type
@@ -249,7 +252,10 @@ pub(crate) fn get_cloudiness(atmosphere: i32) -> i32 {
 ///
 /// Greenhouse effect multiplier (0.0-0.5)
 pub(crate) fn get_greenhouse(atmosphere: i32) -> f32 {
-    GREENHOUSE[atmosphere as usize]
+    // GREENHOUSE covers 0-15, but extended-hex UWPs can exceed that;
+    // clamp so an exotic atmosphere code can't abort the process.
+    let idx = (atmosphere.max(0) as usize).min(GREENHOUSE.len() - 1);
+    GREENHOUSE[idx]
 }
 
 /// Generates random world temperature with modifier
@@ -285,14 +291,24 @@ const ORBITAL_DISTANCE: [f32; 20] = [
 
 /// Cloud coverage percentages by atmosphere type
 ///
-/// Maps atmosphere codes (0-10) to typical cloud coverage.
+/// Maps atmosphere codes (0-15) to typical cloud coverage.
 /// Used in albedo and temperature calculations.
 ///
 /// - 0-1: No atmosphere, no clouds (0%)
 /// - 2-3: Thin atmosphere, minimal clouds (10%)
 /// - 4-9: Various thick atmospheres (20-70%)
 /// - 10: Dense atmosphere, maximum clouds (70%)
-const CLOUDINESS: [i32; 11] = [0, 0, 10, 10, 20, 30, 40, 50, 60, 70, 70];
+/// - 11-13: Exotic / corrosive / insidious — dense, heavily clouded (70%)
+/// - 14-15: Unusual high-code atmospheres — tapering cover (60/40%)
+///
+/// Earlier this table stopped at index 10, so any world with an exotic
+/// atmosphere (B-F = 11-15, common in Traveller Map data) panicked the
+/// astro calculation and — under panic=abort — took down the whole
+/// server process. It now spans the full 0-15 atmosphere range, and
+/// `get_cloudiness` clamps out-of-range indices for safety.
+const CLOUDINESS: [i32; 16] = [
+    0, 0, 10, 10, 20, 30, 40, 50, 60, 70, 70, 70, 70, 70, 60, 40,
+];
 
 /// Greenhouse effect multipliers by atmosphere type
 ///
@@ -1748,6 +1764,24 @@ mod tests {
         assert!((get_orbital_distance(21) - (2.0 * d20 - step)).abs() < 1.0);
         // Strictly increasing well past the old 20-slot ceiling.
         assert!(get_orbital_distance(30) > get_orbital_distance(25));
+    }
+
+    #[test]
+    fn test_atmosphere_getters_cover_exotic_codes() {
+        // Regression: a world with an exotic atmosphere (B-F = 11-15,
+        // e.g. Pourne A9B2887-A, atmosphere B=11) used to index past the
+        // 11-entry CLOUDINESS table and abort the whole server process.
+        // Every standard atmosphere code must return a value.
+        for atmo in 0..=15 {
+            let c = get_cloudiness(atmo);
+            assert!((0..=100).contains(&c), "cloudiness {c} out of range at {atmo}");
+            let _ = get_greenhouse(atmo);
+        }
+        // Out-of-range (extended-hex) and negative atmospheres clamp
+        // instead of panicking.
+        assert_eq!(get_cloudiness(33), get_cloudiness(15));
+        assert_eq!(get_cloudiness(-1), get_cloudiness(0));
+        assert_eq!(get_greenhouse(33), get_greenhouse(15));
     }
 
     #[test_log::test]
