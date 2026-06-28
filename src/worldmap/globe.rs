@@ -64,10 +64,10 @@ const ATMO: (f64, f64, f64) = (130.0, 175.0, 255.0);
 /// camera space, so as the planet spins its terrain rotates through day and
 /// night.
 const LIGHT: (f64, f64, f64) = (-0.55, 0.55, 0.62);
-/// Brightness of the night side relative to the fully-lit day side. A
-/// "moderate" terminator: the dark half stays readable (~27%) rather than
-/// going black. Set to 1.0 to disable the day/night effect entirely.
-const NIGHT_LEVEL: f64 = 0.27;
+/// Brightness of the night side relative to the fully-lit day side. The dark
+/// half stays just readable (~18%) without going fully black; set to 1.0 to
+/// disable the day/night effect entirely.
+const NIGHT_LEVEL: f64 = 0.18;
 /// Half-width (in Lambert-cosine units) of the soft day→night transition band
 /// around the terminator. Larger = wider, softer twilight.
 const TERM_WIDTH: f64 = 0.18;
@@ -81,6 +81,16 @@ const CITY_LIGHT: (f64, f64, f64) = (255.0, 185.0, 110.0);
 /// blowing straight out to white.
 const CITY_LIGHT_GAIN: f64 = 0.95;
 
+/// Saturated red of the starport beacon. Unlike city lights it shows in
+/// daylight too, and it's *blended* toward (not added) so the hot core reads
+/// as true red over any terrain. Rotates out of view with the planet.
+const BEACON_COLOR: (f64, f64, f64) = (255.0, 45.0, 35.0);
+/// Beacon glow radius as a fraction of texture width.
+const BEACON_RADIUS_FRAC: f64 = 0.011;
+/// Gentle beacon pulses per full rotation. Integer so the spinning animation
+/// loops seamlessly (the pulse phase returns to its start after 2π of spin).
+const BEACON_PULSES: f64 = 8.0;
+
 /// A gap-free equirectangular texture of a world's surface, suitable for
 /// projecting onto a sphere. Row-major, `width × height`.
 pub struct GlobeTexture {
@@ -93,6 +103,10 @@ pub struct GlobeTexture {
     /// settlement size. Sampled and shown only on the night side during the
     /// warp. All-zero for unpopulated worlds.
     pub emissive: Vec<u8>,
+    /// `width * height` bytes — the starport-beacon channel: a single red
+    /// marker at the world's starport, shown day and night. All-zero for
+    /// worlds with no starport (class X / Y, or unpopulated).
+    pub beacon: Vec<u8>,
 }
 
 /// Build a full equirectangular surface texture for `map` in one call.
@@ -125,6 +139,7 @@ pub struct GlobeTextureJob {
     elev: Vec<f32>,
     color: Vec<(u8, u8, u8)>,
     emissive: Vec<u8>,
+    beacon: Vec<u8>,
 }
 
 impl GlobeTextureJob {
@@ -136,6 +151,7 @@ impl GlobeTextureJob {
             elev: vec![0f32; n],
             color: vec![(0u8, 0u8, 0u8); n],
             emissive: vec![0u8; n],
+            beacon: vec![0u8; n],
         }
     }
 
@@ -197,34 +213,35 @@ impl GlobeTextureJob {
     pub fn populate_city_lights(&mut self, map: &WorldMap) {
         let w = self.width as i32;
         let h = self.height as i32;
+        let width = self.width as f64;
         for hex in &map.grid.hexes {
-            let Some(tier) = hex.features.iter().find_map(|f| match f {
-                Feature::City { tier, .. } => Some(*tier),
+            let Some((tier, is_port)) = hex.features.iter().find_map(|f| match f {
+                Feature::City { tier, starport } => Some((*tier, *starport)),
                 _ => None,
             }) else {
                 continue;
             };
-            let (rfrac, peak) = city_light_params(tier);
             let p = hex.sphere_pos;
             let lat = p[2].clamp(-1.0, 1.0).asin();
             let lon = p[1].atan2(p[0]).rem_euclid(2.0 * PI);
-            let cx = (lon / (2.0 * PI) * self.width as f64) as i32;
+            let cx = (lon / (2.0 * PI) * width) as i32;
             let cy = ((FRAC_PI_2 - lat) / PI * self.height as f64) as i32;
-            let r = (rfrac * self.width as f64).max(1.5);
-            let ri = r.ceil() as i32;
-            for dy in -ri..=ri {
-                let ny = (cy + dy).clamp(0, h - 1);
-                for dx in -ri..=ri {
-                    let d2 = (dx * dx + dy * dy) as f64;
-                    let fall = (1.0 - d2 / (r * r)).max(0.0);
-                    if fall <= 0.0 {
-                        continue;
-                    }
-                    let nx = (cx + dx).rem_euclid(w);
-                    let idx = (ny as usize) * self.width as usize + nx as usize;
-                    let val = peak * fall * fall;
-                    self.emissive[idx] = (self.emissive[idx] as f64 + val).min(255.0) as u8;
-                }
+
+            // Warm city glow scaled by settlement size.
+            let (rfrac, peak) = city_light_params(tier);
+            splat(&mut self.emissive, w, h, cx, cy, (rfrac * width).max(1.5), peak);
+
+            // The single starport also drops a red beacon marker.
+            if is_port {
+                splat(
+                    &mut self.beacon,
+                    w,
+                    h,
+                    cx,
+                    cy,
+                    (BEACON_RADIUS_FRAC * width).max(1.5),
+                    255.0,
+                );
             }
         }
     }
@@ -288,6 +305,7 @@ impl GlobeTextureJob {
             height: self.height,
             rgb,
             emissive: self.emissive,
+            beacon: self.beacon,
         }
     }
 }
@@ -300,6 +318,27 @@ fn city_light_params(tier: CityTier) -> (f64, f64) {
         CityTier::Major => (0.0072, 210.0),
         CityTier::Minor => (0.0050, 160.0),
         CityTier::Small => (0.0034, 110.0),
+    }
+}
+
+/// Accumulate a soft radial glow of radius `r` and centre intensity `peak`
+/// into a single-channel `width × height` map at `(cx, cy)`. Longitude (x)
+/// wraps; latitude (y) clamps. Quadratic falloff, saturating at 255.
+fn splat(channel: &mut [u8], width: i32, height: i32, cx: i32, cy: i32, r: f64, peak: f64) {
+    let ri = r.ceil() as i32;
+    for dy in -ri..=ri {
+        let ny = (cy + dy).clamp(0, height - 1);
+        for dx in -ri..=ri {
+            let d2 = (dx * dx + dy * dy) as f64;
+            let fall = (1.0 - d2 / (r * r)).max(0.0);
+            if fall <= 0.0 {
+                continue;
+            }
+            let nx = (cx + dx).rem_euclid(width);
+            let idx = (ny as usize) * (width as usize) + nx as usize;
+            let val = peak * fall * fall;
+            channel[idx] = (channel[idx] as f64 + val).min(255.0) as u8;
+        }
     }
 }
 
@@ -325,10 +364,10 @@ fn continentality_wrapped(elev: &[f32], w: usize, h: usize, tx: usize, ty: usize
 impl GlobeTexture {
     /// Bilinearly sample the texture at a 3D unit-sphere position (in the
     /// `xy_to_sphere` convention: `z` is the pole axis). Returns the surface
-    /// RGB plus the emissive (city-light) intensity at that point. Longitude
-    /// wraps, latitude clamps.
+    /// RGB, the emissive (city-light) intensity, and the starport-beacon
+    /// intensity at that point. Longitude wraps, latitude clamps.
     #[inline]
-    fn sample(&self, p: [f64; 3]) -> ((f64, f64, f64), f64) {
+    fn sample(&self, p: [f64; 3]) -> ((f64, f64, f64), f64, f64) {
         let lat = p[2].clamp(-1.0, 1.0).asin();
         let lon = p[1].atan2(p[0]).rem_euclid(2.0 * PI);
         // Match xy_to_sphere: x∈[0,W)→lon∈[0,2π); y∈[0,H)→lat from +π/2 to -π/2.
@@ -342,8 +381,8 @@ impl GlobeTexture {
         let tx = fx - x0 as f64;
         let tyf = fy - y0 as f64;
 
-        // Sample one texel as (r, g, b, emissive), all f64.
-        let px = |x: i32, y: i32| -> [f64; 4] {
+        // Sample one texel as (r, g, b, emissive, beacon), all f64.
+        let px = |x: i32, y: i32| -> [f64; 5] {
             let xi = x.rem_euclid(w) as usize;
             let yi = y.clamp(0, h - 1) as usize;
             let flat = yi * self.width as usize + xi;
@@ -353,6 +392,7 @@ impl GlobeTexture {
                 self.rgb[i + 1] as f64,
                 self.rgb[i + 2] as f64,
                 self.emissive[flat] as f64,
+                self.beacon[flat] as f64,
             ]
         };
         let c00 = px(x0, y0);
@@ -360,13 +400,13 @@ impl GlobeTexture {
         let c01 = px(x0, y0 + 1);
         let c11 = px(x0 + 1, y0 + 1);
         let lerp = |a: f64, b: f64, t: f64| a + (b - a) * t;
-        let mut out = [0.0f64; 4];
-        for k in 0..4 {
+        let mut out = [0.0f64; 5];
+        for k in 0..5 {
             let top = lerp(c00[k], c10[k], tx);
             let bot = lerp(c01[k], c11[k], tx);
             out[k] = lerp(top, bot, tyf);
         }
-        ((out[0], out[1], out[2]), out[3])
+        ((out[0], out[1], out[2]), out[3], out[4])
     }
 
     /// Orthographically project the texture onto a sphere into a fresh
@@ -400,6 +440,10 @@ impl GlobeTexture {
         // Normalized light direction.
         let ll = (LIGHT.0 * LIGHT.0 + LIGHT.1 * LIGHT.1 + LIGHT.2 * LIGHT.2).sqrt();
         let light = [LIGHT.0 / ll, LIGHT.1 / ll, LIGHT.2 / ll];
+
+        // Beacon pulse — a gentle throb tied to the spin phase (so it loops
+        // seamlessly). Constant across the frame, so compute it once here.
+        let beacon_pulse = 0.65 + 0.35 * (0.5 + 0.5 * (spin * BEACON_PULSES).sin());
 
         for oy in 0..size {
             for ox in 0..size {
@@ -444,7 +488,7 @@ impl GlobeTexture {
                 let cl = lat.cos();
                 let sphere = [cl * lon.cos(), cl * lon.sin(), lat.sin()];
 
-                let ((cr, cg, cb), emissive) = self.sample(sphere);
+                let ((cr, cg, cb), emissive, beacon) = self.sample(sphere);
                 let (mut r, mut g, mut b) = (cr, cg, cb);
 
                 // Day/night: `lambert` is the sun cosine at this point; a
@@ -476,6 +520,15 @@ impl GlobeTexture {
                     r += (ATMO.0 - r) * rim;
                     g += (ATMO.1 - g) * rim;
                     b += (ATMO.2 - b) * rim;
+                }
+
+                // Starport beacon: blended toward red (so the hot core overrides
+                // terrain), shown in daylight as well as night, pulsing gently.
+                if beacon > 0.0 {
+                    let bo = (beacon / 255.0) * beacon_pulse;
+                    r += (BEACON_COLOR.0 - r) * bo;
+                    g += (BEACON_COLOR.1 - g) * bo;
+                    b += (BEACON_COLOR.2 - b) * bo;
                 }
 
                 let r = r.clamp(0.0, 255.0);
@@ -656,6 +709,35 @@ mod tests {
         assert!(
             t.emissive.iter().all(|&e| e == 0),
             "unpopulated world must have no city lights"
+        );
+    }
+
+    #[test]
+    fn starport_world_has_a_beacon() {
+        // An A-port populated world places a starport, so the beacon channel
+        // must light up.
+        let map = super::super::generate("A788899-A", 1, None).unwrap();
+        let t = build_equirect_texture(&map, 256, 128);
+        assert_eq!(t.beacon.len(), 256 * 128);
+        assert!(
+            t.beacon.iter().any(|&v| v > 0),
+            "A-port world should have a starport beacon"
+        );
+    }
+
+    #[test]
+    fn portless_world_has_no_beacon() {
+        // Class-X worlds have no starport — no beacon, even though they may
+        // still have cities (and thus city lights).
+        let map = super::super::generate("X788899-A", 1, None).unwrap();
+        let t = build_equirect_texture(&map, 256, 128);
+        assert!(
+            t.beacon.iter().all(|&v| v == 0),
+            "X-port world must have no beacon"
+        );
+        assert!(
+            t.emissive.iter().any(|&v| v > 0),
+            "but a populated X world still has city lights"
         );
     }
 
