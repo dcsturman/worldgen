@@ -1,0 +1,27 @@
+# The Docker build context is the repo root, but the image only needs the
+# Cargo manifests, the crate sources, the bundled assets, and the deploy
+# config. Without this file, `docker build .` ships the ENTIRE tree —
+# including target/ (tens of GB of compiled artifacts) and .git — to the
+# BuildKit daemon on every build, which dominates wall-clock time and
+# pressures Docker's build cache into evicting the cargo target/ mounts
+# (forcing a full dependency recompile). Ignore everything, then re-include
+# only what the Dockerfile's COPY steps actually use.
+*
+
+!Cargo.toml
+!Cargo.lock
+!build.rs
+!index.html
+!Trunk.toml
+!style.css
+!nginx.conf
+!supervisord.conf
+!entrypoint.sh
+!public
+!src
+!assets
+
+# Re-exclude build artifacts that the broad re-includes above would pull
+# back in (e.g. a stray target/ inside src/ tooling, editor scratch).
+**/target
+**/*.swp

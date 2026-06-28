@@ -132,7 +132,9 @@ Components use Leptos signals and `reactive_stores` for nested state. The trade 
 
 ## Deployment
 
-Single Docker image runs both nginx (serving `dist/`) and the trade server, supervised by supervisord (`supervisord.conf`). nginx proxies `/ws/trade` → `127.0.0.1:8081`. Build is multi-stage with `cargo-chef` for caching and produces a musl-static server binary so it runs on `nginx:1.27-alpine`. `push_image.sh` builds for `linux/amd64` and deploys to Cloud Run.
+Single Docker image runs both nginx (serving `dist/`) and the trade server, supervised by supervisord (`supervisord.conf`). nginx proxies `/ws/trade` → `127.0.0.1:8081`. The build is multi-stage (a WASM-frontend stage and a musl-static-server stage), each compiling with BuildKit `--mount=type=cache` over its cargo `target/` so a source-only change recompiles just the changed crate, not the whole dep tree. A `.dockerignore` keeps the build context to the manifests/source/assets (without it, the multi-GB `target/` ships to the daemon on every build and pressures the cache mounts into eviction → full recompile). `push_image.sh` builds for `linux/amd64` and deploys to Cloud Run.
+
+The cache **mounts** persist only in the local BuildKit daemon — they are not exported by `--cache-to=type=registry`, so a fresh CI runner (or a machine after a build-cache GC) recompiles every dependency. If cold-build speed (or registry-portable dep caching) ever matters, reintroduce `cargo-chef`: a `chef cook --recipe recipe.json` layer compiles only the dependencies and *is* an exportable layer, keyed on `Cargo.toml`/`Cargo.lock` rather than source. It was present historically and removed in `76ff721`.
 
 Server env vars (see `src/bin/server.rs`):
 - `GOOGLE_APPLICATION_CREDENTIALS`, `GCP_PROJECT`, `FIRESTORE_DATABASE_ID` (`"debug"` to skip Firestore)
