@@ -78,8 +78,15 @@ pub const MOON_DISC: (u8, u8, u8) = (160, 155, 145);
 pub const BELT_TONE_A: (u8, u8, u8) = (200, 160, 120);
 pub const BELT_TONE_B: (u8, u8, u8) = (140, 120, 110);
 
-/// Default text colour for body labels and the legend.
+/// Default text colour for body labels and the legend. Worlds (and stars)
+/// keep this near-white so they read as the "primary" bodies.
 pub const LABEL: (u8, u8, u8) = (220, 220, 230);
+/// Gas-giant name labels — a warm amber that echoes the gas-giant disc, so
+/// a gas giant reads apart from a world at a glance.
+pub const LABEL_GAS_GIANT: (u8, u8, u8) = (240, 185, 95);
+/// Planetoid-belt name labels — a muted stony tan, distinct from both the
+/// white world labels and the amber gas-giant labels.
+pub const LABEL_BELT: (u8, u8, u8) = (190, 175, 150);
 /// Subdued text colour for secondary legend rows (distance, AU).
 pub const LABEL_DIM: (u8, u8, u8) = (150, 155, 170);
 /// Highlight colour for "Amber Zone" and similar advisories.

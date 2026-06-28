@@ -491,7 +491,7 @@ fn draw_world<R: Renderer + ?Sized>(r: &mut R, w: &World, cx: f32, cy: f32) {
     if is_belt(w) {
         // Belt scatter/band is drawn separately on the orbit ring itself;
         // skip the disc.
-        draw_label(r, cx, cy + 14.0, &w.name);
+        draw_label_colored(r, cx, cy + 14.0, &w.name, LABEL_BELT);
         return;
     }
     let radius = world_radius_px(w.size);
@@ -518,7 +518,7 @@ fn draw_gas_giant<R: Renderer + ?Sized>(r: &mut R, gg: &GasGiant, cx: f32, cy: f
         ),
     );
     draw_moons(r, gg.satellites(), cx, cy, radius);
-    draw_label(r, cx + radius + 4.0, cy + 4.0, &gg.name);
+    draw_label_colored(r, cx + radius + 4.0, cy + 4.0, &gg.name, LABEL_GAS_GIANT);
 }
 
 /// Render a companion star (secondary or tertiary in a System orbit slot)
@@ -758,7 +758,13 @@ fn draw_moons<R: Renderer + ?Sized>(
 }
 
 fn draw_label<R: Renderer + ?Sized>(r: &mut R, x: f32, y: f32, text: &str) {
-    r.fill_text(x, y, 12.0, text, LABEL);
+    draw_label_colored(r, x, y, text, LABEL);
+}
+
+/// Body-name label in a specific colour. Worlds and stars stay white via
+/// [`draw_label`]; gas giants and belts pass a tint so they read apart.
+fn draw_label_colored<R: Renderer + ?Sized>(r: &mut R, x: f32, y: f32, text: &str, rgb: (u8, u8, u8)) {
+    r.fill_text(x, y, 12.0, text, rgb);
 }
 
 /// Main-system planetoid belt. Raster sinks scatter ~1400 rocks
@@ -881,7 +887,14 @@ fn draw_legend<R: Renderer + ?Sized>(r: &mut R, system: &System) {
             OrbitContent::Blocked => continue,
         };
         let row = format!("{name}  ({kind})");
-        r.fill_text(x_label, y, 12.0, &row, LABEL);
+        // Tint the legend name to match the on-map label so the panel and
+        // the map agree at a glance: amber gas giants, tan belts, white rest.
+        let row_color = match kind {
+            "Gas Giant" => LABEL_GAS_GIANT,
+            "Belt" => LABEL_BELT,
+            _ => LABEL,
+        };
+        r.fill_text(x_label, y, 12.0, &row, row_color);
         let dist_str = format_mkm(dist);
         let dw = text_width(&dist_str, 12.0);
         // right-align distance column
