@@ -653,6 +653,12 @@ pub enum Action {
         /// Credits the prize is expected to realize at the hideout.
         realized_value: i64,
     },
+    /// Could have taken a ship as a prize but had no spare crew to put aboard
+    /// her (already at the 1-per-10-crew cap), so she was left behind.
+    PrizeDeclined {
+        ship_type: EncounterType,
+        hull_tons: i32,
+    },
     /// Reputation changed — a raid gain, a botched-fence heat bump, or
     /// quiet-time decay.
     ReputationChange {

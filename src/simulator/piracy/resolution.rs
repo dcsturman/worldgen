@@ -30,8 +30,8 @@ fn prize_chance(attitude: Attitude) -> f64 {
     match attitude {
         Attitude::Chill => 0.0,
         Attitude::Hungry => 0.15,
-        Attitude::Aggressive => 0.40,
-        Attitude::Bloodthirsty => 0.50,
+        Attitude::Aggressive => 0.60,
+        Attitude::Bloodthirsty => 0.85,
     }
 }
 

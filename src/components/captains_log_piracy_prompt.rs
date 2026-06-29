@@ -289,6 +289,17 @@ fn write_event(out: &mut String, step: &SimulationStep) {
                 realized_value
             );
         }
+        Action::PrizeDeclined {
+            ship_type,
+            hull_tons,
+        } => {
+            let _ = writeln!(
+                out,
+                "{date} @ {here} — Had the {} (~{}t) dead in space and worth taking, but every prize crew was already committed; left her behind.",
+                ship_type.label(),
+                hull_tons
+            );
+        }
         Action::ReputationChange {
             delta,
             new_value,

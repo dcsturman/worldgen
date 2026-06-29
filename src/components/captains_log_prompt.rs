@@ -480,6 +480,7 @@ fn coalesce_visits(steps: &[SimulationStep]) -> Vec<Visit<'_>> {
             Action::ThreatEncounter { .. } => {}
             Action::FenceAttempt { .. } => {}
             Action::PrizeTaken { .. } => {}
+            Action::PrizeDeclined { .. } => {}
             Action::ReputationChange { .. } => {}
         }
     }

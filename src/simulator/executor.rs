@@ -237,24 +237,31 @@ pub async fn run_simulation(
             // rate (no fence risk at home), then the run ends.
             let at_home = jumps_taken > 0 && worldref_same_hex(&current_ref, &params.home_world);
             if at_home {
-                if plundered_value > 0 {
-                    let payout = plundered_value * 30 / 100;
-                    budget += payout;
-                    total_loot_fenced += payout;
+                // The hideout fences at the best odds — treat it as law 0,
+                // whatever the world's actual law — so bringing a full hold
+                // home to sell is usually lucrative.
+                if plundered_value > 0
+                    && let Some(out) = fencing::fence(plundered_value, leadership, 0, &mut pirate_rng)
+                {
+                    budget += out.payout;
+                    total_loot_fenced += out.payout;
+                    if out.reputation_delta > 0.0 {
+                        reputation = rep::clamp(reputation + out.reputation_delta);
+                    }
                     emit(
                         &mut on_step,
                         current_date,
                         &current_ref,
                         budget,
                         Action::FenceAttempt {
-                            law_level: current_world.get_law_level(),
-                            law_bonus: 0,
-                            roll: 0,
+                            law_level: 0,
+                            law_bonus: fencing::law_bonus(0).unwrap_or(0),
+                            roll: out.roll,
                             leadership,
-                            seized: false,
-                            payout_pct: 30,
+                            seized: out.seized,
+                            payout_pct: out.payout_pct,
                             cargo_value: plundered_value,
-                            payout,
+                            payout: out.payout,
                             tons_disposed: plundered_tons,
                         },
                     );
@@ -450,7 +457,9 @@ pub async fn run_simulation(
                 // cap, keep the most valuable hulls).
                 let mut kept_prize = false;
                 if let Some(prize) = res.prize {
-                    let max_prizes = (params.ship.crew_size / 10).max(0) as usize;
+                    // One prize per 10 crew (rounding down) — each needs a prize
+                    // crew aboard.
+                    let max_prizes = params.ship.crew_size.max(0) as usize / 10;
                     let keep = if prizes.len() < max_prizes {
                         true
                     } else if let Some(idx) = prizes
@@ -484,6 +493,19 @@ pub async fn run_simulation(
                             },
                         );
                         prizes.push(prize);
+                    } else {
+                        // She was takeable, but every prize crew is already
+                        // committed — left her behind.
+                        emit(
+                            &mut on_step,
+                            current_date,
+                            &current_ref,
+                            budget,
+                            Action::PrizeDeclined {
+                                ship_type: prize.ship_type,
+                                hull_tons: prize.hull_tons,
+                            },
+                        );
                     }
                 }
 

@@ -447,9 +447,9 @@ pub fn ShipSimulator(
     let leadership_skill = RwSignal::new(1i16);
     // Pirates need teeth; merchants default to a token defensive turret.
     let weapons = RwSignal::new(if initial_piracy { 6i16 } else { 2i16 });
-    // A corsair carries boarders — and needs ≥10 crew to put a prize crew
-    // aboard a captured ship (1 prize per 10 crew).
-    let crew_size = RwSignal::new(if initial_piracy { 12i32 } else { 4i32 });
+    // A corsair carries boarders — and needs 10 crew to put a prize crew
+    // aboard a captured ship (1 prize per 10 crew, rounding down).
+    let crew_size = RwSignal::new(if initial_piracy { 10i32 } else { 4i32 });
 
     // Voyage
     // Adversarial broker skill assumed for the planet's merchants on
@@ -1426,6 +1426,17 @@ fn describe_action(action: &Action, home_port: &str) -> Option<(String, &'static
                 ship_type.label(),
                 condition_pct,
                 realized_value
+            ),
+            "sim-action sim-action-prize",
+        ),
+        Action::PrizeDeclined {
+            ship_type,
+            hull_tons,
+        } => (
+            format!(
+                "Left the {}t {} — no spare crew to take her as a prize",
+                hull_tons,
+                ship_type.label()
             ),
             "sim-action sim-action-prize",
         ),
