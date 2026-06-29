@@ -207,13 +207,13 @@ pub async fn run_simulation(
         let pop = current_world.get_population();
         let mut market = AvailableGoodsTable::for_world(
             trade_table,
-            &current_world.get_trade_classes(),
+            current_world.get_trade_classes(),
             pop,
             params.illegal_goods,
         )
         .map_err(ExecutorError::Invariant)?;
         market.price_goods_to_buy(
-            &current_world.get_trade_classes(),
+            current_world.get_trade_classes(),
             params.ship.broker_skill,
             params.planetary_broker_skill,
         );
@@ -374,7 +374,7 @@ pub async fn run_simulation(
         // (after passenger cargo is reserved).
         let next_classes = next.world.get_trade_classes();
         market.price_goods_to_sell(
-            Some(next_classes.clone()),
+            Some(next_classes),
             params.planetary_broker_skill,
             params.ship.broker_skill,
         );

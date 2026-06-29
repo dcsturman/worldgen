@@ -402,9 +402,9 @@ impl World {
         self.set_subordinate_stats(port, government, law_level, tech_level, Vec::new());
     }
 
-    /// Returns a copy of the world's trade classifications
-    pub fn get_trade_classes(&self) -> Vec<TradeClass> {
-        self.trade_classes.clone()
+    /// Returns the world's trade classifications.
+    pub fn get_trade_classes(&self) -> &[TradeClass] {
+        &self.trade_classes
     }
 
     /// Generates trade classifications based on the world's UWP characteristics

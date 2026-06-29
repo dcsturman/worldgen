@@ -108,8 +108,8 @@ pub fn score_candidate(
     let mut score: f64 = 0.0;
     for good in &market.goods {
         if let Some(entry) = trade_table.get(good.source_index) {
-            let sale_dm = find_max_dm(&entry.sale_dm, &candidate_classes) as f64;
-            let purchase_dm = find_max_dm(&entry.purchase_dm, &candidate_classes) as f64;
+            let sale_dm = find_max_dm(&entry.sale_dm, candidate_classes) as f64;
+            let purchase_dm = find_max_dm(&entry.purchase_dm, candidate_classes) as f64;
             let weight = good.quantity as f64 * good.base_cost as f64;
             score += (sale_dm - purchase_dm) * weight;
         }

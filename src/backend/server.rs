@@ -592,7 +592,7 @@ fn recalculate_trade_state(state: &mut TradeState, prev_state: Option<&TradeStat
     if origin_changed && let Some(ref world) = origin_world {
         match AvailableGoodsTable::for_world(
             TradeTable::global(),
-            &world.get_trade_classes(),
+            world.get_trade_classes(),
             world.get_population(),
             state.illegal_goods,
         ) {
@@ -627,7 +627,7 @@ fn recalculate_trade_state(state: &mut TradeState, prev_state: Option<&TradeStat
     {
         // Price goods to buy at origin (player buying from system).
         state.available_goods.price_goods_to_buy(
-            &world.get_trade_classes(),
+            world.get_trade_classes(),
             state.ship.broker_skill,
             state.system_broker_skill,
         );
@@ -744,7 +744,7 @@ async fn handle_regenerate_command(
     if let Some(ref world) = origin_world {
         match AvailableGoodsTable::for_world(
             TradeTable::global(),
-            &world.get_trade_classes(),
+            world.get_trade_classes(),
             world.get_population(),
             state.illegal_goods,
         ) {
@@ -752,7 +752,7 @@ async fn handle_regenerate_command(
                 // Reset die rolls to get fresh random values
                 new_table.reset_die_rolls();
                 new_table.price_goods_to_buy(
-                    &world.get_trade_classes(),
+                    world.get_trade_classes(),
                     state.ship.broker_skill,
                     state.system_broker_skill,
                 );

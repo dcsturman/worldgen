@@ -265,7 +265,7 @@ impl AvailableGoodsTable {
             };
 
             if available {
-                table.gen_entry(entry.clone(), population)?;
+                table.gen_entry(entry, population)?;
             }
         }
 
@@ -280,7 +280,7 @@ impl AvailableGoodsTable {
             let index = tens * 10 + ones;
 
             if let Some(entry) = trade_table.get(index) {
-                table.gen_entry_rng(entry.clone(), &mut rng, population)?;
+                table.gen_entry_rng(entry, &mut rng, population)?;
             }
         }
 
@@ -318,7 +318,7 @@ impl AvailableGoodsTable {
     /// `Result<(), String>` - Success or error message
     fn gen_entry_rng(
         &mut self,
-        entry: TradeTableEntry,
+        entry: &TradeTableEntry,
         rng: &mut impl Rng,
         world_population: i32,
     ) -> Result<(), String> {
@@ -382,7 +382,7 @@ impl AvailableGoodsTable {
     /// Generate a trade table entry to the available goods
     pub fn gen_entry(
         &mut self,
-        entry: TradeTableEntry,
+        entry: &TradeTableEntry,
         world_population: i32,
     ) -> Result<(), String> {
         let mut rng = rand::rng();
@@ -704,7 +704,7 @@ impl AvailableGoodsTable {
     /// ```
     pub fn price_goods_to_sell(
         &mut self,
-        possible_destination_trade_classes: Option<Vec<TradeClass>>,
+        possible_destination_trade_classes: Option<&[TradeClass]>,
         buyer_broker_skill: i16,
         supplier_broker_skill: i16,
     ) {
@@ -732,14 +732,14 @@ impl AvailableGoodsTable {
     ///
     pub fn price_goods_to_sell_rng(
         &mut self,
-        possible_destination_trade_classes: Option<Vec<TradeClass>>,
+        possible_destination_trade_classes: Option<&[TradeClass]>,
         buyer_broker_skill: i16,
         supplier_broker_skill: i16,
         mut rng: impl Rng,
     ) {
         for good in &mut self.goods {
             good.price_to_sell_rng(
-                possible_destination_trade_classes.as_deref(),
+                possible_destination_trade_classes,
                 buyer_broker_skill,
                 supplier_broker_skill,
                 &mut rng,
@@ -1031,7 +1031,7 @@ mod tests {
         // Create a table with a single good
         let mut table = AvailableGoodsTable::new();
 
-        table.gen_entry(entry.clone(), 5).unwrap();
+        table.gen_entry(&entry, 5).unwrap();
         // First with a world with no trade classes
         table.price_goods_to_buy(&Vec::default(), 0, 0);
 
@@ -1196,14 +1196,14 @@ mod tests {
 
         // Create a table with a single good
         let mut table = AvailableGoodsTable::new();
-        table.gen_entry(entry.clone(), 5).unwrap();
+        table.gen_entry(&entry, 5).unwrap();
 
         // Test with destination trade classes
         let destination_trade_classes = vec![TradeClass::Rich, TradeClass::HighTech];
 
         // Price the goods for sale
         let mut rng = rand::rngs::StdRng::seed_from_u64(12345);
-        table.price_goods_to_sell_rng(Some(destination_trade_classes.clone()), 0, 0, &mut rng);
+        table.price_goods_to_sell_rng(Some(&destination_trade_classes), 0, 0, &mut rng);
 
         // The good should now have a sell price
         let good = &table.goods()[0];
@@ -1221,7 +1221,7 @@ mod tests {
         assert!(good.sell_price.is_none());
 
         // Test with different broker skills
-        table.price_goods_to_sell_rng(Some(destination_trade_classes), 3, 1, &mut rng);
+        table.price_goods_to_sell_rng(Some(&destination_trade_classes), 3, 1, &mut rng);
 
         // The sell price should be affected by broker skills
         let new_sell_price = table.goods()[0].sell_price.unwrap();

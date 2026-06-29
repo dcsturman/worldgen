@@ -1337,7 +1337,7 @@ pub fn TradeView(
                                     view! {
                                         <BuyGoodRow
                                             good=good
-                                            dest_classes=dest_world.get().as_ref().map(|w| w.get_trade_classes())
+                                            dest_classes=dest_world.get().as_ref().map(|w| w.get_trade_classes().to_vec())
                                             write_available_goods=write_available_goods
                                         />
                                     }
