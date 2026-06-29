@@ -573,7 +573,7 @@ impl AvailableGoodsTable {
     /// # use worldgen::trade::table::TradeTableEntry;
     /// let mut market = AvailableGoodsTable::new();
     /// // Add a good to the market for a pop 5 world
-    /// market.gen_entry(TradeTable::global().get(14).unwrap().clone(), 5).unwrap();
+    /// market.gen_entry(TradeTable::global().get(14).unwrap(), 5).unwrap();
     /// // Skilled buyer (3) vs average seller (1) on agricultural world
     /// market.price_goods_to_buy(&[TradeClass::Agricultural], 3, 1);
     /// // Expect better prices due to +2 skill differential and +3 Ag DM
