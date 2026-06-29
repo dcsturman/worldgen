@@ -316,6 +316,10 @@ pub async fn run_simulation(
                     } else {
                         escape::play_it_cool(leadership, reputation, &mut pirate_rng)
                     };
+                // The specific defender class (Patrol Corvette, etc.) and its
+                // maneuver thrust.
+                let threat_ship = strength::roll_prey(enc, 1.0, &mut pirate_rng);
+                let class_name = threat_ship.class_name;
                 if !recognized {
                     emit(
                         &mut on_step,
@@ -324,6 +328,7 @@ pub async fn run_simulation(
                         budget,
                         Action::ThreatEncounter {
                             threat: enc,
+                            class_name: class_name.to_string(),
                             q_ship,
                             play_it_cool_roll: pic_roll,
                             recognized: false,
@@ -334,7 +339,7 @@ pub async fn run_simulation(
                         },
                     );
                 } else {
-                    let enc_thrust = strength::roll_prey(enc, 1.0, &mut pirate_rng).thrust;
+                    let enc_thrust = threat_ship.thrust;
                     let (em, outcome) =
                         escape::thrust_escape(params.ship.thrust, enc_thrust, &mut pirate_rng);
                     let (label, dmg, weeks, maroon_flag) = match outcome {
@@ -362,6 +367,7 @@ pub async fn run_simulation(
                         budget,
                         Action::ThreatEncounter {
                             threat: enc,
+                            class_name: class_name.to_string(),
                             q_ship,
                             play_it_cool_roll: pic_roll,
                             recognized: true,
@@ -431,6 +437,7 @@ pub async fn run_simulation(
                         traffic_dm: dms.traffic,
                         security_dm: dms.security,
                         encounter: enc,
+                        class_name: prey.class_name.to_string(),
                         target_hull_tons: prey.hull_tons,
                         target_weapons: prey.weapons,
                         target_thrust: prey.thrust,
@@ -482,6 +489,7 @@ pub async fn run_simulation(
                             budget,
                             Action::PrizeTaken {
                                 ship_type: prize.ship_type,
+                                class_name: prize.class_name.clone(),
                                 hull_tons: prize.hull_tons,
                                 condition_pct,
                             },
@@ -497,6 +505,7 @@ pub async fn run_simulation(
                             budget,
                             Action::PrizeDeclined {
                                 ship_type: prize.ship_type,
+                                class_name: prize.class_name.clone(),
                                 hull_tons: prize.hull_tons,
                             },
                         );

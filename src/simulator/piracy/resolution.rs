@@ -51,6 +51,7 @@ fn maybe_prize(
     };
     Some(Prize {
         ship_type: prey.kind,
+        class_name: prey.class_name.to_string(),
         hull_tons: prey.hull_tons,
         condition,
     })
@@ -262,6 +263,7 @@ mod tests {
     fn prey(weapons: i16, cargo_tons: i32, cargo_value: i64) -> Prey {
         Prey {
             kind: EncounterType::SmallFreighter,
+            class_name: "Far Trader",
             hull_tons: 200,
             weapons,
             thrust: 1,

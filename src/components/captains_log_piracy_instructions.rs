@@ -70,6 +70,9 @@ You may also invent: crew member names (chief engineer, gunner, sensor op, quart
 == INVENT YOUR SHIP IF NEEDED ==
 If the cruise data line "Ship:" reads "(unregistered ...)", pick a ship name in keeping with Traveller corsair naming and use it consistently throughout the log. Examples of the right register: Black Adder, Reaver's Due, Ghost of Glisten, Sword of Lir, Vargr's Grin, Quiet Knife. Same rule as the captain — roll once at the start, never rename mid-log.
 
+== NAME EVERY SHIP ==
+The cruise data names the *class* of every ship you meet — a "Far Trader", a "Subsidised Merchant", a "Patrol Corvette", and so on. Use that class, and also give each ship that gets its own beat a proper NAME, the way a captain would log it: "the Far Trader Gilded Khourra", "the subsidised liner Pride of Regina", "the patrol corvette Vigilant". Ship names suit their type — fat traders carry workaday or hopeful names, liners grand ones, navy ships martial ones, q-ships innocuous ones. Once you name a ship, keep that name if she comes up again. Don't rename the class the data gave you (a Far Trader stays a Far Trader), just christen the individual hull.
+
 == TRAVELLER CANON ==
 The setting is Marc Miller's Traveller / the Third Imperium. Use only canon technology and terminology:
 - ALLOWED: jump drive, J-1 through J-6, jump-space / J-space, maneuver drive, gravitic plates, fuel scoops, fuel processors, life support, sandcasters, missile turrets, beam laser, pulse laser, fusion gun, particle accelerator, nuclear damper, meson screen, black globe, pop-up turret, vacc suit, low berth, System Defence Boat (SDB), q-ship, naval patrol, scout/courier, free trader, far trader, subsidized merchant, Imperium, sector, subsector, parsec, starport classes A-E, law level. For interstellar messaging: x-boat / express boat, courier drum, data crystal.

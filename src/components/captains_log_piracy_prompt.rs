@@ -107,7 +107,7 @@ fn write_cruise_header(
             let _ = writeln!(
                 out,
                 "  - {} (~{}t), {}% hull",
-                p.ship_type.label(),
+                p.class_name,
                 p.hull_tons,
                 (p.condition * 100.0).round() as i32
             );
@@ -150,6 +150,7 @@ fn write_event(out: &mut String, step: &SimulationStep) {
         }
         Action::EncounterResolved {
             encounter,
+            class_name,
             target_hull_tons,
             mor_total,
             resistance,
@@ -160,7 +161,12 @@ fn write_event(out: &mut String, step: &SimulationStep) {
             weeks_lost,
             ..
         } => {
-            use crate::simulator::types::EncounterOutcome as EO;
+            use crate::simulator::types::{EncounterOutcome as EO, EncounterType};
+            let ship = if *encounter == EncounterType::RichFreighter {
+                format!("richly-laden {class_name}")
+            } else {
+                class_name.clone()
+            };
             let dmg = if *pirate_damage_credits > 0 {
                 format!(" We took {pirate_damage_credits} Cr of damage to repair.")
             } else {
@@ -175,35 +181,26 @@ fn write_event(out: &mut String, step: &SimulationStep) {
                 EO::PreyJumpedClear => {
                     let _ = writeln!(
                         out,
-                        "{date} @ {here} — Spotted prey (a {}, ~{}t) but she had the legs on us and jumped clear.",
-                        encounter.label(),
-                        target_hull_tons
+                        "{date} @ {here} — Spotted prey (a {ship}, ~{target_hull_tons}t) but she had the legs on us and jumped clear.",
                     );
                 }
                 EO::BrokeOffOutgunned => {
                     let _ = writeln!(
                         out,
-                        "{date} @ {here} — Sized up a {} (~{}t, morale {}) and judged it not worth the fight; broke off.",
-                        encounter.label(),
-                        target_hull_tons,
-                        mor_total
+                        "{date} @ {here} — Sized up a {ship} (~{target_hull_tons}t, morale {mor_total}) and judged it not worth the fight; broke off.",
                     );
                 }
                 EO::DrivenOffMauled => {
                     let _ = writeln!(
                         out,
-                        "{date} @ {here} — Pressed a {} (~{}t, morale {}, resistance {}) but they fought back hard and drove us off with nothing.{dmg}{time}",
-                        encounter.label(),
-                        target_hull_tons,
-                        mor_total,
-                        resistance
+                        "{date} @ {here} — Pressed a {ship} (~{target_hull_tons}t, morale {mor_total}, resistance {resistance}) but they fought back hard and drove us off with nothing.{dmg}{time}",
                     );
                 }
                 EO::Surrendered | EO::FoughtAndWon => {
                     let how = if *outcome == EO::FoughtAndWon {
-                        format!("Took a {} (~{}t) after a fight (resistance {})", encounter.label(), target_hull_tons, resistance)
+                        format!("Took a {ship} (~{target_hull_tons}t) after a fight (resistance {resistance})")
                     } else {
-                        format!("A {} (~{}t, morale {}) yielded without a fight", encounter.label(), target_hull_tons, mor_total)
+                        format!("A {ship} (~{target_hull_tons}t, morale {mor_total}) yielded without a fight")
                     };
                     let deed = act_tier.map(|t| t.label()).unwrap_or("plundered her");
                     let _ = writeln!(
@@ -214,7 +211,7 @@ fn write_event(out: &mut String, step: &SimulationStep) {
             }
         }
         Action::ThreatEncounter {
-            threat,
+            class_name,
             q_ship,
             recognized,
             escape_margin,
@@ -224,9 +221,9 @@ fn write_event(out: &mut String, step: &SimulationStep) {
             ..
         } => {
             let who = if *q_ship {
-                format!("{} (a disguised q-ship)", threat.label())
+                format!("{class_name} (a disguised q-ship)")
             } else {
-                threat.label().to_string()
+                class_name.clone()
             };
             let made = if *recognized {
                 "we were recognized"
@@ -270,27 +267,24 @@ fn write_event(out: &mut String, step: &SimulationStep) {
             }
         }
         Action::PrizeTaken {
-            ship_type,
+            class_name,
             hull_tons,
             condition_pct,
+            ..
         } => {
             let _ = writeln!(
                 out,
-                "{date} @ {here} — Seized the {} (~{}t) whole as a prize, {}% hull, to fly home.",
-                ship_type.label(),
-                hull_tons,
-                condition_pct
+                "{date} @ {here} — Seized the {class_name} (~{hull_tons}t) whole as a prize, {condition_pct}% hull, to fly home.",
             );
         }
         Action::PrizeDeclined {
-            ship_type,
+            class_name,
             hull_tons,
+            ..
         } => {
             let _ = writeln!(
                 out,
-                "{date} @ {here} — Had the {} (~{}t) dead in space and worth taking, but every prize crew was already committed; left her behind.",
-                ship_type.label(),
-                hull_tons
+                "{date} @ {here} — Had the {class_name} (~{hull_tons}t) dead in space and worth taking, but every prize crew was already committed; left her behind.",
             );
         }
         Action::ReputationChange {

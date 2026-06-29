@@ -1373,6 +1373,7 @@ fn describe_action(action: &Action, home_port: &str) -> Option<(String, &'static
         // ---- Piracy variants ----
         Action::EncounterResolved {
             encounter,
+            class_name,
             target_hull_tons,
             outcome,
             act_tier,
@@ -1381,7 +1382,12 @@ fn describe_action(action: &Action, home_port: &str) -> Option<(String, &'static
             surrender_margin,
             ..
         } => {
-            use crate::simulator::types::EncounterOutcome as EO;
+            use crate::simulator::types::{EncounterOutcome as EO, EncounterType};
+            let ship = if *encounter == EncounterType::RichFreighter {
+                format!("richly-laden {class_name}")
+            } else {
+                class_name.clone()
+            };
             let repairs = if *pirate_damage_credits > 0 {
                 format!(", −{} Cr repairs", pirate_damage_credits)
             } else {
@@ -1389,59 +1395,51 @@ fn describe_action(action: &Action, home_port: &str) -> Option<(String, &'static
             };
             let label = match outcome {
                 EO::PreyJumpedClear => {
-                    format!("Prey ({}t {}) jumped clear", target_hull_tons, encounter.label())
+                    format!("Prey ({}t {}) jumped clear", target_hull_tons, ship)
                 }
                 EO::BrokeOffOutgunned => {
-                    format!("Broke off — outgunned: {}t {}", target_hull_tons, encounter.label())
+                    format!("Broke off — outgunned: {}t {}", target_hull_tons, ship)
                 }
                 EO::DrivenOffMauled => format!(
                     "Driven off — mauled by {}t {}{}",
-                    target_hull_tons,
-                    encounter.label(),
-                    repairs
+                    target_hull_tons, ship, repairs
                 ),
                 EO::Surrendered | EO::FoughtAndWon => {
                     let tier = act_tier.map(|t| t.label()).unwrap_or("raided");
                     format!(
                         "Raided {}t {} — {} (margin {}), +{} Cr loot{}",
-                        target_hull_tons,
-                        encounter.label(),
-                        tier,
-                        surrender_margin,
-                        loot_value,
-                        repairs
+                        target_hull_tons, ship, tier, surrender_margin, loot_value, repairs
                     )
                 }
             };
             (label, "sim-action sim-action-raid")
         }
         Action::PrizeTaken {
-            ship_type,
+            class_name,
             hull_tons,
             condition_pct,
+            ..
         } => (
             format!(
                 "Took the {}t {} as a prize ({}% hull)",
-                hull_tons,
-                ship_type.label(),
-                condition_pct
+                hull_tons, class_name, condition_pct
             ),
             "sim-action sim-action-prize",
         ),
         Action::PrizeDeclined {
-            ship_type,
+            class_name,
             hull_tons,
+            ..
         } => (
             format!(
                 "Left the {}t {} — no spare crew to take her as a prize",
-                hull_tons,
-                ship_type.label()
+                hull_tons, class_name
             ),
             "sim-action sim-action-prize",
         ),
         Action::EncounterNone { .. } => return None,
         Action::ThreatEncounter {
-            threat,
+            class_name,
             q_ship,
             recognized,
             outcome,
@@ -1449,9 +1447,9 @@ fn describe_action(action: &Action, home_port: &str) -> Option<(String, &'static
             ..
         } => {
             let who = if *q_ship {
-                format!("{} (q-ship)", threat.label())
+                format!("{class_name} (q-ship)")
             } else {
-                threat.label().to_string()
+                class_name.clone()
             };
             let prefix = if *recognized { "recognized — " } else { "" };
             let dmg = if *damage_credits > 0 {
@@ -1777,7 +1775,7 @@ fn SimSummary(
                                             {format!(
                                                 "{}t {} ({}% hull)",
                                                 p.hull_tons,
-                                                p.ship_type.label(),
+                                                p.class_name,
                                                 (p.condition * 100.0).round() as i32
                                             )}
                                         </span>
@@ -1999,6 +1997,7 @@ mod describe_tests {
             traffic_dm: 0,
             security_dm: 0,
             encounter: EncounterType::SmallFreighter,
+            class_name: "Far Trader".to_string(),
             target_hull_tons: 200,
             target_weapons: 3,
             target_thrust: 1,

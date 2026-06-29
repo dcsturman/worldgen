@@ -263,6 +263,8 @@ impl EncounterType {
 pub struct Prize {
     /// What kind of ship it is.
     pub ship_type: EncounterType,
+    /// Specific ship class (e.g. "Far Trader").
+    pub class_name: String,
     /// Hull tonnage.
     pub hull_tons: i32,
     /// Hull condition, `0.0..=1.0` (1.0 pristine — surrendered intact; lower
@@ -567,6 +569,8 @@ pub enum Action {
         security_dm: i32,
         /// What was met.
         encounter: EncounterType,
+        /// Specific ship class (e.g. "Far Trader").
+        class_name: String,
         /// Rolled hull tonnage of the target.
         target_hull_tons: i32,
         /// Target's derived weapon count.
@@ -604,6 +608,8 @@ pub enum Action {
     ThreatEncounter {
         /// Which defender.
         threat: EncounterType,
+        /// Specific ship class (e.g. "Patrol Corvette").
+        class_name: String,
         /// True if it's a disguised q-ship honey trap.
         q_ship: bool,
         /// Play-it-cool roll and whether the pirate was recognized.
@@ -641,6 +647,7 @@ pub enum Action {
     /// the end of the cruise.
     PrizeTaken {
         ship_type: EncounterType,
+        class_name: String,
         hull_tons: i32,
         /// Hull condition as a percentage (100 = pristine).
         condition_pct: i32,
@@ -649,6 +656,7 @@ pub enum Action {
     /// her (already at the 1-per-10-crew cap), so she was left behind.
     PrizeDeclined {
         ship_type: EncounterType,
+        class_name: String,
         hull_tons: i32,
     },
     /// Reputation changed — a raid gain, a botched-fence heat bump, or
