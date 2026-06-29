@@ -1002,6 +1002,13 @@ datalist option {
   gap: 0.5rem 1rem;
 }
 
+/* Denser packing for the number-heavy Ship / Expenses / Crew cards so they
+   fit more fields per row. */
+.sim-grid-dense {
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 0.4rem 0.75rem;
+}
+
 .sim-grid label {
   display: flex;
   flex-direction: column;

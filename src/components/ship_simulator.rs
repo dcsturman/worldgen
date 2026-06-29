@@ -735,7 +735,7 @@ fn SimForm(
         <div class="sim-form no-print">
             <fieldset class="sim-fieldset">
                 <legend>"Ship"</legend>
-                <div class="sim-grid">
+                <div class="sim-grid sim-grid-dense">
                     <label>
                         <span class="sim-label-row">
                             "Ship name"
@@ -744,6 +744,41 @@ fn SimForm(
                             type="text"
                             placeholder="(optional — invent one)"
                             bind:value=ship_name
+                        />
+                    </label>
+                    {move || is_piracy().then(|| view! {
+                        <label>
+                            <span class="sim-label-row">
+                                "Thrust (G)"
+                                <HelpTooltip text=docs::THRUST />
+                            </span>
+                            <input
+                                type="number"
+                                min="0"
+                                max="9"
+                                prop:value=move || thrust.get()
+                                on:input=move |ev| {
+                                    if let Ok(v) = event_target_value(&ev).parse::<i16>() {
+                                        thrust.set(v);
+                                    }
+                                }
+                            />
+                        </label>
+                    })}
+                    <label>
+                        <span class="sim-label-row">
+                            "Jump (parsecs)"
+                            <HelpTooltip text=docs::JUMP_RATING />
+                        </span>
+                        <input
+                            type="number"
+                            min="1"
+                            prop:value=move || jump_rating.get()
+                            on:input=move |ev| {
+                                if let Ok(v) = event_target_value(&ev).parse::<i16>() {
+                                    jump_rating.set(v);
+                                }
+                            }
                         />
                     </label>
                     <label>
@@ -816,41 +851,6 @@ fn SimForm(
                     })}
                     <label>
                         <span class="sim-label-row">
-                            "Jump (parsecs)"
-                            <HelpTooltip text=docs::JUMP_RATING />
-                        </span>
-                        <input
-                            type="number"
-                            min="1"
-                            prop:value=move || jump_rating.get()
-                            on:input=move |ev| {
-                                if let Ok(v) = event_target_value(&ev).parse::<i16>() {
-                                    jump_rating.set(v);
-                                }
-                            }
-                        />
-                    </label>
-                    {move || is_piracy().then(|| view! {
-                        <label>
-                            <span class="sim-label-row">
-                                "Thrust (G)"
-                                <HelpTooltip text=docs::THRUST />
-                            </span>
-                            <input
-                                type="number"
-                                min="0"
-                                max="9"
-                                prop:value=move || thrust.get()
-                                on:input=move |ev| {
-                                    if let Ok(v) = event_target_value(&ev).parse::<i16>() {
-                                        thrust.set(v);
-                                    }
-                                }
-                            />
-                        </label>
-                    })}
-                    <label>
-                        <span class="sim-label-row">
                             "Weapons"
                             <HelpTooltip text=docs::WEAPONS />
                         </span>
@@ -866,6 +866,12 @@ fn SimForm(
                             }
                         />
                     </label>
+                </div>
+            </fieldset>
+
+            <fieldset class="sim-fieldset">
+                <legend>"Expenses"</legend>
+                <div class="sim-grid sim-grid-dense">
                     <label>
                         <span class="sim-label-row">
                             "Fuel cost per parsec (Cr)"
@@ -954,7 +960,7 @@ fn SimForm(
 
             <fieldset class="sim-fieldset">
                 <legend>"Crew"</legend>
-                <div class="sim-grid">
+                <div class="sim-grid sim-grid-dense">
                     {move || is_piracy().then(|| view! {
                         <label>
                             <span class="sim-label-row">
