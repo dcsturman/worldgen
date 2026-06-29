@@ -257,7 +257,7 @@ fn trace_rivers(
     // > threshold. Easier: mark inverse — for each thresholded sample,
     // increment a counter on its flow_to target if itself is thresholded.
     let mut upstream_thresholded = vec![false; samples.len()];
-    for s in samples.iter() {
+    for s in samples {
         if s.elev <= sea_level || s.drainage < threshold {
             continue;
         }

@@ -1714,7 +1714,7 @@ fn ShipManifestView(
 
         // Zero out purchased in available goods so Buy inputs show 0
         write_available_goods.update(|ag| {
-            for g in ag.goods.iter_mut() {
+            for g in &mut ag.goods {
                 g.transacted = 0;
             }
         });

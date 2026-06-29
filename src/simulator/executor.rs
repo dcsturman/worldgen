@@ -225,7 +225,7 @@ pub async fn run_simulation(
             params.planetary_broker_skill,
             params.ship.broker_skill,
         );
-        for good in manifest.trade_goods.goods.iter_mut() {
+        for good in &mut manifest.trade_goods.goods {
             if good.quantity <= 0 {
                 continue;
             }

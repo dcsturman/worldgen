@@ -376,16 +376,16 @@ pub fn parse_stellar(s: &str) -> Vec<StarSpec> {
             subtype = Some(subtype.unwrap_or(0) * 10 + (bytes[j] - b'0'));
             j += 1;
         }
-        let size_str: String = if j < bytes.len() {
-            std::str::from_utf8(&bytes[j..]).unwrap_or("").to_string()
+        let size_str: &str = if j < bytes.len() {
+            std::str::from_utf8(&bytes[j..]).unwrap_or("")
         } else if i < tokens.len() && is_size_token(tokens[i]) {
-            let s = tokens[i].to_string();
+            let s = tokens[i];
             i += 1;
             s
         } else {
             continue;
         };
-        let size = match size_str.as_str() {
+        let size = match size_str {
             "Ia" => StarSize::Ia,
             "Ib" => StarSize::Ib,
             "II" => StarSize::II,

@@ -938,7 +938,7 @@ impl Display for World {
             self.to_uwp(),
             self.facilities_string()
         )?;
-        for satellite in self.satellites.sats.iter() {
+        for satellite in &self.satellites.sats {
             writeln!(f, "\t{satellite}")?;
         }
         Ok(())

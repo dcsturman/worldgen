@@ -422,7 +422,7 @@ impl AvailableGoodsTable {
         {
             *existing = good;
         } else {
-            self.goods.push(good.clone());
+            self.goods.push(good);
         }
 
         // Remove the good if the quantity is now <= 0
@@ -890,13 +890,12 @@ fn find_max_dm(
     dm_map: &std::collections::HashMap<TradeClass, i16>,
     world_trade_classes: &[TradeClass],
 ) -> i16 {
-    let eligible_dms: Vec<i16> = world_trade_classes
+    world_trade_classes
         .iter()
         .filter_map(|tc| dm_map.get(tc))
-        .cloned()
-        .collect();
-
-    eligible_dms.into_iter().max().unwrap_or(0)
+        .copied()
+        .max()
+        .unwrap_or(0)
 }
 
 #[cfg(test)]

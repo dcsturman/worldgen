@@ -432,7 +432,7 @@ impl Display for GasGiant {
     /// ```
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "{:<7}{:<24}{:<12}", self.orbit, self.name, self.size)?;
-        for satellite in self.satellites.sats.iter() {
+        for satellite in &self.satellites.sats {
             writeln!(f, "\t{satellite}")?;
         }
         Ok(())

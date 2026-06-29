@@ -479,7 +479,7 @@ pub fn World() -> impl IntoView {
     let do_generate = move || {
         let mut row_errs = Vec::new();
         let mut bodies = Vec::new();
-        for row in rows.get_untracked().iter() {
+        for row in &rows.get_untracked() {
             match row_to_constraint(row) {
                 Ok(Some(c)) => bodies.push(c),
                 Ok(None) => {}

@@ -422,9 +422,7 @@ async fn handle_world(
     // handling below.
     if params
         .get("projection")
-        .map(|s| s.trim().to_ascii_lowercase())
-        .as_deref()
-        == Some("globe")
+        .is_some_and(|s| s.trim().eq_ignore_ascii_case("globe"))
     {
         let sys_seed = system_seed(sector, hex_x, hex_y);
         let seed = planet_seed(sys_seed, orbit, name);

@@ -360,13 +360,15 @@ pub fn worldmap_url(name: &str, uwp: &str) -> String {
 /// Tiny URL encoder — covers the few characters our names/UWPs realistically
 /// use (space, &, ?, #). Full RFC 3986 is overkill given our alphabet.
 fn urlencode_minimal(s: &str) -> String {
+    use std::fmt::Write as _;
     let mut out = String::with_capacity(s.len());
+    let mut buf = [0u8; 4];
     for c in s.chars() {
         if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '~' {
             out.push(c);
         } else {
-            for b in c.to_string().bytes() {
-                out.push_str(&format!("%{b:02X}"));
+            for b in c.encode_utf8(&mut buf).bytes() {
+                let _ = write!(out, "%{b:02X}");
             }
         }
     }
