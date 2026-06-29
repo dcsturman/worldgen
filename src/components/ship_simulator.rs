@@ -1061,6 +1061,52 @@ fn SimForm(
             </fieldset>
 
             <fieldset class="sim-fieldset">
+                <legend>{move || if is_piracy() { "Home Base / Hideout" } else { "Home World" }}</legend>
+                <WorldSearch
+                    label="Home".to_string()
+                    name=home_name
+                    uwp=home_uwp
+                    coords=home_coords
+                    zone=home_zone
+                    sector=home_sector
+                    show_uwp=false
+                />
+                <div class="sim-home-summary">
+                    {move || {
+                        let coords = home_coords.get();
+                        let sector = home_sector.get();
+                        let uwp = home_uwp.get();
+                        let zone = home_zone.get();
+                        if let Some((hx, hy)) = coords && !sector.is_empty() && uwp.len() == 9 {
+                            view! {
+                                <div class="sim-home-detail">
+                                    <div>
+                                        <strong>{sector}</strong>
+                                        " · hex "
+                                        <code>{format!("{:02}{:02}", hx, hy)}</code>
+                                        " · UWP "
+                                        <code>{uwp}</code>
+                                    </div>
+                                    <div>
+                                        <span class={format!("sim-zone-{}", zone.to_string().to_lowercase())}>
+                                            {zone.to_string()}
+                                        </span>
+                                        " zone"
+                                    </div>
+                                </div>
+                            }.into_any()
+                        } else {
+                            view! {
+                                <div class="sim-home-detail sim-home-empty">
+                                    "Type to search TravellerMap for a world."
+                                </div>
+                            }.into_any()
+                        }
+                    }}
+                </div>
+            </fieldset>
+
+            <fieldset class="sim-fieldset">
                 <legend>"Voyage"</legend>
                 <div class="sim-grid">
                     <label>
@@ -1135,52 +1181,6 @@ fn SimForm(
                             />
                         </label>
                     })}
-                </div>
-            </fieldset>
-
-            <fieldset class="sim-fieldset">
-                <legend>{move || if is_piracy() { "Home Base / Hideout" } else { "Home World" }}</legend>
-                <WorldSearch
-                    label="Home".to_string()
-                    name=home_name
-                    uwp=home_uwp
-                    coords=home_coords
-                    zone=home_zone
-                    sector=home_sector
-                    show_uwp=false
-                />
-                <div class="sim-home-summary">
-                    {move || {
-                        let coords = home_coords.get();
-                        let sector = home_sector.get();
-                        let uwp = home_uwp.get();
-                        let zone = home_zone.get();
-                        if let Some((hx, hy)) = coords && !sector.is_empty() && uwp.len() == 9 {
-                            view! {
-                                <div class="sim-home-detail">
-                                    <div>
-                                        <strong>{sector}</strong>
-                                        " · hex "
-                                        <code>{format!("{:02}{:02}", hx, hy)}</code>
-                                        " · UWP "
-                                        <code>{uwp}</code>
-                                    </div>
-                                    <div>
-                                        <span class={format!("sim-zone-{}", zone.to_string().to_lowercase())}>
-                                            {zone.to_string()}
-                                        </span>
-                                        " zone"
-                                    </div>
-                                </div>
-                            }.into_any()
-                        } else {
-                            view! {
-                                <div class="sim-home-detail sim-home-empty">
-                                    "Type to search TravellerMap for a world."
-                                </div>
-                            }.into_any()
-                        }
-                    }}
                 </div>
             </fieldset>
         </div>
