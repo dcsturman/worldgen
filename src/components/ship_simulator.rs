@@ -1412,6 +1412,21 @@ fn describe_action(action: &Action, home_port: &str) -> Option<(String, &'static
             };
             (label, "sim-action sim-action-raid")
         }
+        Action::PrizeTaken {
+            ship_type,
+            hull_tons,
+            condition_pct,
+            realized_value,
+        } => (
+            format!(
+                "Took the {}t {} as a prize ({}% hull) — ~{} Cr at the hideout",
+                hull_tons,
+                ship_type.label(),
+                condition_pct,
+                realized_value
+            ),
+            "sim-action sim-action-prize",
+        ),
         Action::EncounterNone { .. } => return None,
         Action::ThreatEncounter {
             threat,
@@ -1728,6 +1743,14 @@ fn SimSummary(
                                 <div class="sim-summary-row">
                                     <span class="sim-summary-label">"Ships destroyed"</span>
                                     <span class="sim-summary-value">{r.ships_destroyed}</span>
+                                </div>
+                                <div class="sim-summary-row">
+                                    <span class="sim-summary-label">"Prizes taken"</span>
+                                    <span class="sim-summary-value">{r.prizes.len()}</span>
+                                </div>
+                                <div class="sim-summary-row">
+                                    <span class="sim-summary-label">"Prize value"</span>
+                                    <span class="sim-summary-value">{format!("{} Cr", r.prize_value)}</span>
                                 </div>
                             })}
                             {(!is_piracy).then(|| view! {

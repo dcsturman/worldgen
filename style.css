@@ -1274,6 +1274,12 @@ datalist option {
   background: rgba(192, 57, 43, 0.15);
 }
 
+.sim-action-prize {
+  border-color: #d4af37;
+  border-left: 4px solid #d4af37;
+  background: rgba(212, 175, 55, 0.15);
+}
+
 .sim-action-fence {
   border-color: #2e7d32;
   border-left: 4px solid #2e7d32;

@@ -21,8 +21,8 @@ use crate::simulator::piracy::route as proute;
 use crate::simulator::piracy::{encounter, escape, fencing, reputation as rep, resolution, strength};
 use crate::simulator::route::{self, RouteContext};
 use crate::simulator::types::{
-    Action, ActTier, Date, EncounterOutcome, EncounterType, SimulationMode, SimulationParams,
-    SimulationResult, SimulationStep, WorldRef,
+    Action, ActTier, Date, EncounterOutcome, EncounterType, Prize, SimulationMode,
+    SimulationParams, SimulationResult, SimulationStep, WorldRef,
 };
 use crate::simulator::world_fetch::{FetchError, WorldCache};
 use rand::SeedableRng;
@@ -109,6 +109,8 @@ pub async fn run_simulation(
     let mut total_loot_fenced: i64 = 0;
     let mut raids: u32 = 0;
     let mut ships_destroyed: u32 = 0;
+    let mut prizes: Vec<Prize> = Vec::new();
+    let mut prize_value: i64 = 0;
     let mut pirate_rng: StdRng = match params.rng_seed {
         Some(s) => StdRng::seed_from_u64(s),
         None => StdRng::from_os_rng(),
@@ -227,6 +229,11 @@ pub async fn run_simulation(
                             tons_disposed: plundered_tons,
                         },
                     );
+                }
+                // Prizes flown home are realized at the hideout buyer.
+                if !prizes.is_empty() {
+                    prize_value = prizes.iter().map(|p| p.realized_value).sum();
+                    budget += prize_value;
                 }
                 returned_home = true;
                 break;
@@ -429,6 +436,61 @@ pub async fn run_simulation(
                             reason: "act of piracy".to_string(),
                         },
                     );
+                }
+
+                // Sometimes the whole ship is worth more than her cargo: take
+                // her as a prize to fly home and sell at the hideout. But each
+                // prize needs a prize crew — we can only keep one per 10 crew,
+                // and at the cap we keep the most valuable hulls.
+                if let Some(prize) = res.prize {
+                    let max_prizes = (params.ship.crew_size / 10).max(0) as usize;
+                    let keep = if prizes.len() < max_prizes {
+                        true
+                    } else if let Some(idx) = prizes
+                        .iter()
+                        .enumerate()
+                        .min_by_key(|(_, p)| p.realized_value)
+                        .map(|(i, _)| i)
+                    {
+                        // At the cap: swap out the cheapest hull if this beats it.
+                        if prize.realized_value > prizes[idx].realized_value {
+                            prizes.remove(idx);
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+                    if keep {
+                        let condition_pct = (prize.condition * 100.0).round() as i32;
+                        emit(
+                            &mut on_step,
+                            current_date,
+                            &current_ref,
+                            budget,
+                            Action::PrizeTaken {
+                                ship_type: prize.ship_type,
+                                hull_tons: prize.hull_tons,
+                                condition_pct,
+                                realized_value: prize.realized_value,
+                            },
+                        );
+                        prizes.push(prize);
+                        let gain = rep::PRIZE_REP_GAIN;
+                        reputation = rep::clamp(reputation + gain);
+                        emit(
+                            &mut on_step,
+                            current_date,
+                            &current_ref,
+                            budget,
+                            Action::ReputationChange {
+                                delta: gain,
+                                new_value: reputation,
+                                reason: "seized a whole ship".to_string(),
+                            },
+                        );
+                    }
                 }
             }
 
@@ -1084,6 +1146,8 @@ pub async fn run_simulation(
         total_loot_fenced,
         raids,
         ships_destroyed,
+        prizes,
+        prize_value,
     })
 }
 

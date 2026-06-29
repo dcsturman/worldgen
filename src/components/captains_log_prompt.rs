@@ -479,6 +479,7 @@ fn coalesce_visits(steps: &[SimulationStep]) -> Vec<Visit<'_>> {
             Action::EncounterNone { .. } => {}
             Action::ThreatEncounter { .. } => {}
             Action::FenceAttempt { .. } => {}
+            Action::PrizeTaken { .. } => {}
             Action::ReputationChange { .. } => {}
         }
     }
@@ -873,6 +874,8 @@ mod tests {
             total_loot_fenced: 0,
             raids: 0,
             ships_destroyed: 0,
+            prizes: Vec::new(),
+            prize_value: 0,
         };
         let s = build_prompt("Free Trader Beowulf", &params, &[], &result);
         assert!(s.contains("Free Trader Beowulf"));
@@ -917,6 +920,8 @@ mod tests {
             total_loot_fenced: 0,
             raids: 0,
             ships_destroyed: 0,
+            prizes: Vec::new(),
+            prize_value: 0,
         };
         let s = build_prompt("", &params, &[], &result);
         assert!(s.contains("(unregistered"));

@@ -12,8 +12,61 @@ use rand::Rng;
 
 use super::escape::prey_escape;
 use super::strength::Prey;
-use super::{COMBAT_DAMAGE_UNIT, roll_1d6};
-use crate::simulator::types::{ActTier, Attitude, EncounterOutcome, EncounterType};
+use super::{COMBAT_DAMAGE_UNIT, roll_1d6, roll_unit};
+use crate::simulator::types::{ActTier, Attitude, EncounterOutcome, EncounterType, Prize};
+
+/// Appraised value of a captured hull, per ton. ~MCr 0.5/ton: a 200-ton Far
+/// Trader ≈ MCr 100, a 400-ton subsidised merchant ≈ MCr 200, a liner more.
+const SHIP_VALUE_PER_TON: i64 = 500_000;
+
+/// What a stolen ("hot") hull realizes at the hideout buyer, as a fraction of
+/// its appraised, condition-adjusted value. Tunable.
+const PRIZE_SELL_RATE: f64 = 0.5;
+
+/// Chance of taking a surviving captured ship *whole* as a prize, by doctrine.
+/// Prizes are the reward that balances aggression's risk, so they're mostly an
+/// Aggressive/Bloodthirsty payoff; Chill never bothers seizing hulls.
+fn prize_chance(attitude: Attitude) -> f64 {
+    match attitude {
+        Attitude::Chill => 0.0,
+        Attitude::Hungry => 0.15,
+        Attitude::Aggressive => 0.40,
+        Attitude::Bloodthirsty => 0.50,
+    }
+}
+
+/// Decide whether this encounter yields a prize. Only a *surviving*, boarded
+/// ship can be taken whole — a surrender (intact) or a crippled-and-boarded
+/// fight (damaged). A destroyed ship is wreckage.
+fn maybe_prize(
+    attitude: Attitude,
+    outcome: EncounterOutcome,
+    act_tier: Option<ActTier>,
+    prey: &Prey,
+    rng: &mut impl rand::Rng,
+) -> Option<Prize> {
+    let capturable = outcome == EncounterOutcome::Surrendered
+        || (outcome == EncounterOutcome::FoughtAndWon && act_tier == Some(ActTier::DamageShip));
+    if !capturable || roll_unit(rng) >= prize_chance(attitude) {
+        return None;
+    }
+    let intact = outcome == EncounterOutcome::Surrendered;
+    // A ship crippled into surrender is shot up: 40–70% hull.
+    let condition = if intact {
+        1.0
+    } else {
+        0.4 + (roll_1d6(rng) as f64 - 1.0) / 5.0 * 0.3
+    };
+    let base_value = prey.hull_tons as i64 * SHIP_VALUE_PER_TON;
+    let realized_value = (base_value as f64 * condition * PRIZE_SELL_RATE).round() as i64;
+    Some(Prize {
+        ship_type: prey.kind,
+        hull_tons: prey.hull_tons,
+        condition,
+        base_value,
+        realized_value,
+    })
+}
 
 /// Reputation's coefficient and cap on the menace score. A feared name
 /// intimidates prey, but only modestly — reputation's main job is getting
@@ -103,6 +156,8 @@ pub struct Resolution {
     pub pirate_damage_credits: i64,
     /// Weeks lost to a protracted battle.
     pub weeks_lost: u32,
+    /// The enemy ship taken whole as a prize, if one was captured.
+    pub prize: Option<Prize>,
 }
 
 /// Base morale by target class: merchant `+3`, armed `+6`, naval `+8`.
@@ -192,6 +247,8 @@ pub fn resolve_encounter(p: &Pirate, prey: &Prey, rng: &mut impl Rng) -> Resolut
         });
     }
 
+    let prize = maybe_prize(p.attitude, outcome, act_tier, prey, rng);
+
     Resolution {
         mor_roll,
         mor_total,
@@ -204,6 +261,7 @@ pub fn resolve_encounter(p: &Pirate, prey: &Prey, rng: &mut impl Rng) -> Resolut
         loot_value,
         pirate_damage_credits: pirate_damage,
         weeks_lost,
+        prize,
     }
 }
 

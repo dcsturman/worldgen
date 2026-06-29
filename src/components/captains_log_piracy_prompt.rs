@@ -101,6 +101,23 @@ fn write_cruise_header(
     );
     let _ = writeln!(out, "Raids that took a haul: {}", result.raids);
     let _ = writeln!(out, "Ships destroyed: {}", result.ships_destroyed);
+    if !result.prizes.is_empty() {
+        let _ = writeln!(
+            out,
+            "Prizes brought home: {} (worth {} Cr realized at the hideout):",
+            result.prizes.len(),
+            result.prize_value
+        );
+        for p in &result.prizes {
+            let _ = writeln!(
+                out,
+                "  - {} (~{}t), {}% hull",
+                p.ship_type.label(),
+                p.hull_tons,
+                (p.condition * 100.0).round() as i32
+            );
+        }
+    }
 
     if result.marooned
         && let (Some(loc), Some(on)) = (result.marooned_at.as_ref(), result.marooned_on)
@@ -256,6 +273,21 @@ fn write_event(out: &mut String, step: &SimulationStep) {
                     "{date} @ {here} (law {law_level}) — Fenced {tons_disposed}t (worth {cargo_value} Cr) at {payout_pct}% → +{payout} Cr.",
                 );
             }
+        }
+        Action::PrizeTaken {
+            ship_type,
+            hull_tons,
+            condition_pct,
+            realized_value,
+        } => {
+            let _ = writeln!(
+                out,
+                "{date} @ {here} — Seized the {} (~{}t) whole as a prize, {}% hull, to fly home — worth about {} Cr at the hideout.",
+                ship_type.label(),
+                hull_tons,
+                condition_pct,
+                realized_value
+            );
         }
         Action::ReputationChange {
             delta,

@@ -50,3 +50,8 @@ pub(crate) fn roll_2d6(rng: &mut impl Rng) -> i32 {
 pub(crate) fn roll_1d6(rng: &mut impl Rng) -> i32 {
     rng.random_range(1..=6)
 }
+
+/// Roll a uniform `0.0..1.0` — used for probability checks (e.g. prize capture).
+pub(crate) fn roll_unit(rng: &mut impl Rng) -> f64 {
+    rng.random::<f64>()
+}

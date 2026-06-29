@@ -18,6 +18,10 @@ pub fn rep_gain(tier: ActTier) -> f64 {
     }
 }
 
+/// Extra reputation for seizing an enemy ship whole as a prize — stealing a
+/// whole starship makes a name fast.
+pub const PRIZE_REP_GAIN: f64 = 3.0;
+
 /// Reputation lost per quiet jump (a jump with no act of piracy).
 pub const REP_DECAY_PER_QUIET_JUMP: f64 = 0.5;
 

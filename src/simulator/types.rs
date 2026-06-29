@@ -256,6 +256,26 @@ impl EncounterType {
     }
 }
 
+/// A captured enemy vessel taken whole as a prize. You can't fence a starship
+/// en route — prizes are flown home by a prize crew and realized at the
+/// hideout at the end of the cruise, at a "hot hull" discount and scaled by
+/// how shot up they got.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Prize {
+    /// What kind of ship it is.
+    pub ship_type: EncounterType,
+    /// Hull tonnage.
+    pub hull_tons: i32,
+    /// Hull condition, `0.0..=1.0` (1.0 pristine — surrendered intact; lower
+    /// if crippled in the fight).
+    pub condition: f64,
+    /// Appraised hull value before the hot-hull discount.
+    pub base_value: i64,
+    /// Credits the prize realizes at the hideout (`base × condition × the
+    /// hot-hull sell rate`).
+    pub realized_value: i64,
+}
+
 /// Inputs to the simulation, supplied by the client.
 ///
 /// Ship-shaped configuration (capacity, crew, hardware, periodic costs) is
@@ -623,6 +643,16 @@ pub enum Action {
         /// Tons cleared from the hold.
         tons_disposed: i32,
     },
+    /// Seized an enemy vessel whole as a prize, to fly home and realize at
+    /// the end of the cruise.
+    PrizeTaken {
+        ship_type: EncounterType,
+        hull_tons: i32,
+        /// Hull condition as a percentage (100 = pristine).
+        condition_pct: i32,
+        /// Credits the prize is expected to realize at the hideout.
+        realized_value: i64,
+    },
     /// Reputation changed — a raid gain, a botched-fence heat bump, or
     /// quiet-time decay.
     ReputationChange {
@@ -689,6 +719,12 @@ pub struct SimulationResult {
     /// Number of ships destroyed (act tier 4).
     #[serde(default)]
     pub ships_destroyed: u32,
+    /// Vessels captured whole and brought home as prizes.
+    #[serde(default)]
+    pub prizes: Vec<Prize>,
+    /// Total credits realized from prizes (0 unless the cruise made it home).
+    #[serde(default)]
+    pub prize_value: i64,
 }
 
 #[cfg(test)]
