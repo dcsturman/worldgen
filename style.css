@@ -1108,8 +1108,10 @@ datalist option {
 }
 
 .sim-invalid {
-  border-color: #e74c3c !important;
-  background-color: rgba(231, 76, 60, 0.15);
+  border-color: #ff4136 !important;
+  background-color: #0a0a0a !important;
+  /* Bright red on near-black so a half-typed/invalid date stays readable. */
+  color: #ff5b5b !important;
 }
 
 .sim-home-detail code {

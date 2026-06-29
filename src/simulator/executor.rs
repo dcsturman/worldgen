@@ -21,8 +21,8 @@ use crate::simulator::piracy::route as proute;
 use crate::simulator::piracy::{encounter, escape, fencing, reputation as rep, resolution, strength};
 use crate::simulator::route::{self, RouteContext};
 use crate::simulator::types::{
-    Action, ActTier, Date, EncounterType, SimulationMode, SimulationParams, SimulationResult,
-    SimulationStep, WorldRef,
+    Action, ActTier, Date, EncounterOutcome, EncounterType, SimulationMode, SimulationParams,
+    SimulationResult, SimulationStep, WorldRef,
 };
 use crate::simulator::world_fetch::{FetchError, WorldCache};
 use rand::SeedableRng;
@@ -38,6 +38,14 @@ use crate::trade::table::TradeTable;
 /// wanted ship can't dock — strands the pirate (see the repair-maroon logic
 /// in the piracy turn). First-cut; tune alongside the resolution damage model.
 const SHIPYARD_DAMAGE_THRESHOLD: i64 = 250_000;
+
+/// Reputation at/above which any pirate hunter (System Defence Boat, Naval
+/// Patrol) attacks on sight — no bluffing past; you must outrun them.
+const HUNTER_ATTACK_REPUTATION: f64 = 3.0;
+
+/// Reputation at/above which a convoy's escorts recognize the pirate and turn
+/// hostile, engaging rather than letting you raid.
+const CONVOY_HOSTILE_REPUTATION: f64 = 4.0;
 
 /// Errors the executor can return before producing a [`SimulationResult`].
 #[derive(Debug, thiserror::Error)]
@@ -101,7 +109,6 @@ pub async fn run_simulation(
     let mut total_loot_fenced: i64 = 0;
     let mut raids: u32 = 0;
     let mut ships_destroyed: u32 = 0;
-    let mut quiet_jumps: u32 = 0;
     let mut pirate_rng: StdRng = match params.rng_seed {
         Some(s) => StdRng::seed_from_u64(s),
         None => StdRng::from_os_rng(),
@@ -225,10 +232,27 @@ pub async fn run_simulation(
                 break;
             }
 
-            // (P1) Encounter at the current system.
+            // (P1) Encounter at the current system. A pirate never raids in
+            // its own home port — at the hideout it just lies low and sails.
+            let at_hideout = worldref_same_hex(&current_ref, &params.home_world);
             let dms = encounter::encounter_dms(&current_world);
-            let (d1, d2) = encounter::roll_d66_clamped(&dms, &mut pirate_rng);
-            let enc = encounter::encounter_for(d1, d2, &mut pirate_rng);
+            let (d1, d2, enc) = if at_hideout {
+                (0, 0, EncounterType::None)
+            } else {
+                let (d1, d2) = encounter::roll_d66_clamped(&dms, &mut pirate_rng);
+                (d1, d2, encounter::encounter_for(d1, d2, &mut pirate_rng))
+            };
+
+            // Reputation only cools when you commit no piracy in the system —
+            // a completed act *or* a fight you started both count as having
+            // pirated here, so neither lets you "lie low".
+            let mut acted_this_system = false;
+
+            // A notorious pirate can't sidle up to a convoy: at reputation 4+
+            // the escorts recognize the name and engage, turning a fat prize
+            // into a fight you have to outrun.
+            let convoy_hostile =
+                enc == EncounterType::Convoy && reputation >= CONVOY_HOSTILE_REPUTATION;
 
             if enc == EncounterType::None {
                 emit(
@@ -243,13 +267,18 @@ pub async fn run_simulation(
                         security_dm: dms.security,
                     },
                 );
-                quiet_jumps += 1;
-            } else if enc.is_threat() {
-                // A defender. Try to play it cool first.
+            } else if enc.is_threat() || convoy_hostile {
+                // A defender (or a convoy that's had enough of you). Try to play
+                // it cool — unless your name precedes you, in which case they
+                // attack on sight and you can only run.
                 let q_ship =
                     enc == EncounterType::SystemDefenceBoat && encounter::is_q_ship(&mut pirate_rng);
                 let (pic_roll, recognized) =
-                    escape::play_it_cool(leadership, reputation, &mut pirate_rng);
+                    if reputation >= HUNTER_ATTACK_REPUTATION || convoy_hostile {
+                        (0, true)
+                    } else {
+                        escape::play_it_cool(leadership, reputation, &mut pirate_rng)
+                    };
                 if !recognized {
                     emit(
                         &mut on_step,
@@ -267,7 +296,6 @@ pub async fn run_simulation(
                             weeks_lost: 0,
                         },
                     );
-                    quiet_jumps += 1;
                 } else {
                     let enc_thrust = strength::roll_prey(enc, 1.0, &mut pirate_rng).thrust;
                     let (em, outcome) = escape::thrust_escape(
@@ -310,7 +338,6 @@ pub async fn run_simulation(
                             weeks_lost: weeks,
                         },
                     );
-                    quiet_jumps += 1;
                 }
             } else {
                 // Prey: resolve the encounter.
@@ -356,6 +383,11 @@ pub async fn run_simulation(
                 plundered_tons += taken_tons;
                 plundered_value += taken_value;
 
+                // A completed act of piracy, or a fight you started and lost
+                // (driven off mauled), both count as having pirated here.
+                if res.act_tier.is_some() || res.outcome == EncounterOutcome::DrivenOffMauled {
+                    acted_this_system = true;
+                }
                 let rep_delta = if let Some(tier) = res.act_tier {
                     raids += 1;
                     if tier == ActTier::DestroyOrMurder {
@@ -363,10 +395,8 @@ pub async fn run_simulation(
                     }
                     let gain = rep::rep_gain(tier);
                     reputation = rep::clamp(reputation + gain);
-                    quiet_jumps = 0;
                     Some(gain)
                 } else {
-                    quiet_jumps += 1;
                     None
                 };
 
@@ -411,8 +441,9 @@ pub async fn run_simulation(
                 }
             }
 
-            // (P2) Reputation decay during quiet stretches.
-            if quiet_jumps > 0 && reputation > 0.0 {
+            // (P2) Reputation cools only in a system where you committed no
+            // piracy at all.
+            if !acted_this_system && reputation > 0.0 {
                 let before = reputation;
                 reputation = rep::decay_one_quiet_jump(reputation);
                 if (reputation - before).abs() > f64::EPSILON {

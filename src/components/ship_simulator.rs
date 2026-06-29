@@ -1925,3 +1925,37 @@ fn CaptainsLog(
         </div>
     }
 }
+
+#[cfg(test)]
+mod describe_tests {
+    use super::describe_action;
+    use crate::simulator::types::{ActTier, Action, EncounterOutcome, EncounterType};
+
+    #[test]
+    fn raid_renders_a_row() {
+        let a = Action::EncounterResolved {
+            d66_first: 3,
+            d66_second: 1,
+            traffic_dm: 0,
+            security_dm: 0,
+            encounter: EncounterType::SmallFreighter,
+            target_hull_tons: 200,
+            target_weapons: 3,
+            target_thrust: 1,
+            mor_roll: 3,
+            mor_total: 6,
+            menace: 11,
+            surrender_margin: 5,
+            resistance: 0,
+            outcome: EncounterOutcome::Surrendered,
+            act_tier: Some(ActTier::ExtortLittle),
+            loot_value: 288_000,
+            pirate_damage_credits: 0,
+            weeks_lost: 0,
+        };
+        let out = describe_action(&a, "Drinax");
+        assert!(out.is_some(), "EncounterResolved should render a row");
+        let (text, _class) = out.unwrap();
+        assert!(text.contains("Raided"), "got: {text}");
+    }
+}
