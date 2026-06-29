@@ -418,7 +418,10 @@ fn parse_ddd_yyyy(s: &str) -> Option<Date> {
 pub fn ShipSimulator(
     #[prop(optional)] mode: SimulationMode,
 ) -> impl IntoView {
-    let is_piracy = mode == SimulationMode::Piracy;
+    // The activity mode is a live toggle so the user can flip between the
+    // trade and pirate simulators in place (keeping their form inputs). The
+    // `mode` prop just seeds the initial value (from the route).
+    let mode = RwSignal::new(mode);
 
     // ---- Form state ----
     // Ship
@@ -538,7 +541,7 @@ pub fn ShipSimulator(
                 maintenance_per_period: maintenance_per_period.get_untracked(),
                 salary_per_period: salary_per_period.get_untracked(),
             },
-            mode,
+            mode: mode.get_untracked(),
             attitude: attitude.get_untracked(),
             starting_reputation: 0.0,
             rng_seed: None,
@@ -580,8 +583,27 @@ pub fn ShipSimulator(
     view! {
         <div class:App>
             <h1 class="no-print">
-                {if is_piracy { "Pirate Simulator" } else { "Ship Simulator" }}
+                {move || if mode.get() == SimulationMode::Piracy { "Pirate Simulator" } else { "Ship Simulator" }}
             </h1>
+
+            <div class="sim-mode-toggle no-print" role="group" aria-label="Simulator mode">
+                <button
+                    type="button"
+                    class="sim-mode-button"
+                    class:active=move || mode.get() == SimulationMode::Trade
+                    on:click=move |_| mode.set(SimulationMode::Trade)
+                >
+                    "Trade"
+                </button>
+                <button
+                    type="button"
+                    class="sim-mode-button"
+                    class:active=move || mode.get() == SimulationMode::Piracy
+                    on:click=move |_| mode.set(SimulationMode::Piracy)
+                >
+                    "Piracy"
+                </button>
+            </div>
 
             <SimForm
                 mode=mode
@@ -667,7 +689,7 @@ pub fn ShipSimulator(
 #[component]
 #[allow(clippy::too_many_arguments)]
 fn SimForm(
-    mode: SimulationMode,
+    mode: RwSignal<SimulationMode>,
     ship_name: RwSignal<String>,
     cargo_capacity: RwSignal<i32>,
     crew_staterooms: RwSignal<i32>,
@@ -697,7 +719,10 @@ fn SimForm(
     home_uwp: RwSignal<String>,
     home_zone: RwSignal<ZoneClassification>,
 ) -> impl IntoView {
-    let is_piracy = mode == SimulationMode::Piracy;
+    // Reactive predicate so the form re-renders its mode-specific fields when
+    // the Trade/Piracy toggle flips. Copy (captures only the Copy `mode`
+    // signal), so it can be moved into each conditional closure below.
+    let is_piracy = move || mode.get() == SimulationMode::Piracy;
     view! {
         <div class="sim-form no-print">
             <fieldset class="sim-fieldset">
@@ -745,7 +770,7 @@ fn SimForm(
                             }
                         />
                     </label>
-                    {(!is_piracy).then(|| view! {
+                    {move || (!is_piracy()).then(|| view! {
                         <label>
                             <span class="sim-label-row">
                                 "Passenger staterooms"
@@ -763,7 +788,7 @@ fn SimForm(
                             />
                         </label>
                     })}
-                    {(!is_piracy).then(|| view! {
+                    {move || (!is_piracy()).then(|| view! {
                         <label>
                             <span class="sim-label-row">
                                 "Low berths"
@@ -797,7 +822,7 @@ fn SimForm(
                             }
                         />
                     </label>
-                    {is_piracy.then(|| view! {
+                    {move || is_piracy().then(|| view! {
                         <label>
                             <span class="sim-label-row">
                                 "Thrust (G)"
@@ -905,7 +930,7 @@ fn SimForm(
             <fieldset class="sim-fieldset">
                 <legend>"Crew"</legend>
                 <div class="sim-grid">
-                    {is_piracy.then(|| view! {
+                    {move || is_piracy().then(|| view! {
                         <label>
                             <span class="sim-label-row">
                                 "Doctrine"
@@ -930,7 +955,7 @@ fn SimForm(
                             </select>
                         </label>
                     })}
-                    {(!is_piracy).then(|| view! {
+                    {move || (!is_piracy()).then(|| view! {
                         <label>
                             <span class="sim-label-row">
                                 "Ship Broker skill"
@@ -949,7 +974,7 @@ fn SimForm(
                             />
                         </label>
                     })}
-                    {(!is_piracy).then(|| view! {
+                    {move || (!is_piracy()).then(|| view! {
                         <label>
                             <span class="sim-label-row">
                                 "Steward skill"
@@ -1062,7 +1087,7 @@ fn SimForm(
                             bind:value=target_date_text
                         />
                     </label>
-                    {(!is_piracy).then(|| view! {
+                    {move || (!is_piracy()).then(|| view! {
                         <label>
                             <span class="sim-label-row">
                                 "Illegal goods"
@@ -1077,7 +1102,7 @@ fn SimForm(
                             />
                         </label>
                     })}
-                    {(!is_piracy).then(|| view! {
+                    {move || (!is_piracy()).then(|| view! {
                         <label>
                             <span class="sim-label-row">
                                 "System broker skill"
@@ -1100,7 +1125,7 @@ fn SimForm(
             </fieldset>
 
             <fieldset class="sim-fieldset">
-                <legend>{if is_piracy { "Home Base / Hideout" } else { "Home World" }}</legend>
+                <legend>{move || if is_piracy() { "Home Base / Hideout" } else { "Home World" }}</legend>
                 <WorldSearch
                     label="Home".to_string()
                     name=home_name
@@ -1605,11 +1630,10 @@ fn RouteMap(run_state: RwSignal<RunState>, steps: RwSignal<Vec<SimulationStep>>)
 /// Renders the final summary card, including the Save-as-PDF print button.
 #[component]
 fn SimSummary(
-    mode: SimulationMode,
+    mode: RwSignal<SimulationMode>,
     run_state: RwSignal<RunState>,
     last_params: RwSignal<Option<SimulationParams>>,
 ) -> impl IntoView {
-    let is_piracy = mode == SimulationMode::Piracy;
     let print_handler = move |_| {
         if let Some(window) = web_sys::window() {
             let _ = window.print();
@@ -1617,8 +1641,11 @@ fn SimSummary(
     };
 
     view! {
+        // Reading `mode.get()` inside this reactive block makes the summary
+        // rows follow the Trade/Piracy toggle as well as the run state.
         {move || match run_state.get() {
             RunState::Done(result) => {
+                let is_piracy = mode.get() == SimulationMode::Piracy;
                 let r = result;
                 let marooned_panel = if r.marooned {
                     let loc = r.marooned_at.as_ref().map(|w| w.name.clone()).unwrap_or_default();
@@ -1747,7 +1774,7 @@ fn SimSummary(
 /// banner). Each subsequent click clears state and starts fresh.
 #[component]
 fn CaptainsLog(
-    mode: SimulationMode,
+    mode: RwSignal<SimulationMode>,
     run_state: RwSignal<RunState>,
     steps: RwSignal<Vec<SimulationStep>>,
     last_params: RwSignal<Option<SimulationParams>>,
@@ -1793,7 +1820,7 @@ fn CaptainsLog(
 
         let prompt = {
             let steps_ref = steps.read();
-            match mode {
+            match mode.get_untracked() {
                 SimulationMode::Trade => {
                     build_prompt(&params.ship.name, &params, &steps_ref, &result)
                 }
