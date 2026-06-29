@@ -10,7 +10,7 @@
 
 use rand::Rng;
 
-use super::roll_2d6;
+use super::{COMBAT_DAMAGE_UNIT, roll_2d6};
 use crate::simulator::types::EncounterType;
 
 /// Threshold at/above which a patrol recognizes the pirate.
@@ -42,12 +42,12 @@ pub fn play_it_cool(leadership: i16, reputation: f64, rng: &mut impl Rng) -> (i3
     (score, score >= RECOGNITION_THRESHOLD)
 }
 
-/// Graded thrust escape. `damage_unit` scales the cost of a messy getaway
-/// (the executor passes the ship's `maintenance_per_period`).
+/// Graded thrust escape. A messy getaway costs a fixed
+/// [`COMBAT_DAMAGE_UNIT`]-scaled repair bill, independent of the ship's
+/// maintenance setting.
 pub fn thrust_escape(
     ship_thrust: i16,
     encounter_thrust: i16,
-    damage_unit: i64,
     rng: &mut impl Rng,
 ) -> (i32, EscapeOutcome) {
     // Randomness centered on zero, in -5..=5.
@@ -61,14 +61,14 @@ pub fn thrust_escape(
         // shrinks.
         let severity = (3 - margin).max(1) as i64; // 2..=6
         EscapeOutcome::WithDamage {
-            credits: severity * damage_unit / 2,
+            credits: severity * COMBAT_DAMAGE_UNIT / 2,
             weeks: (severity as u32 / 2).max(1),
         }
     } else {
         // Badly out-thrust: run down.
         let severity = (-margin) as i64; // >= 4
         EscapeOutcome::Caught {
-            credits: severity * damage_unit,
+            credits: severity * COMBAT_DAMAGE_UNIT,
             weeks: (severity as u32 / 2).max(1),
             maroon: margin <= -7,
         }
@@ -129,7 +129,7 @@ mod tests {
         // worst luck roll (margin = 8 + (2..12 - 7) >= 3).
         let mut rng = StdRng::seed_from_u64(3);
         for _ in 0..50 {
-            let (_m, o) = thrust_escape(9, 1, 50_000, &mut rng);
+            let (_m, o) = thrust_escape(9, 1, &mut rng);
             assert_eq!(o, EscapeOutcome::Clean);
         }
     }
@@ -139,7 +139,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(4);
         let mut caught = 0;
         for _ in 0..200 {
-            let (_m, o) = thrust_escape(3, 4, 50_000, &mut rng);
+            let (_m, o) = thrust_escape(3, 4, &mut rng);
             if matches!(o, EscapeOutcome::Caught { .. }) {
                 caught += 1;
             }

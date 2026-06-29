@@ -298,12 +298,8 @@ pub async fn run_simulation(
                     );
                 } else {
                     let enc_thrust = strength::roll_prey(enc, 1.0, &mut pirate_rng).thrust;
-                    let (em, outcome) = escape::thrust_escape(
-                        params.ship.thrust,
-                        enc_thrust,
-                        params.ship.maintenance_per_period,
-                        &mut pirate_rng,
-                    );
+                    let (em, outcome) =
+                        escape::thrust_escape(params.ship.thrust, enc_thrust, &mut pirate_rng);
                     let (label, dmg, weeks, maroon_flag) = match outcome {
                         EscapeOutcome::Clean => ("clean escape", 0i64, 0u32, false),
                         EscapeOutcome::WithDamage { credits, weeks } => {
@@ -349,12 +345,7 @@ pub async fn run_simulation(
                     reputation,
                     leadership,
                 };
-                let res = resolution::resolve_encounter(
-                    &pirate,
-                    &prey,
-                    params.ship.maintenance_per_period,
-                    &mut pirate_rng,
-                );
+                let res = resolution::resolve_encounter(&pirate, &prey, &mut pirate_rng);
                 budget -= res.pirate_damage_credits;
                 if res.weeks_lost > 0 {
                     let added = res.weeks_lost * DAYS_PER_WEEK;

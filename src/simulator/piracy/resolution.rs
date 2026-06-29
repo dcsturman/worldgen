@@ -11,8 +11,8 @@
 use rand::Rng;
 
 use super::escape::prey_escape;
-use super::roll_1d6;
 use super::strength::Prey;
+use super::{COMBAT_DAMAGE_UNIT, roll_1d6};
 use crate::simulator::types::{ActTier, Attitude, EncounterOutcome, EncounterType};
 
 /// Reputation's coefficient and cap on the menace score. A feared name
@@ -34,7 +34,7 @@ fn stomach(attitude: Attitude) -> i32 {
     }
 }
 
-/// Damage (in `maintenance_per_period` units) a doctrine will absorb before
+/// Damage (in [`COMBAT_DAMAGE_UNIT`] units) a doctrine will absorb before
 /// breaking off a fight, mauled. Bloodthirsty never bails — it wins or dies.
 fn breaking_point(attitude: Attitude) -> i64 {
     match attitude {
@@ -67,7 +67,7 @@ fn destroy_threshold(attitude: Attitude) -> i32 {
 }
 
 /// Divisor tuning battle damage: `target_weapons × (resistance + 1d6) ×
-/// maintenance / DAMAGE_K`.
+/// COMBAT_DAMAGE_UNIT / DAMAGE_K`.
 const DAMAGE_K: i64 = 12;
 
 /// The attacking pirate's relevant stats.
@@ -116,15 +116,10 @@ pub fn mor_base(kind: EncounterType) -> i32 {
     }
 }
 
-/// Resolve a prey encounter. `damage_unit` scales return-fire damage (the
-/// executor passes the ship's `maintenance_per_period`, mirroring the
-/// merchant repair model).
-pub fn resolve_encounter(
-    p: &Pirate,
-    prey: &Prey,
-    damage_unit: i64,
-    rng: &mut impl Rng,
-) -> Resolution {
+/// Resolve a prey encounter. Battle damage is a fixed cost
+/// ([`COMBAT_DAMAGE_UNIT`]) scaled by the enemy's weapons and the fight's
+/// intensity — independent of the ship's maintenance setting.
+pub fn resolve_encounter(p: &Pirate, prey: &Prey, rng: &mut impl Rng) -> Resolution {
     let mor_roll = roll_1d6(rng);
     let mor_total = mor_roll + mor_base(prey.kind);
 
@@ -163,11 +158,12 @@ pub fn resolve_encounter(
         // A real battle. Even a win costs repair damage; only an overwhelmed
         // target (handled above) yields without bloodying us.
         let d = roll_1d6(rng) as i64;
-        pirate_damage = (prey.weapons.max(0) as i64) * (resistance as i64 + d) * damage_unit / DAMAGE_K;
+        pirate_damage =
+            (prey.weapons.max(0) as i64) * (resistance as i64 + d) * COMBAT_DAMAGE_UNIT / DAMAGE_K;
         weeks_lost = (resistance / 3).clamp(0, 4) as u32;
 
         if p.attitude != Attitude::Bloodthirsty
-            && pirate_damage > breaking_point(p.attitude).saturating_mul(damage_unit)
+            && pirate_damage > breaking_point(p.attitude).saturating_mul(COMBAT_DAMAGE_UNIT)
         {
             // Beaten back before we could board: damage, no take.
             outcome = EncounterOutcome::DrivenOffMauled;
@@ -240,7 +236,7 @@ mod tests {
         let mut takes = 0;
         let mut rng = StdRng::seed_from_u64(11);
         for _ in 0..200 {
-            let r = resolve_encounter(&p, &prey(2, 100, 500_000), 50_000, &mut rng);
+            let r = resolve_encounter(&p, &prey(2, 100, 500_000), &mut rng);
             if r.act_tier.is_some() {
                 takes += 1;
             }
@@ -260,7 +256,7 @@ mod tests {
         };
         let mut rng = StdRng::seed_from_u64(7);
         for _ in 0..200 {
-            let r = resolve_encounter(&p, &prey(20, 200, 2_000_000), 50_000, &mut rng);
+            let r = resolve_encounter(&p, &prey(20, 200, 2_000_000), &mut rng);
             assert!(r.act_tier.is_none(), "weak pirate should never take this prey");
             assert!(matches!(
                 r.outcome,
@@ -279,7 +275,7 @@ mod tests {
         };
         let mut rng = StdRng::seed_from_u64(21);
         for _ in 0..400 {
-            let r = resolve_encounter(&p, &prey(6, 200, 800_000), 50_000, &mut rng);
+            let r = resolve_encounter(&p, &prey(6, 200, 800_000), &mut rng);
             match r.outcome {
                 EncounterOutcome::Surrendered => {
                     assert_eq!(r.pirate_damage_credits, 0, "surrender drew blood")
@@ -304,7 +300,7 @@ mod tests {
         };
         let mut rng = StdRng::seed_from_u64(3);
         for _ in 0..300 {
-            let r = resolve_encounter(&p, &prey(8, 400, 5_000_000), 50_000, &mut rng);
+            let r = resolve_encounter(&p, &prey(8, 400, 5_000_000), &mut rng);
             assert!(
                 !matches!(
                     r.outcome,
@@ -336,7 +332,7 @@ mod tests {
         let mut fought = 0;
         let mut rng = StdRng::seed_from_u64(31);
         for _ in 0..600 {
-            let r = resolve_encounter(&p, &prey(9, 300, 1_500_000), 50_000, &mut rng);
+            let r = resolve_encounter(&p, &prey(9, 300, 1_500_000), &mut rng);
             if r.outcome == EncounterOutcome::FoughtAndWon {
                 fought += 1;
                 if r.act_tier == Some(ActTier::DestroyOrMurder) {

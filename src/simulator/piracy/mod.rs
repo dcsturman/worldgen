@@ -19,6 +19,12 @@
 
 use rand::Rng;
 
+/// Fixed credit cost unit for battle and escape damage, independent of the
+/// ship's upkeep. A fight's repair bill scales on this, the enemy's weapons,
+/// and the fight's intensity — *not* on `maintenance_per_period`, so combat
+/// always bites the same whatever a captain sets their maintenance to.
+pub const COMBAT_DAMAGE_UNIT: i64 = 25_000;
+
 pub mod encounter;
 pub mod escape;
 pub mod fencing;
