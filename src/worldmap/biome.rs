@@ -79,7 +79,9 @@ pub fn assign_biomes(
     sea_level: f64,
     base_seed: u64,
 ) {
-    let faces = grid.faces.clone();
+    // Borrow faces immutably while mutating hexes — disjoint fields of `grid`,
+    // so no clone of the face list is needed.
+    let faces = &grid.faces;
 
     for hex in &mut grid.hexes {
         let face = &faces[hex.face_idx];

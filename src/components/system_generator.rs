@@ -288,13 +288,14 @@ use crate::api::parse_stellar;
 /// multiplier, planetoid belts, gas giants). Returns `None` for
 /// anything that doesn't fit.
 fn parse_pbg(s: &str) -> Option<(u32, u32, u32)> {
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() != 3 {
+    let mut chars = s.chars();
+    let pop = chars.next()?.to_digit(16)?;
+    let belts = chars.next()?.to_digit(16)?;
+    let giants = chars.next()?.to_digit(16)?;
+    // Reject anything longer than the three P/B/G digits.
+    if chars.next().is_some() {
         return None;
     }
-    let pop = chars[0].to_digit(16)?;
-    let belts = chars[1].to_digit(16)?;
-    let giants = chars[2].to_digit(16)?;
     Some((pop, belts, giants))
 }
 
