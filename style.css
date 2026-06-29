@@ -1210,6 +1210,35 @@ datalist option {
   font-weight: 700;
 }
 
+.sim-action-raid {
+  border-color: #c0392b;
+  border-left: 4px solid #c0392b;
+  background: rgba(192, 57, 43, 0.15);
+}
+
+.sim-action-fence {
+  border-color: #2e7d32;
+  border-left: 4px solid #2e7d32;
+  background: rgba(46, 125, 50, 0.12);
+}
+
+.sim-action-threat {
+  border-color: #c97a17;
+  border-left: 4px solid #c97a17;
+  background: rgba(201, 122, 23, 0.15);
+}
+
+.sim-action-reputation {
+  border-color: #8e44ad;
+  border-left: 4px solid #8e44ad;
+  background: rgba(142, 68, 173, 0.12);
+}
+
+.sim-action-quiet {
+  border-color: #444;
+  color: #999;
+}
+
 .sim-summary {
   margin: 1.5rem auto;
   max-width: 1000px;

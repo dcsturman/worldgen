@@ -492,9 +492,15 @@ impl World {
     /// # Arguments
     ///
     /// * `facilities` - Vector of facilities to set
-    #[allow(dead_code)]
     pub fn set_facilities(&mut self, facilities: Vec<Facility>) {
         self.facilities = facilities;
+    }
+
+    /// Returns `true` if the world hosts the given facility (e.g. a naval
+    /// base). Used by the pirate simulator to derive encounter modifiers and
+    /// the "secure system" classification.
+    pub fn has_facility(&self, facility: Facility) -> bool {
+        self.facilities.contains(&facility)
     }
 
     /// Returns a formatted string of all facilities on the world

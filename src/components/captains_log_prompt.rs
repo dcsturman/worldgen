@@ -472,6 +472,14 @@ fn coalesce_visits(steps: &[SimulationStep]) -> Vec<Visit<'_>> {
             Action::Marooned { .. } => {
                 v.marooned_here = true;
             }
+            // Piracy-only variants never appear in a merchant trade run,
+            // which is the only flow this builder serves. Explicit no-op
+            // arms (rather than a wildcard) keep future variants honest.
+            Action::EncounterResolved { .. } => {}
+            Action::EncounterNone { .. } => {}
+            Action::ThreatEncounter { .. } => {}
+            Action::FenceAttempt { .. } => {}
+            Action::ReputationChange { .. } => {}
         }
     }
 
@@ -842,6 +850,10 @@ mod tests {
             target_completion_date: Date::new(180, 1108),
             illegal_goods: false,
             planetary_broker_skill: 2,
+            mode: crate::simulator::types::SimulationMode::Trade,
+            attitude: crate::simulator::types::Attitude::Hungry,
+            starting_reputation: 0.0,
+            rng_seed: None,
         };
         let result = SimulationResult {
             final_budget: 612_400,
@@ -857,6 +869,10 @@ mod tests {
             marooned_at: None,
             marooned_on: None,
             rescue_arrives_on: None,
+            final_reputation: 0.0,
+            total_loot_fenced: 0,
+            raids: 0,
+            ships_destroyed: 0,
         };
         let s = build_prompt("Free Trader Beowulf", &params, &[], &result);
         assert!(s.contains("Free Trader Beowulf"));
@@ -878,6 +894,10 @@ mod tests {
             target_completion_date: Date::new(180, 1108),
             illegal_goods: false,
             planetary_broker_skill: 2,
+            mode: crate::simulator::types::SimulationMode::Trade,
+            attitude: crate::simulator::types::Attitude::Hungry,
+            starting_reputation: 0.0,
+            rng_seed: None,
         };
         let result = SimulationResult {
             final_budget: 0,
@@ -893,6 +913,10 @@ mod tests {
             marooned_at: None,
             marooned_on: None,
             rescue_arrives_on: None,
+            final_reputation: 0.0,
+            total_loot_fenced: 0,
+            raids: 0,
+            ships_destroyed: 0,
         };
         let s = build_prompt("", &params, &[], &result);
         assert!(s.contains("(unregistered"));

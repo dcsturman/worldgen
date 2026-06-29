@@ -77,7 +77,12 @@ fn App() -> impl IntoView {
     // Track the page view
     track_page_view(&path);
 
-    if path.contains("simulator") {
+    if path.contains("pirate") {
+        // "pirate-simulator" also contains "simulator", so this branch must
+        // come first.
+        view! { <ShipSimulator mode=worldgen::simulator::types::SimulationMode::Piracy /> }
+            .into_any()
+    } else if path.contains("simulator") {
         view! { <ShipSimulator /> }.into_any()
     } else if path.contains("worldmap") {
         view! { <WorldMap /> }.into_any()

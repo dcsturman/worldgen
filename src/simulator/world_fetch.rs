@@ -15,7 +15,7 @@ use serde::Deserialize;
 use tokio::sync::Semaphore;
 
 use crate::simulator::route::Candidate;
-use crate::systems::world::World;
+use crate::systems::world::{Facility, World};
 use crate::trade::ZoneClassification;
 use crate::util::calculate_hex_distance;
 
@@ -59,6 +59,15 @@ struct WorldEntry {
     zone: Option<String>,
     #[serde(default)]
     allegiance: Option<String>,
+    /// Population/Belts/Gas-giants code, e.g. `"709"`. The third digit is
+    /// the number of gas giants — used by the pirate planner's
+    /// wilderness-refuel filter.
+    #[serde(default, rename = "PBG")]
+    pbg: Option<String>,
+    /// Base codes, e.g. `"N"` (naval), `"S"` (scout), `"A"` (naval+scout),
+    /// `"D"` (depot). Mapped onto the world's facilities.
+    #[serde(default)]
+    bases: Option<String>,
 }
 
 /// Wrapper for `/data/{sector}/{hex}` responses. The endpoint always
@@ -70,11 +79,13 @@ struct WorldsEnvelope {
     worlds: Vec<WorldEntry>,
 }
 
-/// One cached lookup result: a populated `World` plus its TravellerMap
-/// allegiance code (if any). The allegiance is carried alongside `World`
-/// rather than added to it so the systems-generation module stays free
-/// of simulator-specific concepts.
-type CachedWorld = (World, Option<String>);
+/// One cached lookup result: a populated `World`, its TravellerMap
+/// allegiance code (if any), and the system's gas-giant count. The
+/// allegiance and gas-giant count are carried alongside `World` rather than
+/// added to it so the systems-generation module stays free of
+/// simulator-specific concepts. (Naval/scout bases *are* folded into the
+/// `World`'s facilities, since `World` already models those.)
+type CachedWorld = (World, Option<String>, u8);
 
 /// Cache of TravellerMap world data lookups, keyed by
 /// `(sector_name, hex_x, hex_y)`. `None` = empty hex (404 from
@@ -158,11 +169,12 @@ impl WorldCache {
         for (x, y, d) in targets {
             let key = (sector.to_string(), x, y);
             if let Some(cached) = self.inner.get(&key) {
-                if let Some((world, allegiance)) = cached {
+                if let Some((world, allegiance, gas_giants)) = cached {
                     candidates.push(Candidate {
                         world: world.clone(),
                         distance: d,
                         allegiance: allegiance.clone(),
+                        gas_giants: *gas_giants,
                     });
                 }
             } else {
@@ -192,13 +204,14 @@ impl WorldCache {
             debug_assert_eq!((*x, *y), (rx, ry));
             let key = (sector.to_string(), *x, *y);
             match res {
-                Ok(Some((world, allegiance))) => {
+                Ok(Some((world, allegiance, gas_giants))) => {
                     self.inner
-                        .insert(key, Some((world.clone(), allegiance.clone())));
+                        .insert(key, Some((world.clone(), allegiance.clone(), gas_giants)));
                     candidates.push(Candidate {
                         world,
                         distance: *d,
                         allegiance,
+                        gas_giants,
                     });
                 }
                 Ok(None) => {
@@ -274,7 +287,30 @@ async fn fetch_one(
         _ => ZoneClassification::Green,
     };
 
-    Ok(Some((world, entry.allegiance)))
+    // Map base codes onto the world's facilities (used by the pirate
+    // simulator's encounter modifiers).
+    if let Some(bases) = entry.bases.as_deref() {
+        let mut facilities = Vec::new();
+        if bases.contains('N') || bases.contains('A') {
+            facilities.push(Facility::Naval);
+        }
+        if bases.contains('S') || bases.contains('A') {
+            facilities.push(Facility::Scout);
+        }
+        if !facilities.is_empty() {
+            world.set_facilities(facilities);
+        }
+    }
+
+    // Gas giants are the third digit of the PBG code.
+    let gas_giants = entry
+        .pbg
+        .as_deref()
+        .and_then(|p| p.chars().nth(2))
+        .and_then(|c| c.to_digit(16))
+        .unwrap_or(0) as u8;
+
+    Ok(Some((world, entry.allegiance, gas_giants)))
 }
 
 /// Minimal URL component encoder — enough to handle spaces and other
@@ -324,7 +360,7 @@ mod tests {
         assert!(res.is_ok());
         let entry = res.unwrap();
         assert!(entry.is_some(), "Regina hex 19,10 should be present");
-        let (_, allegiance) = entry.as_ref().unwrap();
+        let (_, allegiance, _gas) = entry.as_ref().unwrap();
         eprintln!("allegiance: {:?}", allegiance);
         assert!(
             allegiance.as_deref().unwrap_or("").starts_with("Im"),

@@ -94,6 +94,11 @@ pub struct Ship {
     /// Number of weapon turrets. Used by the simulator's piracy
     /// resolution; not surfaced in the trade-computer UI.
     pub weapons: i16,
+    /// Maneuver-drive thrust rating (in Gs). Consumed only by the pirate
+    /// simulator's threat-escape resolution — a higher thrust improves the
+    /// chance of escaping a System Defence Boat / Naval Patrol / q-ship when
+    /// an encounter turns dangerous. Not surfaced in the trade-computer UI.
+    pub thrust: i16,
 
     // -- Periodic costs (per 28-day period) ------------------------------
     /// Mortgage payment per 28-day period. Paid alongside maintenance
@@ -191,6 +196,7 @@ mod tests {
             leadership_skill: 1,
             jump_rating: 1,
             weapons: 1,
+            thrust: 2,
             mortgage_per_period: 187_654,
             maintenance_per_period: 5_433,
             salary_per_period: 12_000,

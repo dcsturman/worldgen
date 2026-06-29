@@ -61,6 +61,13 @@ pub fn Selector() -> impl IntoView {
         let _ = web_sys::window().unwrap().location().set_href("/simulator");
     };
 
+    let navigate_to_pirate = move |_| {
+        let _ = web_sys::window()
+            .unwrap()
+            .location()
+            .set_href("/pirate-simulator");
+    };
+
     let navigate_to_worldmap = move |_| {
         let _ = web_sys::window().unwrap().location().set_href("/worldmap");
     };
@@ -106,6 +113,13 @@ pub fn Selector() -> impl IntoView {
                     <p>"Simulate a trader plying multiple worlds for profit. Pick a home port, configure your ship and crew, and watch a greedy route planner make trade decisions across the stars."</p>
                     <button class="blue-button" on:click=navigate_to_simulator>
                         "Launch Ship Simulator"
+                    </button>
+                </div>
+                <div class="tool-card">
+                    <h2>"Pirate Simulator"</h2>
+                    <p>"Run a corsair instead of a merchant — pick a hideout, set your doctrine, raid prey, fence your loot, and build (or outrun) a reputation."</p>
+                    <button class="blue-button" on:click=navigate_to_pirate>
+                        "Launch Pirate Simulator"
                     </button>
                 </div>
                 <div class="tool-card">

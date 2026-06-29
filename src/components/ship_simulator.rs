@@ -17,6 +17,7 @@ use web_sys::{CloseEvent, ErrorEvent, MessageEvent, WebSocket};
 use crate::comms::captains_log::{
     ClientMessage as LogClientMessage, ServerMessage as LogServerMessage,
 };
+use crate::components::captains_log_piracy_prompt::build_piracy_prompt;
 use crate::components::captains_log_prompt::build_prompt;
 use crate::components::help_tooltip::HelpTooltip;
 use crate::components::tooltip_docs as docs;
@@ -25,7 +26,8 @@ use crate::simulator::economy::WEAPONS_MAX;
 use crate::simulator::map_render::{MapWaypoint, build_plain_link_url, build_route_map_data};
 use crate::simulator::protocol::{ClientMessage, ServerMessage};
 use crate::simulator::types::{
-    Action, Date, SimulationParams, SimulationResult, SimulationStep, WorldRef,
+    Action, Attitude, Date, SimulationMode, SimulationParams, SimulationResult, SimulationStep,
+    WorldRef,
 };
 use crate::trade::Ship;
 use crate::trade::ZoneClassification;
@@ -407,8 +409,17 @@ fn parse_ddd_yyyy(s: &str) -> Option<Date> {
 }
 
 /// Top-level simulator page. Owns the form + log + summary state.
+///
+/// The same component drives both the merchant Ship Simulator (`mode =
+/// Trade`, the default) and the Pirate Simulator (`mode = Piracy`). The
+/// mode flips which form fields are shown, the page title, and which
+/// captain's-log prompt and summary rows are used.
 #[component]
-pub fn ShipSimulator() -> impl IntoView {
+pub fn ShipSimulator(
+    #[prop(optional)] mode: SimulationMode,
+) -> impl IntoView {
+    let is_piracy = mode == SimulationMode::Piracy;
+
     // ---- Form state ----
     // Ship
     let ship_name = RwSignal::new(String::new());
@@ -417,6 +428,8 @@ pub fn ShipSimulator() -> impl IntoView {
     let passenger_staterooms = RwSignal::new(4i32);
     let low_berths = RwSignal::new(4i32);
     let jump_rating = RwSignal::new(2i16);
+    let thrust = RwSignal::new(2i16);
+    let attitude = RwSignal::new(Attitude::Hungry);
     let fuel_cost_per_parsec = RwSignal::new(500i64);
     let maintenance_per_period = RwSignal::new(5_000i64);
     let salary_per_period = RwSignal::new(12_000i64);
@@ -468,6 +481,7 @@ pub fn ShipSimulator() -> impl IntoView {
             && low_berths.get() >= 0
             && crew_size.get() >= 0
             && jump_rating.get() > 0
+            && (0..=9).contains(&thrust.get())
             && fuel_cost_per_parsec.get() >= 0
             && maintenance_per_period.get() >= 0
             && salary_per_period.get() >= 0
@@ -519,10 +533,15 @@ pub fn ShipSimulator() -> impl IntoView {
                 crew_staterooms: crew_staterooms.get_untracked(),
                 crew_size: crew_size.get_untracked(),
                 jump_rating: jump_rating.get_untracked(),
+                thrust: thrust.get_untracked(),
                 mortgage_per_period: mortgage_per_period.get_untracked(),
                 maintenance_per_period: maintenance_per_period.get_untracked(),
                 salary_per_period: salary_per_period.get_untracked(),
             },
+            mode,
+            attitude: attitude.get_untracked(),
+            starting_reputation: 0.0,
+            rng_seed: None,
             fuel_cost_per_parsec: fuel_cost_per_parsec.get_untracked(),
             crew_profit_share: crew_profit_share.get_untracked(),
             starting_budget: starting_budget.get_untracked(),
@@ -560,15 +579,20 @@ pub fn ShipSimulator() -> impl IntoView {
 
     view! {
         <div class:App>
-            <h1 class="no-print">"Ship Simulator"</h1>
+            <h1 class="no-print">
+                {if is_piracy { "Pirate Simulator" } else { "Ship Simulator" }}
+            </h1>
 
             <SimForm
+                mode=mode
                 ship_name=ship_name
                 cargo_capacity=cargo_capacity
                 crew_staterooms=crew_staterooms
                 passenger_staterooms=passenger_staterooms
                 low_berths=low_berths
                 jump_rating=jump_rating
+                thrust=thrust
+                attitude=attitude
                 fuel_cost_per_parsec=fuel_cost_per_parsec
                 maintenance_per_period=maintenance_per_period
                 salary_per_period=salary_per_period
@@ -617,13 +641,14 @@ pub fn ShipSimulator() -> impl IntoView {
             </div>
 
             <div class="sim-summary-pair">
-                <SimSummary run_state=run_state last_params=last_params />
+                <SimSummary mode=mode run_state=run_state last_params=last_params />
                 // Only mount the captain's-log panel once a simulation
                 // has actually completed — empty state has nothing to
                 // narrate. Unmounting on non-Done also cleanly drops
                 // any in-flight WS client between runs.
                 {move || matches!(run_state.get(), RunState::Done(_)).then(|| view! {
                     <CaptainsLog
+                        mode=mode
                         run_state=run_state
                         steps=steps
                         last_params=last_params
@@ -642,12 +667,15 @@ pub fn ShipSimulator() -> impl IntoView {
 #[component]
 #[allow(clippy::too_many_arguments)]
 fn SimForm(
+    mode: SimulationMode,
     ship_name: RwSignal<String>,
     cargo_capacity: RwSignal<i32>,
     crew_staterooms: RwSignal<i32>,
     passenger_staterooms: RwSignal<i32>,
     low_berths: RwSignal<i32>,
     jump_rating: RwSignal<i16>,
+    thrust: RwSignal<i16>,
+    attitude: RwSignal<Attitude>,
     fuel_cost_per_parsec: RwSignal<i64>,
     maintenance_per_period: RwSignal<i64>,
     salary_per_period: RwSignal<i64>,
@@ -669,6 +697,7 @@ fn SimForm(
     home_uwp: RwSignal<String>,
     home_zone: RwSignal<ZoneClassification>,
 ) -> impl IntoView {
+    let is_piracy = mode == SimulationMode::Piracy;
     view! {
         <div class="sim-form no-print">
             <fieldset class="sim-fieldset">
@@ -716,38 +745,42 @@ fn SimForm(
                             }
                         />
                     </label>
-                    <label>
-                        <span class="sim-label-row">
-                            "Passenger staterooms"
-                            <HelpTooltip text=docs::PASSENGER_STATEROOMS />
-                        </span>
-                        <input
-                            type="number"
-                            min="0"
-                            prop:value=move || passenger_staterooms.get()
-                            on:input=move |ev| {
-                                if let Ok(v) = event_target_value(&ev).parse::<i32>() {
-                                    passenger_staterooms.set(v);
+                    {(!is_piracy).then(|| view! {
+                        <label>
+                            <span class="sim-label-row">
+                                "Passenger staterooms"
+                                <HelpTooltip text=docs::PASSENGER_STATEROOMS />
+                            </span>
+                            <input
+                                type="number"
+                                min="0"
+                                prop:value=move || passenger_staterooms.get()
+                                on:input=move |ev| {
+                                    if let Ok(v) = event_target_value(&ev).parse::<i32>() {
+                                        passenger_staterooms.set(v);
+                                    }
                                 }
-                            }
-                        />
-                    </label>
-                    <label>
-                        <span class="sim-label-row">
-                            "Low berths"
-                            <HelpTooltip text=docs::LOW_BERTHS />
-                        </span>
-                        <input
-                            type="number"
-                            min="0"
-                            prop:value=move || low_berths.get()
-                            on:input=move |ev| {
-                                if let Ok(v) = event_target_value(&ev).parse::<i32>() {
-                                    low_berths.set(v);
+                            />
+                        </label>
+                    })}
+                    {(!is_piracy).then(|| view! {
+                        <label>
+                            <span class="sim-label-row">
+                                "Low berths"
+                                <HelpTooltip text=docs::LOW_BERTHS />
+                            </span>
+                            <input
+                                type="number"
+                                min="0"
+                                prop:value=move || low_berths.get()
+                                on:input=move |ev| {
+                                    if let Ok(v) = event_target_value(&ev).parse::<i32>() {
+                                        low_berths.set(v);
+                                    }
                                 }
-                            }
-                        />
-                    </label>
+                            />
+                        </label>
+                    })}
                     <label>
                         <span class="sim-label-row">
                             "Jump (parsecs)"
@@ -764,6 +797,25 @@ fn SimForm(
                             }
                         />
                     </label>
+                    {is_piracy.then(|| view! {
+                        <label>
+                            <span class="sim-label-row">
+                                "Thrust (G)"
+                                <HelpTooltip text=docs::THRUST />
+                            </span>
+                            <input
+                                type="number"
+                                min="0"
+                                max="9"
+                                prop:value=move || thrust.get()
+                                on:input=move |ev| {
+                                    if let Ok(v) = event_target_value(&ev).parse::<i16>() {
+                                        thrust.set(v);
+                                    }
+                                }
+                            />
+                        </label>
+                    })}
                     <label>
                         <span class="sim-label-row">
                             "Fuel cost per parsec (Cr)"
@@ -853,40 +905,69 @@ fn SimForm(
             <fieldset class="sim-fieldset">
                 <legend>"Crew"</legend>
                 <div class="sim-grid">
-                    <label>
-                        <span class="sim-label-row">
-                            "Ship Broker skill"
-                            <HelpTooltip text=docs::BROKER_SKILL />
-                        </span>
-                        <input
-                            type="number"
-                            min="-3"
-                            max="5"
-                            prop:value=move || broker_skill.get()
-                            on:input=move |ev| {
-                                if let Ok(v) = event_target_value(&ev).parse::<i16>() {
-                                    broker_skill.set(v);
+                    {is_piracy.then(|| view! {
+                        <label>
+                            <span class="sim-label-row">
+                                "Doctrine"
+                                <HelpTooltip text=docs::ATTITUDE />
+                            </span>
+                            <select
+                                prop:value=move || attitude.get().label()
+                                on:change=move |ev| {
+                                    let a = match event_target_value(&ev).as_str() {
+                                        "chill" => Attitude::Chill,
+                                        "aggressive" => Attitude::Aggressive,
+                                        "bloodthirsty" => Attitude::Bloodthirsty,
+                                        _ => Attitude::Hungry,
+                                    };
+                                    attitude.set(a);
                                 }
-                            }
-                        />
-                    </label>
-                    <label>
-                        <span class="sim-label-row">
-                            "Steward skill"
-                            <HelpTooltip text=docs::STEWARD_SKILL />
-                        </span>
-                        <input
-                            type="number"
-                            min="-3"
-                            max="5"
-                            prop:value=move || steward_skill.get()
-                            on:input=move |ev| {
-                                if let Ok(v) = event_target_value(&ev).parse::<i16>() {
-                                    steward_skill.set(v);
+                            >
+                                <option value="chill">"Chill"</option>
+                                <option value="hungry">"Hungry"</option>
+                                <option value="aggressive">"Aggressive"</option>
+                                <option value="bloodthirsty">"Bloodthirsty"</option>
+                            </select>
+                        </label>
+                    })}
+                    {(!is_piracy).then(|| view! {
+                        <label>
+                            <span class="sim-label-row">
+                                "Ship Broker skill"
+                                <HelpTooltip text=docs::BROKER_SKILL />
+                            </span>
+                            <input
+                                type="number"
+                                min="-3"
+                                max="5"
+                                prop:value=move || broker_skill.get()
+                                on:input=move |ev| {
+                                    if let Ok(v) = event_target_value(&ev).parse::<i16>() {
+                                        broker_skill.set(v);
+                                    }
                                 }
-                            }
-                        />
-                    </label>
+                            />
+                        </label>
+                    })}
+                    {(!is_piracy).then(|| view! {
+                        <label>
+                            <span class="sim-label-row">
+                                "Steward skill"
+                                <HelpTooltip text=docs::STEWARD_SKILL />
+                            </span>
+                            <input
+                                type="number"
+                                min="-3"
+                                max="5"
+                                prop:value=move || steward_skill.get()
+                                on:input=move |ev| {
+                                    if let Ok(v) = event_target_value(&ev).parse::<i16>() {
+                                        steward_skill.set(v);
+                                    }
+                                }
+                            />
+                        </label>
+                    })}
                     <label>
                         <span class="sim-label-row">
                             "Leadership"
@@ -981,41 +1062,45 @@ fn SimForm(
                             bind:value=target_date_text
                         />
                     </label>
-                    <label>
-                        <span class="sim-label-row">
-                            "Illegal goods"
-                            <HelpTooltip text=docs::ILLEGAL_GOODS />
-                        </span>
-                        <input
-                            type="checkbox"
-                            prop:checked=move || illegal_goods.get()
-                            on:change=move |ev| {
-                                illegal_goods.set(event_target_checked(&ev));
-                            }
-                        />
-                    </label>
-                    <label>
-                        <span class="sim-label-row">
-                            "System broker skill"
-                            <HelpTooltip text=docs::SYSTEM_BROKER_SKILL />
-                        </span>
-                        <input
-                            type="number"
-                            min="-3"
-                            max="5"
-                            prop:value=move || planetary_broker_skill.get()
-                            on:input=move |ev| {
-                                if let Ok(v) = event_target_value(&ev).parse::<i16>() {
-                                    planetary_broker_skill.set(v);
+                    {(!is_piracy).then(|| view! {
+                        <label>
+                            <span class="sim-label-row">
+                                "Illegal goods"
+                                <HelpTooltip text=docs::ILLEGAL_GOODS />
+                            </span>
+                            <input
+                                type="checkbox"
+                                prop:checked=move || illegal_goods.get()
+                                on:change=move |ev| {
+                                    illegal_goods.set(event_target_checked(&ev));
                                 }
-                            }
-                        />
-                    </label>
+                            />
+                        </label>
+                    })}
+                    {(!is_piracy).then(|| view! {
+                        <label>
+                            <span class="sim-label-row">
+                                "System broker skill"
+                                <HelpTooltip text=docs::SYSTEM_BROKER_SKILL />
+                            </span>
+                            <input
+                                type="number"
+                                min="-3"
+                                max="5"
+                                prop:value=move || planetary_broker_skill.get()
+                                on:input=move |ev| {
+                                    if let Ok(v) = event_target_value(&ev).parse::<i16>() {
+                                        planetary_broker_skill.set(v);
+                                    }
+                                }
+                            />
+                        </label>
+                    })}
                 </div>
             </fieldset>
 
             <fieldset class="sim-fieldset">
-                <legend>"Home World"</legend>
+                <legend>{if is_piracy { "Home Base / Hideout" } else { "Home World" }}</legend>
                 <WorldSearch
                     label="Home".to_string()
                     name=home_name
@@ -1243,6 +1328,96 @@ fn describe_action(action: &Action, home_port: &str) -> Option<(String, &'static
             ),
             "sim-action sim-action-incident sim-action-government",
         ),
+        // ---- Piracy variants ----
+        Action::EncounterResolved {
+            encounter,
+            act_tier,
+            loot_value,
+            target_escaped,
+            surrender_margin,
+            ..
+        } => {
+            if *target_escaped {
+                (
+                    format!("Prey ({}) slipped away", encounter.label()),
+                    "sim-action sim-action-raid",
+                )
+            } else if let Some(t) = act_tier {
+                (
+                    format!(
+                        "Raided {} — {} (margin {}), +{} Cr loot",
+                        encounter.label(),
+                        t.label(),
+                        surrender_margin,
+                        loot_value
+                    ),
+                    "sim-action sim-action-raid",
+                )
+            } else {
+                (
+                    format!("Broke off from {}", encounter.label()),
+                    "sim-action sim-action-raid",
+                )
+            }
+        }
+        Action::EncounterNone { .. } => return None,
+        Action::ThreatEncounter {
+            threat,
+            q_ship,
+            recognized,
+            outcome,
+            damage_credits,
+            ..
+        } => {
+            let who = if *q_ship {
+                format!("{} (q-ship)", threat.label())
+            } else {
+                threat.label().to_string()
+            };
+            let prefix = if *recognized { "recognized — " } else { "" };
+            let dmg = if *damage_credits > 0 {
+                format!(" (−{} Cr)", damage_credits)
+            } else {
+                String::new()
+            };
+            (
+                format!("{}: {}{}{}", who, prefix, outcome, dmg),
+                "sim-action sim-action-threat",
+            )
+        }
+        Action::FenceAttempt {
+            seized,
+            payout_pct,
+            payout,
+            tons_disposed,
+            ..
+        } => {
+            if *seized {
+                (
+                    format!("Fence sting! {tons_disposed}t seized"),
+                    "sim-action sim-action-fence",
+                )
+            } else {
+                (
+                    format!("Fenced {tons_disposed}t @ {payout_pct}% → +{payout} Cr"),
+                    "sim-action sim-action-fence",
+                )
+            }
+        }
+        Action::ReputationChange {
+            delta,
+            new_value,
+            reason,
+        } => (
+            format!(
+                "Reputation {}{:.1} → {:.1} ({reason})",
+                if *delta >= 0.0 { "+" } else { "" },
+                delta,
+                new_value
+            ),
+            "sim-action sim-action-reputation",
+        ),
+
         Action::Marooned {
             budget,
             total_parsecs_jumped,
@@ -1430,9 +1605,11 @@ fn RouteMap(run_state: RwSignal<RunState>, steps: RwSignal<Vec<SimulationStep>>)
 /// Renders the final summary card, including the Save-as-PDF print button.
 #[component]
 fn SimSummary(
+    mode: SimulationMode,
     run_state: RwSignal<RunState>,
     last_params: RwSignal<Option<SimulationParams>>,
 ) -> impl IntoView {
+    let is_piracy = mode == SimulationMode::Piracy;
     let print_handler = move |_| {
         if let Some(window) = web_sys::window() {
             let _ = window.print();
@@ -1479,21 +1656,43 @@ fn SimSummary(
                                 <span class="sim-summary-label">"Final budget"</span>
                                 <span class="sim-summary-value">{format!("{} Cr", r.final_budget)}</span>
                             </div>
-                            <div class="sim-summary-row">
-                                <span class="sim-summary-label">"Gross profit"</span>
-                                <span class="sim-summary-value">{format!("{} Cr", r.gross_profit)}</span>
-                            </div>
-                            <div class="sim-summary-row">
-                                <span class="sim-summary-label">"Crew share"</span>
-                                <span class="sim-summary-value">{format!("{} Cr", r.crew_share)}</span>
-                            </div>
-                            <div class="sim-summary-row">
-                                <span class="sim-summary-label">"Owner profit"</span>
-                                <span class="sim-summary-value sim-summary-value-strong">
-                                    {format!("{} Cr", r.owner_profit)}
-                                </span>
-                            </div>
-                            {(!marooned).then(|| view! {
+                            {is_piracy.then(|| view! {
+                                <div class="sim-summary-row">
+                                    <span class="sim-summary-label">"Reputation"</span>
+                                    <span class="sim-summary-value sim-summary-value-strong">
+                                        {format!("{:.1}", r.final_reputation)}
+                                    </span>
+                                </div>
+                                <div class="sim-summary-row">
+                                    <span class="sim-summary-label">"Total loot fenced"</span>
+                                    <span class="sim-summary-value">{format!("{} Cr", r.total_loot_fenced)}</span>
+                                </div>
+                                <div class="sim-summary-row">
+                                    <span class="sim-summary-label">"Raids"</span>
+                                    <span class="sim-summary-value">{r.raids}</span>
+                                </div>
+                                <div class="sim-summary-row">
+                                    <span class="sim-summary-label">"Ships destroyed"</span>
+                                    <span class="sim-summary-value">{r.ships_destroyed}</span>
+                                </div>
+                            })}
+                            {(!is_piracy).then(|| view! {
+                                <div class="sim-summary-row">
+                                    <span class="sim-summary-label">"Gross profit"</span>
+                                    <span class="sim-summary-value">{format!("{} Cr", r.gross_profit)}</span>
+                                </div>
+                                <div class="sim-summary-row">
+                                    <span class="sim-summary-label">"Crew share"</span>
+                                    <span class="sim-summary-value">{format!("{} Cr", r.crew_share)}</span>
+                                </div>
+                                <div class="sim-summary-row">
+                                    <span class="sim-summary-label">"Owner profit"</span>
+                                    <span class="sim-summary-value sim-summary-value-strong">
+                                        {format!("{} Cr", r.owner_profit)}
+                                    </span>
+                                </div>
+                            })}
+                            {(!is_piracy && !marooned).then(|| view! {
                                 <div class="sim-summary-row">
                                     <span class="sim-summary-label">"Returned home?"</span>
                                     <span class="sim-summary-value">
@@ -1548,6 +1747,7 @@ fn SimSummary(
 /// banner). Each subsequent click clears state and starts fresh.
 #[component]
 fn CaptainsLog(
+    mode: SimulationMode,
     run_state: RwSignal<RunState>,
     steps: RwSignal<Vec<SimulationStep>>,
     last_params: RwSignal<Option<SimulationParams>>,
@@ -1593,7 +1793,14 @@ fn CaptainsLog(
 
         let prompt = {
             let steps_ref = steps.read();
-            build_prompt(&params.ship.name, &params, &steps_ref, &result)
+            match mode {
+                SimulationMode::Trade => {
+                    build_prompt(&params.ship.name, &params, &steps_ref, &result)
+                }
+                SimulationMode::Piracy => {
+                    build_piracy_prompt(&params.ship.name, &params, &steps_ref, &result)
+                }
+            }
         };
 
         match LogClient::start(prompt, log_text, log_state) {

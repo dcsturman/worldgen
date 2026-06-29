@@ -3,6 +3,7 @@
 pub mod economy;
 pub mod incidents;
 pub mod map_render;
+pub mod piracy;
 pub mod protocol;
 pub mod route;
 pub mod types;
