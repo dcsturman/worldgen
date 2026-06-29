@@ -38,8 +38,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
 use crate::api::{
-    build_constraints, generate_globe_apng, generate_globe_png, generate_planet_png_scaled,
-    generate_system_png_scaled, generate_system_svg, parse_stellar,
+    build_constraints, generate_globe_apng, generate_globe_png, generate_globe_texture,
+    generate_planet_png_scaled, generate_system_png_scaled, generate_system_svg, parse_stellar,
 };
 use crate::backend::gcs::GcsClient;
 use crate::seed::{planet_seed, system_seed};
@@ -553,14 +553,19 @@ async fn handle_world_globe(
     head_only: bool,
     gcs: Arc<GcsClient>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let format = params
+        .get("format")
+        .map(|s| s.trim().to_ascii_lowercase());
+
+    // `format=texture` serves the raw equirectangular surface texture for
+    // client-side (WebGL) globe rendering, with the starport coords in a
+    // header. It has its own response shape, so branch before the image path.
+    if format.as_deref() == Some("texture") {
+        return handle_world_globe_texture(stream, gcs, seed, uwp, name, head_only).await;
+    }
+
     // Animated by default; `format=png`/`static` asks for a single frame.
-    let animated = !matches!(
-        params
-            .get("format")
-            .map(|s| s.trim().to_ascii_lowercase())
-            .as_deref(),
-        Some("png") | Some("static")
-    );
+    let animated = !matches!(format.as_deref(), Some("png") | Some("static"));
     let variant = if animated { "globe-anim" } else { "globe" };
     let cache_key = planet_cache_key(seed, uwp, name);
     let cache_object = format!("{PLANET_CACHE_PREFIX}/{variant}/{cache_key:016x}.png");
@@ -591,31 +596,83 @@ async fn handle_world_globe(
 /// without the flat path's scale-downsample tail, so the globe variants reuse
 /// it directly. The render closure is run through [`catch_render`] so a panic
 /// in one bad request becomes a clean 500 instead of aborting the process.
-async fn serve_planet_cached(
+/// Globe texture sub-handler for `…&projection=globe&format=texture`. Serves
+/// the equirectangular surface texture (RGB surface + alpha emissive) for
+/// client-side rendering, cached under `world/v1/globe-tex/`, with the
+/// starport's `(lon, lat)` echoed back in an `X-Starport` header (read from the
+/// PNG's `Starport` tEXt chunk so it survives a cache hit).
+async fn handle_world_globe_texture(
+    stream: &mut TcpStream,
+    gcs: Arc<GcsClient>,
+    seed: u64,
+    uwp: &str,
+    name: &str,
+    head_only: bool,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let cache_key = planet_cache_key(seed, uwp, name);
+    let cache_object = format!("{PLANET_CACHE_PREFIX}/globe-tex/{cache_key:016x}.png");
+
+    let uwp_owned = uwp.to_string();
+    let name_owned = name.to_string();
+    let render = move || generate_globe_texture(seed, &uwp_owned, Some(&name_owned));
+
+    match cache_or_render_bytes(stream, &gcs, &cache_object, render).await? {
+        Some((bytes, status)) => {
+            let starport = read_starport_chunk(&bytes);
+            write_texture(stream, &bytes, head_only, Some(status), starport.as_deref()).await
+        }
+        None => Ok(()), // an error response was already written
+    }
+}
+
+/// Cache-or-render a planet image as raw bytes. Tries the GCS cache, and on
+/// miss/disabled/error runs `render` (panic-safe via [`catch_render`]); a true
+/// miss also fire-and-forget uploads. Returns `Some((bytes, x_cache_status))`
+/// ready to serve, or `None` when an error response was already written to the
+/// stream (caller should just return). The serialization of the various
+/// `/api/world` image responses (PNG, APNG, texture) is left to the caller.
+async fn cache_or_render_bytes(
     stream: &mut TcpStream,
     gcs: &Arc<GcsClient>,
     cache_object: &str,
-    head_only: bool,
     render: impl Fn() -> Result<Vec<u8>, crate::api::WorldgenError>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<Option<(Vec<u8>, &'static str)>, Box<dyn std::error::Error + Send + Sync>> {
     let (bytes, status, do_upload) = match gcs.get(cache_object).await {
         Ok(Some(b)) => (b, "HIT", false),
         Ok(None) if gcs.is_disabled() => match catch_render(&render) {
             Ok(Ok(b)) => (b, "DISABLED", false),
-            Ok(Err(e)) => return classify_render_error(stream, e).await,
-            Err(panic_msg) => return render_panic_500(stream, "/api/world", &panic_msg).await,
+            Ok(Err(e)) => {
+                classify_render_error(stream, e).await?;
+                return Ok(None);
+            }
+            Err(panic_msg) => {
+                render_panic_500(stream, "/api/world", &panic_msg).await?;
+                return Ok(None);
+            }
         },
         Ok(None) => match catch_render(&render) {
             Ok(Ok(b)) => (b, "MISS", true),
-            Ok(Err(e)) => return classify_render_error(stream, e).await,
-            Err(panic_msg) => return render_panic_500(stream, "/api/world", &panic_msg).await,
+            Ok(Err(e)) => {
+                classify_render_error(stream, e).await?;
+                return Ok(None);
+            }
+            Err(panic_msg) => {
+                render_panic_500(stream, "/api/world", &panic_msg).await?;
+                return Ok(None);
+            }
         },
         Err(e) => {
             log::warn!("GCS get failed for {cache_object}: {e}; regenerating");
             match catch_render(&render) {
                 Ok(Ok(b)) => (b, "BYPASS", false),
-                Ok(Err(e)) => return classify_render_error(stream, e).await,
-                Err(panic_msg) => return render_panic_500(stream, "/api/world", &panic_msg).await,
+                Ok(Err(e)) => {
+                    classify_render_error(stream, e).await?;
+                    return Ok(None);
+                }
+                Err(panic_msg) => {
+                    render_panic_500(stream, "/api/world", &panic_msg).await?;
+                    return Ok(None);
+                }
             }
         }
     };
@@ -631,7 +688,33 @@ async fn serve_planet_cached(
         });
     }
 
-    write_png(stream, &bytes, head_only, Some(status)).await
+    Ok(Some((bytes, status)))
+}
+
+async fn serve_planet_cached(
+    stream: &mut TcpStream,
+    gcs: &Arc<GcsClient>,
+    cache_object: &str,
+    head_only: bool,
+    render: impl Fn() -> Result<Vec<u8>, crate::api::WorldgenError>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    match cache_or_render_bytes(stream, gcs, cache_object, render).await? {
+        Some((bytes, status)) => write_png(stream, &bytes, head_only, Some(status)).await,
+        None => Ok(()),
+    }
+}
+
+/// Extract the `Starport` tEXt chunk's "lon,lat" payload from a globe-texture
+/// PNG, if present. Only decodes the PNG header/metadata, not the pixels.
+fn read_starport_chunk(png_bytes: &[u8]) -> Option<String> {
+    let decoder = png::Decoder::new(std::io::Cursor::new(png_bytes));
+    let reader = decoder.read_info().ok()?;
+    reader
+        .info()
+        .uncompressed_latin1_text
+        .iter()
+        .find(|c| c.keyword == "Starport")
+        .map(|c| c.text.clone())
 }
 
 /// Map a `WorldgenError` from the planet generator into the right HTTP
@@ -813,7 +896,8 @@ fn digit_at(s: &str, idx: usize) -> Option<u32> {
 
 const CORS_HEADERS: &str = "Access-Control-Allow-Origin: *\r\n\
      Access-Control-Allow-Methods: GET, HEAD, OPTIONS\r\n\
-     Access-Control-Allow-Headers: *\r\n";
+     Access-Control-Allow-Headers: *\r\n\
+     Access-Control-Expose-Headers: X-Cache, X-Starport\r\n";
 
 async fn write_simple(
     stream: &mut TcpStream,
@@ -870,6 +954,45 @@ async fn write_png(
          Cache-Control: public, max-age=31536000, immutable\r\n\
          Connection: close\r\n\
          {x_cache_header}\
+         {cors}\
+         \r\n",
+        len = bytes.len(),
+        cors = CORS_HEADERS,
+    );
+    stream.write_all(headers.as_bytes()).await?;
+    if !head_only {
+        stream.write_all(bytes).await?;
+    }
+    stream.shutdown().await.ok();
+    Ok(())
+}
+
+/// Write the globe-texture PNG response: same as [`write_png`] plus an
+/// optional `X-Starport: lon,lat` header (exposed to cross-origin JS via the
+/// `Access-Control-Expose-Headers` in [`CORS_HEADERS`]).
+async fn write_texture(
+    stream: &mut TcpStream,
+    bytes: &[u8],
+    head_only: bool,
+    x_cache: Option<&str>,
+    x_starport: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let x_cache_header = match x_cache {
+        Some(v) => format!("X-Cache: {v}\r\n"),
+        None => String::new(),
+    };
+    let starport_header = match x_starport {
+        Some(v) => format!("X-Starport: {v}\r\n"),
+        None => String::new(),
+    };
+    let headers = format!(
+        "HTTP/1.1 200 OK\r\n\
+         Content-Type: image/png\r\n\
+         Content-Length: {len}\r\n\
+         Cache-Control: public, max-age=31536000, immutable\r\n\
+         Connection: close\r\n\
+         {x_cache_header}\
+         {starport_header}\
          {cors}\
          \r\n",
         len = bytes.len(),

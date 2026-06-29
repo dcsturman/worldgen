@@ -189,6 +189,22 @@ pub fn generate_globe_apng(
         .map_err(WorldgenError::Render)
 }
 
+/// Generate the **equirectangular globe texture** for a planet as a PNG, for
+/// client-side globe rendering (e.g. a WebGL warp). RGB is the day-side
+/// surface; alpha is the night-side city-light emissive intensity. The
+/// starport's `(lon, lat)` is embedded as a `Starport` tEXt chunk when present.
+///
+/// Deterministic for a fixed `(seed, uwp, name)` — the texture is a
+/// deterministic function of the generated world.
+pub fn generate_globe_texture(
+    seed: u64,
+    uwp: &str,
+    name: Option<&str>,
+) -> Result<Vec<u8>, WorldgenError> {
+    let map: WorldMap = crate::worldmap::generate(uwp, seed, name)?;
+    crate::worldmap::render_globe_texture(&map).map_err(WorldgenError::Render)
+}
+
 /// One star's classification, as the convenience builder expects it.
 ///
 /// Mirrors a single `Constraint::Star` row but with the fields the

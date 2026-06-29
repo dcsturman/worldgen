@@ -139,7 +139,11 @@ The cache **mounts** persist only in the local BuildKit daemon — they are not 
 
 Server env vars (see `src/bin/server.rs`):
 - `GOOGLE_APPLICATION_CREDENTIALS`, `GCP_PROJECT`, `FIRESTORE_DATABASE_ID` (`"debug"` to skip Firestore)
-- `GCS_BUCKET` (cache for `/api/world` planet renders; `"debug"` or unset → no cache, every request regenerates). The endpoint takes `projection=flat` (default — the equirectangular PNG every existing consumer already gets) or `projection=globe` (orthographic), with `format=apng` (default for globe, a spinning APNG) or `format=png` (a static globe frame). Each variant caches under its own path (`world/v1/`, `world/v1/globe/`, `world/v1/globe-anim/`) so they never collide.
+- `GCS_BUCKET` (cache for `/api/world` planet renders; `"debug"` or unset → no cache, every request regenerates). The endpoint takes `projection=flat` (default — the equirectangular PNG every existing consumer already gets) or `projection=globe` (orthographic). For `projection=globe`, `format` selects the output:
+  - `apng` (default) — a spinning APNG. Smooth but heavy; **prefer `texture` for web clients** (the APNG's discrete frames look jerky vs. a live warp).
+  - `png` — a single static globe frame.
+  - `texture` — the raw equirectangular surface texture as a 1024×512 RGBA PNG (RGB = day surface, **alpha = night-side city-light emissive**), for client-side (e.g. WebGL) globe rendering. The starport's `(lon, lat)` in radians is returned in an **`X-Starport`** response header (and embedded as a `Starport` tEXt chunk so it survives a cache hit); absent for class X/Y / unpopulated worlds. CORS exposes `X-Cache, X-Starport` so cross-origin JS can read them. The reference warp is `worldmap::globe::GlobeTexture::warp_into`.
+  Each variant caches under its own path (`world/v1/`, `world/v1/globe/`, `world/v1/globe-anim/`, `world/v1/globe-tex/`) so they never collide.
 - `WS_PORT` (default 8081), `WS_HOST` (default `0.0.0.0`)
 - `RUST_LOG`
 

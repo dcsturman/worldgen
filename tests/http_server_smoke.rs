@@ -412,6 +412,54 @@ async fn get_world_globe_default_is_animated_apng() {
 }
 
 #[tokio::test]
+async fn get_world_globe_texture_returns_png_with_starport_header() {
+    // projection=globe&format=texture → the equirectangular surface texture
+    // (image/png) plus an X-Starport header with the starport's lon,lat, which
+    // must be exposed to cross-origin JS.
+    let addr = spawn_http_server().await;
+    let req = format!(
+        "GET /api/world?{NORICUM_WORLD_QUERY}&projection=globe&format=texture HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
+    );
+    let buf = send_request(addr, &req).await;
+    let (head, body) = split_response(&buf);
+    assert!(head.starts_with("HTTP/1.1 200 OK\r\n"), "head:\n{head}");
+    assert!(head.contains("Content-Type: image/png"));
+    assert!(head.contains("Access-Control-Allow-Origin: *"));
+    assert!(
+        head.contains("Access-Control-Expose-Headers: X-Cache, X-Starport"),
+        "must expose X-Starport to cross-origin JS, head:\n{head}"
+    );
+    // Noricum (D-port) has a starport, so the header is present and parseable
+    // as "lon,lat".
+    let starport_line = head
+        .lines()
+        .find(|l| l.starts_with("X-Starport:"))
+        .expect("X-Starport header present for a starport world");
+    let coords = starport_line.trim_start_matches("X-Starport:").trim();
+    let (lon, lat) = coords.split_once(',').expect("lon,lat");
+    assert!(lon.trim().parse::<f64>().is_ok() && lat.trim().parse::<f64>().is_ok());
+    assert_eq!(&body[..8], b"\x89PNG\r\n\x1a\n");
+}
+
+#[tokio::test]
+async fn get_world_globe_texture_portless_world_omits_starport_header() {
+    // A class-Y world has no starport → no X-Starport header.
+    let addr = spawn_http_server().await;
+    let req = format!(
+        "GET /api/world?sector=x&hex=0101&name=Lonely&uwp=Y544456-7&projection=globe&format=texture HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
+    );
+    let buf = send_request(addr, &req).await;
+    let (head, body) = split_response(&buf);
+    assert!(head.starts_with("HTTP/1.1 200 OK\r\n"), "head:\n{head}");
+    assert!(head.contains("Content-Type: image/png"));
+    assert!(
+        !head.contains("X-Starport:"),
+        "portless world must not emit X-Starport, head:\n{head}"
+    );
+    assert_eq!(&body[..8], b"\x89PNG\r\n\x1a\n");
+}
+
+#[tokio::test]
 async fn get_world_with_scale_above_canonical_is_clamped() {
     // Request scale=4.0 — that's > CANONICAL (2.0), so the handler
     // clamps to canonical rather than upsampling (which would just

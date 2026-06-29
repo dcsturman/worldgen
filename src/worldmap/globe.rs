@@ -593,6 +593,62 @@ pub fn render_globe_apng(
 }
 
 /// PNG-encode a single RGBA8 frame.
+/// Render the world's surface as a single equirectangular **texture** PNG for
+/// client-side (e.g. WebGL) globe rendering: RGB carries the day-side surface
+/// colour, the alpha channel carries the night-side city-light emissive
+/// intensity. If the world has a starport, its texture coordinates
+/// `(lon, lat)` in radians are embedded as a `Starport` tEXt chunk so the
+/// consumer can draw the beacon. The image is [`TEX_W`]×[`TEX_H`].
+///
+/// This is the payload for `/api/world?projection=globe&format=texture`: the
+/// expensive generation happens here (server-side, cached); the client only
+/// warps this texture per frame.
+pub fn render_globe_texture(map: &WorldMap) -> Result<Vec<u8>, String> {
+    let tex = build_equirect_texture(map, TEX_W, TEX_H);
+    let n = (TEX_W as usize) * (TEX_H as usize);
+    let mut rgba = vec![0u8; n * 4];
+    for i in 0..n {
+        rgba[i * 4] = tex.rgb[i * 3];
+        rgba[i * 4 + 1] = tex.rgb[i * 3 + 1];
+        rgba[i * 4 + 2] = tex.rgb[i * 3 + 2];
+        rgba[i * 4 + 3] = tex.emissive[i];
+    }
+
+    let mut out = Vec::new();
+    {
+        let mut enc = png::Encoder::new(&mut out, TEX_W, TEX_H);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.set_compression(png::Compression::Best);
+        if let Some((lon, lat)) = starport_lonlat(map) {
+            enc.add_text_chunk("Starport".to_string(), format!("{lon},{lat}"))
+                .map_err(|e| format!("png text chunk: {e}"))?;
+        }
+        let mut writer = enc.write_header().map_err(|e| format!("png header: {e}"))?;
+        writer
+            .write_image_data(&rgba)
+            .map_err(|e| format!("png data: {e}"))?;
+    }
+    Ok(out)
+}
+
+/// The starport's texture coordinates `(lon, lat)` in radians (matching the
+/// equirectangular convention: `lon ∈ [0, 2π)`, `lat ∈ [-π/2, π/2]`), or
+/// `None` if the world has no starport (class X/Y, or unpopulated).
+pub fn starport_lonlat(map: &WorldMap) -> Option<(f64, f64)> {
+    map.grid.hexes.iter().find_map(|hex| {
+        hex.features
+            .iter()
+            .any(|f| matches!(f, Feature::City { starport: true, .. }))
+            .then(|| {
+                let p = hex.sphere_pos;
+                let lat = p[2].clamp(-1.0, 1.0).asin();
+                let lon = p[1].atan2(p[0]).rem_euclid(2.0 * PI);
+                (lon, lat)
+            })
+    })
+}
+
 fn encode_png_rgba(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
     {
@@ -786,6 +842,44 @@ mod tests {
         let static_frame = tex.warp_frame(96, 0.0);
         let apng_first = tex.warp_frame(96, 0.0);
         assert_eq!(static_frame, apng_first);
+    }
+
+    #[test]
+    fn globe_texture_is_rgba_1024x512_with_starport_chunk() {
+        let map = super::super::generate("A788899-A", 1, None).unwrap();
+        let bytes = render_globe_texture(&map).unwrap();
+        assert_eq!(&bytes[0..8], b"\x89PNG\r\n\x1a\n");
+        let dec = png::Decoder::new(std::io::Cursor::new(&bytes));
+        let reader = dec.read_info().unwrap();
+        let info = reader.info();
+        assert_eq!((info.width, info.height), (TEX_W, TEX_H));
+        assert_eq!(info.color_type, png::ColorType::Rgba);
+        // An A-port world embeds its starport coords as a tEXt chunk, and
+        // starport_lonlat reports the same presence.
+        assert!(starport_lonlat(&map).is_some());
+        assert!(
+            info.uncompressed_latin1_text
+                .iter()
+                .any(|c| c.keyword == "Starport"),
+            "A-port texture should carry a Starport chunk"
+        );
+    }
+
+    #[test]
+    fn portless_globe_texture_has_no_starport_chunk() {
+        let map = super::super::generate("X788899-A", 1, None).unwrap();
+        assert!(starport_lonlat(&map).is_none());
+        let bytes = render_globe_texture(&map).unwrap();
+        let dec = png::Decoder::new(std::io::Cursor::new(&bytes));
+        let reader = dec.read_info().unwrap();
+        assert!(
+            !reader
+                .info()
+                .uncompressed_latin1_text
+                .iter()
+                .any(|c| c.keyword == "Starport"),
+            "X-port texture must not carry a Starport chunk"
+        );
     }
 
     /// Visual dump: write a static globe PNG and a spinning APNG to /tmp for
