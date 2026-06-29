@@ -10,15 +10,65 @@
 
 use rand::Rng;
 
+use super::escape::prey_escape;
+use super::roll_1d6;
 use super::strength::Prey;
-use super::{roll_1d6, roll_2d6};
-use crate::simulator::types::{ActTier, Attitude, EncounterType};
+use crate::simulator::types::{ActTier, Attitude, EncounterOutcome, EncounterType};
 
 /// Reputation's coefficient and cap on the menace score. A feared name
 /// intimidates prey, but only modestly — reputation's main job is getting
 /// you *recognized* by patrols, which is bad.
 const REP_MENACE_COEF: f64 = 0.2;
 const REP_MENACE_CAP: f64 = 5.0;
+
+/// Resistance (morale shortfall) at/below which a doctrine will wade into a
+/// firefight. Chill never fights; Bloodthirsty fights anything. Hungry's
+/// stomach reaches just past the destroy threshold, so a Hungry pirate *can*
+/// (rarely) end up destroying a target in its toughest fights.
+fn stomach(attitude: Attitude) -> i32 {
+    match attitude {
+        Attitude::Chill => -1, // never engages a resisting target
+        Attitude::Hungry => 4,
+        Attitude::Aggressive => 8,
+        Attitude::Bloodthirsty => i32::MAX,
+    }
+}
+
+/// Damage (in `maintenance_per_period` units) a doctrine will absorb before
+/// breaking off a fight, mauled. Bloodthirsty never bails — it wins or dies.
+fn breaking_point(attitude: Attitude) -> i64 {
+    match attitude {
+        Attitude::Chill => 0,
+        Attitude::Hungry => 5,
+        Attitude::Aggressive => 12,
+        Attitude::Bloodthirsty => i64::MAX,
+    }
+}
+
+/// Fraction of the available cargo a doctrine actually grabs on a take.
+fn attitude_take(attitude: Attitude) -> f64 {
+    match attitude {
+        Attitude::Chill => 0.35,
+        Attitude::Hungry => 0.75,
+        Attitude::Aggressive | Attitude::Bloodthirsty => 1.0,
+    }
+}
+
+/// Resistance at/above which a won battle ends with the target *destroyed*
+/// rather than merely crippled. Battle intensity drives this, not the
+/// pirate's temperament — except Bloodthirsty reaches the killing point
+/// sooner. Set below Hungry's stomach (4) so even Hungry can destroy in its
+/// hardest fights.
+fn destroy_threshold(attitude: Attitude) -> i32 {
+    match attitude {
+        Attitude::Bloodthirsty => 2,
+        _ => 4,
+    }
+}
+
+/// Divisor tuning battle damage: `target_weapons × (resistance + 1d6) ×
+/// maintenance / DAMAGE_K`.
+const DAMAGE_K: i64 = 12;
 
 /// The attacking pirate's relevant stats.
 #[derive(Debug, Clone, Copy)]
@@ -38,18 +88,21 @@ pub struct Resolution {
     /// Pirate menace and the resulting surrender margin.
     pub menace: i32,
     pub surrender_margin: i32,
+    /// Morale shortfall driving battle intensity (`max(0, -margin)`).
+    pub resistance: i32,
+    /// How the encounter ended.
+    pub outcome: EncounterOutcome,
     /// Act tier committed, if any take was made.
     pub act_tier: Option<ActTier>,
     /// Tons taken into the hold (before any hold-space cap the caller applies).
     pub loot_tons: i32,
     /// Gross value of that take.
     pub loot_value: i64,
-    /// Whether the encounter went loud (the pirate pressed the attack).
-    pub went_loud: bool,
-    /// Credits of return-fire damage the pirate took.
+    /// Credits of battle damage the pirate must repair (zero unless a fight
+    /// actually happened — overwhelmed targets surrender without a shot).
     pub pirate_damage_credits: i64,
-    /// True if the prey broke contact / jumped out before being looted.
-    pub target_escaped: bool,
+    /// Weeks lost to a protracted battle.
+    pub weeks_lost: u32,
 }
 
 /// Base morale by target class: merchant `+3`, armed `+6`, naval `+8`.
@@ -84,68 +137,77 @@ pub fn resolve_encounter(
         + p.leadership as i32
         + roll_1d6(rng);
     let margin = menace - mor_total;
+    let resistance = (-margin).max(0);
 
-    let mut went_loud = false;
+    let outcome;
+    let mut act_tier: Option<ActTier> = None;
     let mut pirate_damage = 0i64;
-    let mut target_escaped = false;
-    let mut base_fraction = 0.0f64;
+    let mut weeks_lost = 0u32;
+    let mut take_fraction = 0.0f64;
 
     if margin >= 4 {
-        // Instant full surrender — no shots fired.
-        base_fraction = 1.0;
+        // Completely overwhelmed — instant full surrender, not a shot fired.
+        outcome = EncounterOutcome::Surrendered;
+        take_fraction = attitude_take(p.attitude);
     } else if margin >= 1 {
-        // Partial surrender: cargo for safe passage.
-        base_fraction = 0.45;
-    } else if margin >= -3 && p.attitude >= Attitude::Aggressive {
-        // Standoff the pirate is willing to press into a firefight.
-        went_loud = true;
-        base_fraction = 1.0;
-        let d = roll_2d6(rng) as i64; // 2..=12
-        pirate_damage = (prey.weapons.max(0) as i64) * damage_unit * d / 60;
+        // Partial surrender — cargo for safe passage; still no fight.
+        outcome = EncounterOutcome::Surrendered;
+        take_fraction = 0.45 * attitude_take(p.attitude);
+    } else if prey_escape(prey.thrust, rng) {
+        // The target had the legs and made jump before we closed.
+        outcome = EncounterOutcome::PreyJumpedClear;
+    } else if resistance > stomach(p.attitude) {
+        // Chill never fights; others decline a brawl too tough for them.
+        outcome = EncounterOutcome::BrokeOffOutgunned;
     } else {
-        // Break off, or the prey jumps out — nothing taken.
-        target_escaped = true;
-    }
+        // A real battle. Even a win costs repair damage; only an overwhelmed
+        // target (handled above) yields without bloodying us.
+        let d = roll_1d6(rng) as i64;
+        pirate_damage = (prey.weapons.max(0) as i64) * (resistance as i64 + d) * damage_unit / DAMAGE_K;
+        weeks_lost = (resistance / 3).clamp(0, 4) as u32;
 
-    // Attitude throttles how much of the available cargo is actually grabbed.
-    let attitude_take = match p.attitude {
-        Attitude::Chill => 0.35,
-        Attitude::Hungry => 0.75,
-        Attitude::Aggressive | Attitude::Bloodthirsty => 1.0,
-    };
-    let take_fraction = (base_fraction * attitude_take).min(1.0);
+        if p.attitude != Attitude::Bloodthirsty
+            && pirate_damage > breaking_point(p.attitude).saturating_mul(damage_unit)
+        {
+            // Beaten back before we could board: damage, no take.
+            outcome = EncounterOutcome::DrivenOffMauled;
+        } else {
+            // Won the firefight. Battle intensity — not the pirate's initial
+            // temperament — decides whether the ship is crippled or destroyed.
+            outcome = EncounterOutcome::FoughtAndWon;
+            take_fraction = attitude_take(p.attitude);
+            act_tier = Some(if resistance >= destroy_threshold(p.attitude) {
+                ActTier::DestroyOrMurder
+            } else {
+                ActTier::DamageShip
+            });
+        }
+    }
 
     let loot_tons = ((prey.cargo_tons as f64) * take_fraction).round() as i32;
     let loot_value = ((prey.cargo_value as f64) * take_fraction).round() as i64;
 
-    let act_tier = if loot_tons <= 0 && !went_loud {
-        None
-    } else {
-        let computed = if went_loud {
-            if p.attitude == Attitude::Bloodthirsty {
-                ActTier::DestroyOrMurder
-            } else {
-                ActTier::DamageShip
-            }
-        } else if loot_value >= 1_000_000 {
+    // A peaceful take is extortion; its tier is set by the haul size.
+    if outcome == EncounterOutcome::Surrendered {
+        act_tier = Some(if loot_value >= 1_000_000 {
             ActTier::ExtortLot
         } else {
             ActTier::ExtortLittle
-        };
-        Some(computed.min(p.attitude.max_tier()))
-    };
+        });
+    }
 
     Resolution {
         mor_roll,
         mor_total,
         menace,
         surrender_margin: margin,
+        resistance,
+        outcome,
         act_tier,
         loot_tons,
         loot_value,
-        went_loud,
         pirate_damage_credits: pirate_damage,
-        target_escaped,
+        weeks_lost,
     }
 }
 
@@ -187,27 +249,53 @@ mod tests {
     }
 
     #[test]
-    fn badly_outgunned_pirate_breaks_off() {
-        // Weak pirate vs a heavily armed target: should walk away.
+    fn badly_outgunned_pirate_takes_nothing() {
+        // Weak pirate vs a heavily armed target: breaks off (or the prey
+        // jumps clear) — either way, no take and no battle.
         let p = Pirate {
             weapons: 2,
             attitude: Attitude::Hungry,
             reputation: 0.0,
             leadership: 1,
         };
-        let mut escapes = 0;
         let mut rng = StdRng::seed_from_u64(7);
         for _ in 0..200 {
             let r = resolve_encounter(&p, &prey(20, 200, 2_000_000), 50_000, &mut rng);
-            if r.target_escaped {
-                escapes += 1;
-            }
+            assert!(r.act_tier.is_none(), "weak pirate should never take this prey");
+            assert!(matches!(
+                r.outcome,
+                EncounterOutcome::BrokeOffOutgunned | EncounterOutcome::PreyJumpedClear
+            ));
         }
-        assert!(escapes > 150, "expected mostly break-offs, got {escapes}/200");
     }
 
     #[test]
-    fn chill_never_exceeds_extort_little() {
+    fn surrender_is_free_but_every_battle_costs_repair() {
+        let p = Pirate {
+            weapons: 7,
+            attitude: Attitude::Aggressive,
+            reputation: 4.0,
+            leadership: 2,
+        };
+        let mut rng = StdRng::seed_from_u64(21);
+        for _ in 0..400 {
+            let r = resolve_encounter(&p, &prey(6, 200, 800_000), 50_000, &mut rng);
+            match r.outcome {
+                EncounterOutcome::Surrendered => {
+                    assert_eq!(r.pirate_damage_credits, 0, "surrender drew blood")
+                }
+                EncounterOutcome::FoughtAndWon | EncounterOutcome::DrivenOffMauled => {
+                    assert!(r.pirate_damage_credits > 0, "a battle dealt no damage")
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn chill_never_fights() {
+        // Chill takes surrenders (even big ones), but never joins a battle
+        // and never commits violence.
         let p = Pirate {
             weapons: 12,
             attitude: Attitude::Chill,
@@ -215,11 +303,48 @@ mod tests {
             leadership: 3,
         };
         let mut rng = StdRng::seed_from_u64(3);
-        for _ in 0..200 {
-            let r = resolve_encounter(&p, &prey(1, 400, 5_000_000), 50_000, &mut rng);
+        for _ in 0..300 {
+            let r = resolve_encounter(&p, &prey(8, 400, 5_000_000), 50_000, &mut rng);
+            assert!(
+                !matches!(
+                    r.outcome,
+                    EncounterOutcome::FoughtAndWon | EncounterOutcome::DrivenOffMauled
+                ),
+                "chill should never battle, got {:?}",
+                r.outcome
+            );
             if let Some(t) = r.act_tier {
-                assert!(t <= ActTier::ExtortLittle, "chill committed {t:?}");
+                assert!(
+                    matches!(t, ActTier::ExtortLittle | ActTier::ExtortLot),
+                    "chill committed violence: {t:?}"
+                );
             }
         }
+    }
+
+    #[test]
+    fn aggressive_can_destroy_in_a_hard_fight() {
+        // A mid-armed Aggressive pirate against a stout medium freighter sees
+        // some fights protracted enough to end with the target destroyed.
+        let p = Pirate {
+            weapons: 5,
+            attitude: Attitude::Aggressive,
+            reputation: 0.0,
+            leadership: 2,
+        };
+        let mut destroyed = 0;
+        let mut fought = 0;
+        let mut rng = StdRng::seed_from_u64(31);
+        for _ in 0..600 {
+            let r = resolve_encounter(&p, &prey(9, 300, 1_500_000), 50_000, &mut rng);
+            if r.outcome == EncounterOutcome::FoughtAndWon {
+                fought += 1;
+                if r.act_tier == Some(ActTier::DestroyOrMurder) {
+                    destroyed += 1;
+                }
+            }
+        }
+        assert!(fought > 0, "expected some battles");
+        assert!(destroyed > 0, "expected some destroyed targets in hard fights");
     }
 }

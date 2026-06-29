@@ -11,7 +11,7 @@
 
 use std::fmt::Write as _;
 
-use crate::components::captains_log_piracy_instructions::INSTRUCTIONS;
+use crate::components::captains_log_piracy_instructions::{LogTone, instructions};
 use crate::simulator::types::{Action, SimulationParams, SimulationResult, SimulationStep};
 use crate::trade::ZoneClassification;
 
@@ -19,18 +19,21 @@ use crate::trade::ZoneClassification;
 ///
 /// `ship_name` is taken from the simulator's `Ship::name` field. If blank,
 /// the data line tells the model to invent one in keeping with Traveller
-/// corsair naming.
+/// corsair naming. `tone` selects the tonal register of the instruction
+/// header.
 pub fn build_piracy_prompt(
     ship_name: &str,
     params: &SimulationParams,
     steps: &[SimulationStep],
     result: &SimulationResult,
+    tone: LogTone,
 ) -> String {
-    // Instruction header is ~6 KB; each cruise line is short. Budget for a
+    let header = instructions(tone);
+    // Instruction header is ~7 KB; each cruise line is short. Budget for a
     // long cruise.
-    let mut out = String::with_capacity(6_500 + steps.len() * 120);
+    let mut out = String::with_capacity(header.len() + 600 + steps.len() * 120);
 
-    out.push_str(INSTRUCTIONS);
+    out.push_str(&header);
     out.push_str("\n== CRUISE DATA ==\n\n");
     write_cruise_header(&mut out, ship_name, params, result);
 
@@ -137,50 +140,65 @@ fn write_event(out: &mut String, step: &SimulationStep) {
             encounter,
             target_hull_tons,
             mor_total,
-            menace,
-            surrender_margin,
+            resistance,
+            outcome,
             act_tier,
             loot_value,
-            went_loud,
             pirate_damage_credits,
-            target_escaped,
+            weeks_lost,
             ..
         } => {
-            if *target_escaped {
-                let _ = writeln!(
-                    out,
-                    "{date} @ {here} — Spotted prey ({}, ~{}t) but she had the legs on us and jumped clear.",
-                    encounter.label(),
-                    target_hull_tons
-                );
-            } else if let Some(tier) = act_tier {
-                let loud = if *went_loud { "; it went loud" } else { "" };
-                let dmg = if *pirate_damage_credits > 0 {
-                    format!("; we took {pirate_damage_credits} Cr of damage")
-                } else {
-                    String::new()
-                };
-                let _ = writeln!(
-                    out,
-                    "{date} @ {here} — Raided a {} (~{}t): morale {}, menace {}, surrender margin {}. We {} — +{} Cr of loot{}{}.",
-                    encounter.label(),
-                    target_hull_tons,
-                    mor_total,
-                    menace,
-                    surrender_margin,
-                    tier.label(),
-                    loot_value,
-                    loud,
-                    dmg
-                );
+            use crate::simulator::types::EncounterOutcome as EO;
+            let dmg = if *pirate_damage_credits > 0 {
+                format!(" We took {pirate_damage_credits} Cr of damage to repair.")
             } else {
-                let _ = writeln!(
-                    out,
-                    "{date} @ {here} — Closed on a {} (~{}t) but broke off without a take (surrender margin {}).",
-                    encounter.label(),
-                    target_hull_tons,
-                    surrender_margin
-                );
+                String::new()
+            };
+            let time = if *weeks_lost > 0 {
+                format!(" The fight cost us {weeks_lost} weeks.")
+            } else {
+                String::new()
+            };
+            match outcome {
+                EO::PreyJumpedClear => {
+                    let _ = writeln!(
+                        out,
+                        "{date} @ {here} — Spotted prey (a {}, ~{}t) but she had the legs on us and jumped clear.",
+                        encounter.label(),
+                        target_hull_tons
+                    );
+                }
+                EO::BrokeOffOutgunned => {
+                    let _ = writeln!(
+                        out,
+                        "{date} @ {here} — Sized up a {} (~{}t, morale {}) and judged it not worth the fight; broke off.",
+                        encounter.label(),
+                        target_hull_tons,
+                        mor_total
+                    );
+                }
+                EO::DrivenOffMauled => {
+                    let _ = writeln!(
+                        out,
+                        "{date} @ {here} — Pressed a {} (~{}t, morale {}, resistance {}) but they fought back hard and drove us off with nothing.{dmg}{time}",
+                        encounter.label(),
+                        target_hull_tons,
+                        mor_total,
+                        resistance
+                    );
+                }
+                EO::Surrendered | EO::FoughtAndWon => {
+                    let how = if *outcome == EO::FoughtAndWon {
+                        format!("Took a {} (~{}t) after a fight (resistance {})", encounter.label(), target_hull_tons, resistance)
+                    } else {
+                        format!("A {} (~{}t, morale {}) yielded without a fight", encounter.label(), target_hull_tons, mor_total)
+                    };
+                    let deed = act_tier.map(|t| t.label()).unwrap_or("plundered her");
+                    let _ = writeln!(
+                        out,
+                        "{date} @ {here} — {how}: {deed} — +{loot_value} Cr of loot.{dmg}{time}",
+                    );
+                }
             }
         }
         Action::ThreatEncounter {

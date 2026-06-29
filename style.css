@@ -1366,6 +1366,19 @@ datalist option {
   flex: 2 1 0;
 }
 
+.captains-log-tone {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-right: 0.75rem;
+}
+
+.captains-log-tone select {
+  font-family: "Orbitron", sans-serif;
+  font-size: 10pt;
+  padding: 2px 6px;
+}
+
 .captains-log-text {
   white-space: pre-wrap;
   font-family: Georgia, "Times New Roman", serif;

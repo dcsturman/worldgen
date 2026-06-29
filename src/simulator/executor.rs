@@ -33,6 +33,12 @@ use crate::trade::available_passengers::AvailablePassengers;
 use crate::trade::ship_manifest::ShipManifest;
 use crate::trade::table::TradeTable;
 
+/// Battle damage (in credits) beyond which a pirate needs a real shipyard
+/// rather than a field patch. Taking this much in a high-law system — where a
+/// wanted ship can't dock — strands the pirate (see the repair-maroon logic
+/// in the piracy turn). First-cut; tune alongside the resolution damage model.
+const SHIPYARD_DAMAGE_THRESHOLD: i64 = 250_000;
+
 /// Errors the executor can return before producing a [`SimulationResult`].
 #[derive(Debug, thiserror::Error)]
 pub enum ExecutorError {
@@ -323,6 +329,21 @@ pub async fn run_simulation(
                     &mut pirate_rng,
                 );
                 budget -= res.pirate_damage_credits;
+                if res.weeks_lost > 0 {
+                    let added = res.weeks_lost * DAYS_PER_WEEK;
+                    current_date = current_date.add_days(added);
+                    days_since_payment += added;
+                }
+
+                // Serious battle damage needs a shipyard, and a wanted pirate
+                // can only put in to a low-law world. Mauled in high-law space
+                // with no friendly port, the ship hides in the outer system
+                // and sends for help (just like a broke trader).
+                if res.pirate_damage_credits >= SHIPYARD_DAMAGE_THRESHOLD
+                    && fencing::law_bonus(current_world.get_law_level()).is_none()
+                {
+                    force_maroon = true;
+                }
 
                 // Loot into the hold, capped by remaining capacity.
                 let remaining_hold = (params.ship.cargo_capacity - plundered_tons).max(0);
@@ -335,7 +356,7 @@ pub async fn run_simulation(
                 plundered_tons += taken_tons;
                 plundered_value += taken_value;
 
-                if let Some(tier) = res.act_tier {
+                let rep_delta = if let Some(tier) = res.act_tier {
                     raids += 1;
                     if tier == ActTier::DestroyOrMurder {
                         ships_destroyed += 1;
@@ -343,31 +364,39 @@ pub async fn run_simulation(
                     let gain = rep::rep_gain(tier);
                     reputation = rep::clamp(reputation + gain);
                     quiet_jumps = 0;
-                    emit(
-                        &mut on_step,
-                        current_date,
-                        &current_ref,
-                        budget,
-                        Action::EncounterResolved {
-                            d66_first: d1,
-                            d66_second: d2,
-                            traffic_dm: dms.traffic,
-                            security_dm: dms.security,
-                            encounter: enc,
-                            target_hull_tons: prey.hull_tons,
-                            target_weapons: prey.weapons,
-                            target_thrust: prey.thrust,
-                            mor_roll: res.mor_roll,
-                            mor_total: res.mor_total,
-                            menace: res.menace,
-                            surrender_margin: res.surrender_margin,
-                            act_tier: res.act_tier,
-                            loot_value: taken_value,
-                            went_loud: res.went_loud,
-                            pirate_damage_credits: res.pirate_damage_credits,
-                            target_escaped: res.target_escaped,
-                        },
-                    );
+                    Some(gain)
+                } else {
+                    quiet_jumps += 1;
+                    None
+                };
+
+                emit(
+                    &mut on_step,
+                    current_date,
+                    &current_ref,
+                    budget,
+                    Action::EncounterResolved {
+                        d66_first: d1,
+                        d66_second: d2,
+                        traffic_dm: dms.traffic,
+                        security_dm: dms.security,
+                        encounter: enc,
+                        target_hull_tons: prey.hull_tons,
+                        target_weapons: prey.weapons,
+                        target_thrust: prey.thrust,
+                        mor_roll: res.mor_roll,
+                        mor_total: res.mor_total,
+                        menace: res.menace,
+                        surrender_margin: res.surrender_margin,
+                        resistance: res.resistance,
+                        outcome: res.outcome,
+                        act_tier: res.act_tier,
+                        loot_value: taken_value,
+                        pirate_damage_credits: res.pirate_damage_credits,
+                        weeks_lost: res.weeks_lost,
+                    },
+                );
+                if let Some(gain) = rep_delta {
                     emit(
                         &mut on_step,
                         current_date,
@@ -377,33 +406,6 @@ pub async fn run_simulation(
                             delta: gain,
                             new_value: reputation,
                             reason: "act of piracy".to_string(),
-                        },
-                    );
-                } else {
-                    quiet_jumps += 1;
-                    emit(
-                        &mut on_step,
-                        current_date,
-                        &current_ref,
-                        budget,
-                        Action::EncounterResolved {
-                            d66_first: d1,
-                            d66_second: d2,
-                            traffic_dm: dms.traffic,
-                            security_dm: dms.security,
-                            encounter: enc,
-                            target_hull_tons: prey.hull_tons,
-                            target_weapons: prey.weapons,
-                            target_thrust: prey.thrust,
-                            mor_roll: res.mor_roll,
-                            mor_total: res.mor_total,
-                            menace: res.menace,
-                            surrender_margin: res.surrender_margin,
-                            act_tier: None,
-                            loot_value: 0,
-                            went_loud: res.went_loud,
-                            pirate_damage_credits: res.pirate_damage_credits,
-                            target_escaped: res.target_escaped,
                         },
                     );
                 }

@@ -17,6 +17,7 @@ use web_sys::{CloseEvent, ErrorEvent, MessageEvent, WebSocket};
 use crate::comms::captains_log::{
     ClientMessage as LogClientMessage, ServerMessage as LogServerMessage,
 };
+use crate::components::captains_log_piracy_instructions::LogTone;
 use crate::components::captains_log_piracy_prompt::build_piracy_prompt;
 use crate::components::captains_log_prompt::build_prompt;
 use crate::components::help_tooltip::HelpTooltip;
@@ -421,6 +422,7 @@ pub fn ShipSimulator(
     // The activity mode is a live toggle so the user can flip between the
     // trade and pirate simulators in place (keeping their form inputs). The
     // `mode` prop just seeds the initial value (from the route).
+    let initial_piracy = mode == SimulationMode::Piracy;
     let mode = RwSignal::new(mode);
 
     // ---- Form state ----
@@ -443,7 +445,8 @@ pub fn ShipSimulator(
     let broker_skill = RwSignal::new(1i16);
     let steward_skill = RwSignal::new(1i16);
     let leadership_skill = RwSignal::new(1i16);
-    let weapons = RwSignal::new(2i16);
+    // Pirates need teeth; merchants default to a token defensive turret.
+    let weapons = RwSignal::new(if initial_piracy { 6i16 } else { 2i16 });
     let crew_size = RwSignal::new(4i32);
 
     // Voyage
@@ -464,6 +467,10 @@ pub fn ShipSimulator(
     let home_coords = RwSignal::new(Some((19i32, 10i32)));
     let home_uwp = RwSignal::new("A788899-A".to_string());
     let home_zone = RwSignal::new(ZoneClassification::Green);
+
+    // Captain's-log tonal register (pirate mode). A persistent switch — not a
+    // per-click roll — so regenerating a given ship's log keeps one voice.
+    let log_tone = RwSignal::new(LogTone::CriminalReport);
 
     // ---- Run state ----
     let run_state = RwSignal::new(RunState::Idle);
@@ -674,6 +681,7 @@ pub fn ShipSimulator(
                         run_state=run_state
                         steps=steps
                         last_params=last_params
+                        log_tone=log_tone
                     />
                 })}
             </div>
@@ -843,6 +851,23 @@ fn SimForm(
                     })}
                     <label>
                         <span class="sim-label-row">
+                            "Weapons"
+                            <HelpTooltip text=docs::WEAPONS />
+                        </span>
+                        <input
+                            type="number"
+                            min="0"
+                            max=WEAPONS_MAX
+                            prop:value=move || weapons.get()
+                            on:input=move |ev| {
+                                if let Ok(v) = event_target_value(&ev).parse::<i16>() {
+                                    weapons.set(v);
+                                }
+                            }
+                        />
+                    </label>
+                    <label>
+                        <span class="sim-label-row">
                             "Fuel cost per parsec (Cr)"
                             <HelpTooltip text=docs::FUEL_COST_PER_PARSEC />
                         </span>
@@ -1006,23 +1031,6 @@ fn SimForm(
                             on:input=move |ev| {
                                 if let Ok(v) = event_target_value(&ev).parse::<i16>() {
                                     leadership_skill.set(v);
-                                }
-                            }
-                        />
-                    </label>
-                    <label>
-                        <span class="sim-label-row">
-                            "Weapons"
-                            <HelpTooltip text=docs::WEAPONS />
-                        </span>
-                        <input
-                            type="number"
-                            min="0"
-                            max=WEAPONS_MAX
-                            prop:value=move || weapons.get()
-                            on:input=move |ev| {
-                                if let Ok(v) = event_target_value(&ev).parse::<i16>() {
-                                    weapons.set(v);
                                 }
                             }
                         />
@@ -1356,34 +1364,47 @@ fn describe_action(action: &Action, home_port: &str) -> Option<(String, &'static
         // ---- Piracy variants ----
         Action::EncounterResolved {
             encounter,
+            target_hull_tons,
+            outcome,
             act_tier,
             loot_value,
-            target_escaped,
+            pirate_damage_credits,
             surrender_margin,
             ..
         } => {
-            if *target_escaped {
-                (
-                    format!("Prey ({}) slipped away", encounter.label()),
-                    "sim-action sim-action-raid",
-                )
-            } else if let Some(t) = act_tier {
-                (
-                    format!(
-                        "Raided {} — {} (margin {}), +{} Cr loot",
-                        encounter.label(),
-                        t.label(),
-                        surrender_margin,
-                        loot_value
-                    ),
-                    "sim-action sim-action-raid",
-                )
+            use crate::simulator::types::EncounterOutcome as EO;
+            let repairs = if *pirate_damage_credits > 0 {
+                format!(", −{} Cr repairs", pirate_damage_credits)
             } else {
-                (
-                    format!("Broke off from {}", encounter.label()),
-                    "sim-action sim-action-raid",
-                )
-            }
+                String::new()
+            };
+            let label = match outcome {
+                EO::PreyJumpedClear => {
+                    format!("Prey ({}t {}) jumped clear", target_hull_tons, encounter.label())
+                }
+                EO::BrokeOffOutgunned => {
+                    format!("Broke off — outgunned: {}t {}", target_hull_tons, encounter.label())
+                }
+                EO::DrivenOffMauled => format!(
+                    "Driven off — mauled by {}t {}{}",
+                    target_hull_tons,
+                    encounter.label(),
+                    repairs
+                ),
+                EO::Surrendered | EO::FoughtAndWon => {
+                    let tier = act_tier.map(|t| t.label()).unwrap_or("raided");
+                    format!(
+                        "Raided {}t {} — {} (margin {}), +{} Cr loot{}",
+                        target_hull_tons,
+                        encounter.label(),
+                        tier,
+                        surrender_margin,
+                        loot_value,
+                        repairs
+                    )
+                }
+            };
+            (label, "sim-action sim-action-raid")
         }
         Action::EncounterNone { .. } => return None,
         Action::ThreatEncounter {
@@ -1778,6 +1799,7 @@ fn CaptainsLog(
     run_state: RwSignal<RunState>,
     steps: RwSignal<Vec<SimulationStep>>,
     last_params: RwSignal<Option<SimulationParams>>,
+    log_tone: RwSignal<LogTone>,
 ) -> impl IntoView {
     let log_text = RwSignal::new(String::new());
     let log_state = RwSignal::new(LogState::Idle);
@@ -1825,7 +1847,16 @@ fn CaptainsLog(
                     build_prompt(&params.ship.name, &params, &steps_ref, &result)
                 }
                 SimulationMode::Piracy => {
-                    build_piracy_prompt(&params.ship.name, &params, &steps_ref, &result)
+                    // The user picks Criminal vs Genteel; the Bloodthirsty
+                    // register is auto-selected when that's the doctrine.
+                    let tone = match log_tone.get_untracked() {
+                        LogTone::GenteelEuphemism => LogTone::GenteelEuphemism,
+                        _ if params.attitude == Attitude::Bloodthirsty => {
+                            LogTone::CriminalBloodthirsty
+                        }
+                        _ => LogTone::CriminalReport,
+                    };
+                    build_piracy_prompt(&params.ship.name, &params, &steps_ref, &result, tone)
                 }
             }
         };
@@ -1844,6 +1875,26 @@ fn CaptainsLog(
     view! {
         <div class="sim-summary captains-log">
             <h2>"Captain's Log"</h2>
+            {move || (mode.get() == SimulationMode::Piracy).then(|| view! {
+                <label class="captains-log-tone no-print">
+                    <span class="sim-label-row">"Log tone"</span>
+                    <select
+                        prop:value=move || match log_tone.get() {
+                            LogTone::GenteelEuphemism => "genteel",
+                            _ => "criminal",
+                        }
+                        on:change=move |ev| {
+                            log_tone.set(match event_target_value(&ev).as_str() {
+                                "genteel" => LogTone::GenteelEuphemism,
+                                _ => LogTone::CriminalReport,
+                            });
+                        }
+                    >
+                        <option value="criminal">"Criminal report"</option>
+                        <option value="genteel">"Genteel euphemism"</option>
+                    </select>
+                </label>
+            })}
             <button
                 class="blue-button no-print"
                 prop:disabled=move || {

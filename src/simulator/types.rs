@@ -201,6 +201,36 @@ pub enum EncounterType {
     NavalPatrol,
 }
 
+/// How a prey encounter ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EncounterOutcome {
+    /// The target folded (full or partial surrender) without a real fight;
+    /// loot was taken by extortion.
+    Surrendered,
+    /// The pirate pressed a firefight and won; loot taken (the act tier shows
+    /// whether the ship was crippled or destroyed).
+    FoughtAndWon,
+    /// The pirate judged the fight unfavourable and disengaged; no take.
+    BrokeOffOutgunned,
+    /// The target had the legs and jumped clear before it could be looted.
+    PreyJumpedClear,
+    /// The pirate engaged but was beaten back, taking damage for nothing.
+    DrivenOffMauled,
+}
+
+impl EncounterOutcome {
+    /// Short human-readable label for prompts/logs.
+    pub fn label(self) -> &'static str {
+        match self {
+            EncounterOutcome::Surrendered => "surrendered",
+            EncounterOutcome::FoughtAndWon => "fought and won",
+            EncounterOutcome::BrokeOffOutgunned => "broke off — outgunned",
+            EncounterOutcome::PreyJumpedClear => "prey jumped clear",
+            EncounterOutcome::DrivenOffMauled => "driven off — mauled",
+        }
+    }
+}
+
 impl EncounterType {
     /// True for the defender types a pirate flees rather than loots.
     pub fn is_threat(self) -> bool {
@@ -535,16 +565,18 @@ pub enum Action {
         /// Pirate's menace score and the resulting surrender margin.
         menace: i32,
         surrender_margin: i32,
+        /// Morale shortfall that set the battle intensity (`max(0, -margin)`).
+        resistance: i32,
+        /// How the encounter ended.
+        outcome: EncounterOutcome,
         /// Act tier committed, if a take was made.
         act_tier: Option<ActTier>,
         /// Gross value of cargo plundered into the hold.
         loot_value: i64,
-        /// Whether the fight went loud (return fire).
-        went_loud: bool,
-        /// Credits of damage the pirate took.
+        /// Credits of battle damage the pirate must repair.
         pirate_damage_credits: i64,
-        /// True if the prey jumped out / escaped before being looted.
-        target_escaped: bool,
+        /// Weeks lost to a protracted battle.
+        weeks_lost: u32,
     },
     /// A system was scouted but produced no prey (empty cell, Traveller, or
     /// Unusual Vessel). Carried for analytics; the renderer may skip it.
