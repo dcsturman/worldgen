@@ -11,6 +11,17 @@ use super::Uwp;
 /// stripes in the equirectangular projection.
 pub const TEMP_AMPLITUDE: f64 = 0.06;
 
+/// Amplitude of a *higher-frequency*, pole-weighted temperature roughness.
+/// The low-frequency wobble above barely varies across a small polar cap, so
+/// the ice-cap boundary stays a near-perfect latitude circle (an unrealistic
+/// round "sticker"). This term adds finer fingers at high latitudes. It is
+/// zero-mean, so it ragged the *edge* of the cap without changing its average
+/// extent — the cap-size calibration in `temperature_at` is untouched.
+pub const POLAR_ROUGH_AMPLITUDE: f64 = 0.05;
+/// Frequency multiplier for the polar roughness (vs. the smooth wobble).
+/// Higher = finer, more numerous fingers around the ice edge.
+const POLAR_ROUGH_FREQ: f64 = 8.0;
+
 /// Low-frequency spatial noise added to the latitude-driven temperature.
 /// Without it, every temperature threshold (ice/tundra/etc.) renders as a
 /// perfectly horizontal line because temp = f(lat) is independent of lon.
@@ -38,6 +49,24 @@ impl TempField {
             sphere_pos[2] * 1.1,
         ])
     }
+
+    /// Higher-frequency sample of the same field, in roughly [-1, 1], used to
+    /// ragged high-latitude (ice/sub-polar) boundaries. Offset so it
+    /// decorrelates from [`Self::wobble`].
+    pub fn polar_roughness(&self, sphere_pos: &[f64; 3]) -> f64 {
+        self.fbm.get([
+            sphere_pos[0] * POLAR_ROUGH_FREQ + 11.3,
+            sphere_pos[1] * POLAR_ROUGH_FREQ - 7.1,
+            sphere_pos[2] * POLAR_ROUGH_FREQ + 4.7,
+        ])
+    }
+}
+
+/// Hermite smoothstep: 0 below `e0`, 1 above `e1`, smooth in between.
+#[inline]
+fn smoothstep(e0: f64, e1: f64, x: f64) -> f64 {
+    let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 /// Latitude-driven temperature, calibrated to Earth's climate zones.
@@ -67,7 +96,14 @@ pub fn temperature_at(sphere_pos: &[f64; 3], _amplitude: f64) -> f64 {
 pub fn temperature_at_wobbled(sphere_pos: &[f64; 3], temp_field: &TempField) -> f64 {
     let base = temperature_at(sphere_pos, 0.0);
     let wobble = temp_field.wobble(sphere_pos) * TEMP_AMPLITUDE;
-    (base + wobble).clamp(0.0, 1.0)
+    // Pole-weighted high-frequency roughness so the ice cap and sub-polar bands
+    // get a ragged, fractal edge instead of a perfect latitude circle. The
+    // weight (|sin lat|) is ~0 in the tropics — leaving those biomes
+    // untouched — and ramps to 1 by ~70° latitude. Zero-mean, so the cap's
+    // average extent is preserved.
+    let polar = smoothstep(0.55, 0.95, sphere_pos[2].abs());
+    let rough = temp_field.polar_roughness(sphere_pos) * POLAR_ROUGH_AMPLITUDE * polar;
+    (base + wobble + rough).clamp(0.0, 1.0)
 }
 
 /// Per-unit-elevation temperature drop (lapse rate). Tuned so mid-elevation
