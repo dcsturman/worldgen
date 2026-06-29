@@ -41,11 +41,15 @@ const SHIPYARD_DAMAGE_THRESHOLD: i64 = 250_000;
 
 /// Reputation at/above which any pirate hunter (System Defence Boat, Naval
 /// Patrol) attacks on sight — no bluffing past; you must outrun them.
-const HUNTER_ATTACK_REPUTATION: f64 = 3.0;
+const HUNTER_ATTACK_REPUTATION: f64 = 6.0;
 
 /// Reputation at/above which a convoy's escorts recognize the pirate and turn
 /// hostile, engaging rather than letting you raid.
-const CONVOY_HOSTILE_REPUTATION: f64 = 4.0;
+const CONVOY_HOSTILE_REPUTATION: f64 = 10.0;
+
+/// Reputation above which patrols actively hunt the pirate — `+1` to the
+/// encounter's security die, so defenders turn up more often.
+const HUNTED_REPUTATION: f64 = 20.0;
 
 /// Errors the executor can return before producing a [`SimulationResult`].
 #[derive(Debug, thiserror::Error)]
@@ -111,6 +115,10 @@ pub async fn run_simulation(
     let mut ships_destroyed: u32 = 0;
     let mut prizes: Vec<Prize> = Vec::new();
     let mut prize_value: i64 = 0;
+    // Reputation cools by 1 each 28-day period with no act of piracy. This
+    // flag is set whenever the pirate does something of consequence and reset
+    // at each period tick.
+    let mut acted_this_period = false;
     let mut pirate_rng: StdRng = match params.rng_seed {
         Some(s) => StdRng::seed_from_u64(s),
         None => StdRng::from_os_rng(),
@@ -166,6 +174,27 @@ pub async fn run_simulation(
                     },
                 );
             }
+            // Reputation cools by 1 each quiet month (a period with no act of
+            // piracy); trends back toward 0.
+            if params.mode == SimulationMode::Piracy {
+                if !acted_this_period && reputation > 0.0 {
+                    let before = reputation;
+                    reputation = rep::decay_one_period(reputation);
+                    emit(
+                        &mut on_step,
+                        current_date,
+                        &current_ref,
+                        budget,
+                        Action::ReputationChange {
+                            delta: reputation - before,
+                            new_value: reputation,
+                            reason: "lying low".to_string(),
+                        },
+                    );
+                }
+                acted_this_period = false;
+            }
+
             days_since_payment -= PERIOD_DAYS;
         }
 
@@ -242,7 +271,12 @@ pub async fn run_simulation(
             // (P1) Encounter at the current system. A pirate never raids in
             // its own home port — at the hideout it just lies low and sails.
             let at_hideout = worldref_same_hex(&current_ref, &params.home_world);
-            let dms = encounter::encounter_dms(&current_world);
+            let mut dms = encounter::encounter_dms(&current_world);
+            // A hunted pirate (reputation 20+) draws active patrols: +1 to the
+            // security die means defenders turn up more often.
+            if reputation > HUNTED_REPUTATION {
+                dms.security += 1;
+            }
             let (d1, d2, enc) = if at_hideout {
                 (0, 0, EncounterType::None)
             } else {
@@ -250,12 +284,7 @@ pub async fn run_simulation(
                 (d1, d2, encounter::encounter_for(d1, d2, &mut pirate_rng))
             };
 
-            // Reputation only cools when you commit no piracy in the system —
-            // a completed act *or* a fight you started both count as having
-            // pirated here, so neither lets you "lie low".
-            let mut acted_this_system = false;
-
-            // A notorious pirate can't sidle up to a convoy: at reputation 4+
+            // A notorious pirate can't sidle up to a convoy: at reputation 10+
             // the escorts recognize the name and engage, turning a fat prize
             // into a fight you have to outrun.
             let convoy_hostile =
@@ -381,22 +410,14 @@ pub async fn run_simulation(
                 plundered_tons += taken_tons;
                 plundered_value += taken_value;
 
-                // A completed act of piracy, or a fight you started and lost
-                // (driven off mauled), both count as having pirated here.
-                if res.act_tier.is_some() || res.outcome == EncounterOutcome::DrivenOffMauled {
-                    acted_this_system = true;
-                }
-                let rep_delta = if let Some(tier) = res.act_tier {
+                // Tally the raid.
+                let took = res.act_tier.is_some();
+                if took {
                     raids += 1;
-                    if tier == ActTier::DestroyOrMurder {
+                    if res.act_tier == Some(ActTier::DestroyOrMurder) {
                         ships_destroyed += 1;
                     }
-                    let gain = rep::rep_gain(tier);
-                    reputation = rep::clamp(reputation + gain);
-                    Some(gain)
-                } else {
-                    None
-                };
+                }
 
                 emit(
                     &mut on_step,
@@ -424,24 +445,10 @@ pub async fn run_simulation(
                         weeks_lost: res.weeks_lost,
                     },
                 );
-                if let Some(gain) = rep_delta {
-                    emit(
-                        &mut on_step,
-                        current_date,
-                        &current_ref,
-                        budget,
-                        Action::ReputationChange {
-                            delta: gain,
-                            new_value: reputation,
-                            reason: "act of piracy".to_string(),
-                        },
-                    );
-                }
 
-                // Sometimes the whole ship is worth more than her cargo: take
-                // her as a prize to fly home and sell at the hideout. But each
-                // prize needs a prize crew — we can only keep one per 10 crew,
-                // and at the cap we keep the most valuable hulls.
+                // Prize capture, gated by the crew cap (1 per 10 crew; at the
+                // cap, keep the most valuable hulls).
+                let mut kept_prize = false;
                 if let Some(prize) = res.prize {
                     let max_prizes = (params.ship.crew_size / 10).max(0) as usize;
                     let keep = if prizes.len() < max_prizes {
@@ -452,7 +459,6 @@ pub async fn run_simulation(
                         .min_by_key(|(_, p)| p.realized_value)
                         .map(|(i, _)| i)
                     {
-                        // At the cap: swap out the cheapest hull if this beats it.
                         if prize.realized_value > prizes[idx].realized_value {
                             prizes.remove(idx);
                             true
@@ -463,6 +469,7 @@ pub async fn run_simulation(
                         false
                     };
                     if keep {
+                        kept_prize = true;
                         let condition_pct = (prize.condition * 100.0).round() as i32;
                         emit(
                             &mut on_step,
@@ -477,40 +484,38 @@ pub async fn run_simulation(
                             },
                         );
                         prizes.push(prize);
-                        let gain = rep::PRIZE_REP_GAIN;
-                        reputation = rep::clamp(reputation + gain);
-                        emit(
-                            &mut on_step,
-                            current_date,
-                            &current_ref,
-                            budget,
-                            Action::ReputationChange {
-                                delta: gain,
-                                new_value: reputation,
-                                reason: "seized a whole ship".to_string(),
-                            },
-                        );
                     }
                 }
-            }
 
-            // (P2) Reputation cools only in a system where you committed no
-            // piracy at all.
-            if !acted_this_system && reputation > 0.0 {
-                let before = reputation;
-                reputation = rep::decay_one_quiet_jump(reputation);
-                if (reputation - before).abs() > f64::EPSILON {
+                // Notoriety from this incident — Standing-style stacking
+                // categories (cargo / infamous / atrocity / interference).
+                let deeds = rep::IncidentDeeds {
+                    cargo_value: taken_value,
+                    crippled: res.act_tier == Some(ActTier::DamageShip),
+                    destroyed: res.act_tier == Some(ActTier::DestroyOrMurder),
+                    captured_prize: kept_prize,
+                    convoy: enc == EncounterType::Convoy,
+                };
+                let gain = rep::rep_gain_for_incident(&deeds, &mut pirate_rng);
+                if gain > 0.0 {
+                    reputation = rep::clamp(reputation + gain);
                     emit(
                         &mut on_step,
                         current_date,
                         &current_ref,
                         budget,
                         Action::ReputationChange {
-                            delta: reputation - before,
+                            delta: gain,
                             new_value: reputation,
-                            reason: "lying low".to_string(),
+                            reason: "act of piracy".to_string(),
                         },
                     );
+                }
+
+                // Any act of piracy (or a fight you started) staves off this
+                // month's reputation cooling.
+                if took || kept_prize || res.outcome == EncounterOutcome::DrivenOffMauled {
+                    acted_this_period = true;
                 }
             }
 

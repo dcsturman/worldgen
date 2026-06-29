@@ -447,7 +447,9 @@ pub fn ShipSimulator(
     let leadership_skill = RwSignal::new(1i16);
     // Pirates need teeth; merchants default to a token defensive turret.
     let weapons = RwSignal::new(if initial_piracy { 6i16 } else { 2i16 });
-    let crew_size = RwSignal::new(4i32);
+    // A corsair carries boarders — and needs ≥10 crew to put a prize crew
+    // aboard a captured ship (1 prize per 10 crew).
+    let crew_size = RwSignal::new(if initial_piracy { 12i32 } else { 4i32 });
 
     // Voyage
     // Adversarial broker skill assumed for the planet's merchants on
