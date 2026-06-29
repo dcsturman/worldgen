@@ -15,14 +15,6 @@ use super::strength::Prey;
 use super::{COMBAT_DAMAGE_UNIT, roll_1d6, roll_unit};
 use crate::simulator::types::{ActTier, Attitude, EncounterOutcome, EncounterType, Prize};
 
-/// Appraised value of a captured hull, per ton. ~MCr 0.5/ton: a 200-ton Far
-/// Trader ≈ MCr 100, a 400-ton subsidised merchant ≈ MCr 200, a liner more.
-const SHIP_VALUE_PER_TON: i64 = 500_000;
-
-/// What a stolen ("hot") hull realizes at the hideout buyer, as a fraction of
-/// its appraised, condition-adjusted value. Tunable.
-const PRIZE_SELL_RATE: f64 = 0.5;
-
 /// Chance of taking a surviving captured ship *whole* as a prize, by doctrine.
 /// Prizes are the reward that balances aggression's risk, so they're mostly an
 /// Aggressive/Bloodthirsty payoff; Chill never bothers seizing hulls.
@@ -57,14 +49,10 @@ fn maybe_prize(
     } else {
         0.4 + (roll_1d6(rng) as f64 - 1.0) / 5.0 * 0.3
     };
-    let base_value = prey.hull_tons as i64 * SHIP_VALUE_PER_TON;
-    let realized_value = (base_value as f64 * condition * PRIZE_SELL_RATE).round() as i64;
     Some(Prize {
         ship_type: prey.kind,
         hull_tons: prey.hull_tons,
         condition,
-        base_value,
-        realized_value,
     })
 }
 

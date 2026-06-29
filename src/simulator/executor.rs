@@ -114,7 +114,6 @@ pub async fn run_simulation(
     let mut raids: u32 = 0;
     let mut ships_destroyed: u32 = 0;
     let mut prizes: Vec<Prize> = Vec::new();
-    let mut prize_value: i64 = 0;
     // Reputation cools by 1 each 28-day period with no act of piracy. This
     // flag is set whenever the pirate does something of consequence and reset
     // at each period tick.
@@ -265,11 +264,6 @@ pub async fn run_simulation(
                             tons_disposed: plundered_tons,
                         },
                     );
-                }
-                // Prizes flown home are realized at the hideout buyer.
-                if !prizes.is_empty() {
-                    prize_value = prizes.iter().map(|p| p.realized_value).sum();
-                    budget += prize_value;
                 }
                 returned_home = true;
                 break;
@@ -465,10 +459,11 @@ pub async fn run_simulation(
                     } else if let Some(idx) = prizes
                         .iter()
                         .enumerate()
-                        .min_by_key(|(_, p)| p.realized_value)
+                        .min_by_key(|(_, p)| p.hull_tons)
                         .map(|(i, _)| i)
                     {
-                        if prize.realized_value > prizes[idx].realized_value {
+                        // At the cap, keep the bigger hull.
+                        if prize.hull_tons > prizes[idx].hull_tons {
                             prizes.remove(idx);
                             true
                         } else {
@@ -489,7 +484,6 @@ pub async fn run_simulation(
                                 ship_type: prize.ship_type,
                                 hull_tons: prize.hull_tons,
                                 condition_pct,
-                                realized_value: prize.realized_value,
                             },
                         );
                         prizes.push(prize);
@@ -1174,7 +1168,6 @@ pub async fn run_simulation(
         raids,
         ships_destroyed,
         prizes,
-        prize_value,
     })
 }
 

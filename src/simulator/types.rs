@@ -256,10 +256,9 @@ impl EncounterType {
     }
 }
 
-/// A captured enemy vessel taken whole as a prize. You can't fence a starship
-/// en route — prizes are flown home by a prize crew and realized at the
-/// hideout at the end of the cruise, at a "hot hull" discount and scaled by
-/// how shot up they got.
+/// A captured enemy vessel taken whole as a prize and flown home by a prize
+/// crew. Recorded as a trophy — type, size, and how shot up she is — with no
+/// cash value modelled (yet).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Prize {
     /// What kind of ship it is.
@@ -269,11 +268,6 @@ pub struct Prize {
     /// Hull condition, `0.0..=1.0` (1.0 pristine — surrendered intact; lower
     /// if crippled in the fight).
     pub condition: f64,
-    /// Appraised hull value before the hot-hull discount.
-    pub base_value: i64,
-    /// Credits the prize realizes at the hideout (`base × condition × the
-    /// hot-hull sell rate`).
-    pub realized_value: i64,
 }
 
 /// Inputs to the simulation, supplied by the client.
@@ -650,8 +644,6 @@ pub enum Action {
         hull_tons: i32,
         /// Hull condition as a percentage (100 = pristine).
         condition_pct: i32,
-        /// Credits the prize is expected to realize at the hideout.
-        realized_value: i64,
     },
     /// Could have taken a ship as a prize but had no spare crew to put aboard
     /// her (already at the 1-per-10-crew cap), so she was left behind.
@@ -725,12 +717,9 @@ pub struct SimulationResult {
     /// Number of ships destroyed (act tier 4).
     #[serde(default)]
     pub ships_destroyed: u32,
-    /// Vessels captured whole and brought home as prizes.
+    /// Vessels captured whole and brought home as prizes (trophy list).
     #[serde(default)]
     pub prizes: Vec<Prize>,
-    /// Total credits realized from prizes (0 unless the cruise made it home).
-    #[serde(default)]
-    pub prize_value: i64,
 }
 
 #[cfg(test)]

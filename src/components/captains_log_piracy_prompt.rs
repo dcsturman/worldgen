@@ -102,12 +102,7 @@ fn write_cruise_header(
     let _ = writeln!(out, "Raids that took a haul: {}", result.raids);
     let _ = writeln!(out, "Ships destroyed: {}", result.ships_destroyed);
     if !result.prizes.is_empty() {
-        let _ = writeln!(
-            out,
-            "Prizes brought home: {} (worth {} Cr realized at the hideout):",
-            result.prizes.len(),
-            result.prize_value
-        );
+        let _ = writeln!(out, "Prizes brought home: {}", result.prizes.len());
         for p in &result.prizes {
             let _ = writeln!(
                 out,
@@ -278,15 +273,13 @@ fn write_event(out: &mut String, step: &SimulationStep) {
             ship_type,
             hull_tons,
             condition_pct,
-            realized_value,
         } => {
             let _ = writeln!(
                 out,
-                "{date} @ {here} — Seized the {} (~{}t) whole as a prize, {}% hull, to fly home — worth about {} Cr at the hideout.",
+                "{date} @ {here} — Seized the {} (~{}t) whole as a prize, {}% hull, to fly home.",
                 ship_type.label(),
                 hull_tons,
-                condition_pct,
-                realized_value
+                condition_pct
             );
         }
         Action::PrizeDeclined {

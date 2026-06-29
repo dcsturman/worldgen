@@ -876,7 +876,6 @@ mod tests {
             raids: 0,
             ships_destroyed: 0,
             prizes: Vec::new(),
-            prize_value: 0,
         };
         let s = build_prompt("Free Trader Beowulf", &params, &[], &result);
         assert!(s.contains("Free Trader Beowulf"));
@@ -922,7 +921,6 @@ mod tests {
             raids: 0,
             ships_destroyed: 0,
             prizes: Vec::new(),
-            prize_value: 0,
         };
         let s = build_prompt("", &params, &[], &result);
         assert!(s.contains("(unregistered"));

@@ -439,7 +439,8 @@ pub fn ShipSimulator(
     let maintenance_per_period = RwSignal::new(5_000i64);
     let salary_per_period = RwSignal::new(12_000i64);
     let mortgage_per_period = RwSignal::new(0i64);
-    let crew_profit_share = RwSignal::new(0.10f32);
+    // Pirate crews split the plunder heavily; merchant crews take a small cut.
+    let crew_profit_share = RwSignal::new(if initial_piracy { 0.80f32 } else { 0.10f32 });
 
     // Crew
     let broker_skill = RwSignal::new(1i16);
@@ -1418,14 +1419,12 @@ fn describe_action(action: &Action, home_port: &str) -> Option<(String, &'static
             ship_type,
             hull_tons,
             condition_pct,
-            realized_value,
         } => (
             format!(
-                "Took the {}t {} as a prize ({}% hull) — ~{} Cr at the hideout",
+                "Took the {}t {} as a prize ({}% hull)",
                 hull_tons,
                 ship_type.label(),
-                condition_pct,
-                realized_value
+                condition_pct
             ),
             "sim-action sim-action-prize",
         ),
@@ -1758,13 +1757,32 @@ fn SimSummary(
                                     <span class="sim-summary-value">{r.ships_destroyed}</span>
                                 </div>
                                 <div class="sim-summary-row">
+                                    <span class="sim-summary-label">"Owner profit"</span>
+                                    <span class="sim-summary-value sim-summary-value-strong">
+                                        {format!("{} Cr", r.owner_profit)}
+                                    </span>
+                                </div>
+                                <div class="sim-summary-row">
+                                    <span class="sim-summary-label">"Crew share"</span>
+                                    <span class="sim-summary-value">{format!("{} Cr", r.crew_share)}</span>
+                                </div>
+                                <div class="sim-summary-row">
                                     <span class="sim-summary-label">"Prizes taken"</span>
                                     <span class="sim-summary-value">{r.prizes.len()}</span>
                                 </div>
-                                <div class="sim-summary-row">
-                                    <span class="sim-summary-label">"Prize value"</span>
-                                    <span class="sim-summary-value">{format!("{} Cr", r.prize_value)}</span>
-                                </div>
+                                {r.prizes.iter().map(|p| view! {
+                                    <div class="sim-summary-row sim-summary-prize">
+                                        <span class="sim-summary-label">"\u{00a0}\u{00a0}prize"</span>
+                                        <span class="sim-summary-value">
+                                            {format!(
+                                                "{}t {} ({}% hull)",
+                                                p.hull_tons,
+                                                p.ship_type.label(),
+                                                (p.condition * 100.0).round() as i32
+                                            )}
+                                        </span>
+                                    </div>
+                                }).collect::<Vec<_>>()}
                             })}
                             {(!is_piracy).then(|| view! {
                                 <div class="sim-summary-row">
