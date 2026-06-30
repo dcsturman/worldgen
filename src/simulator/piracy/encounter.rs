@@ -32,13 +32,14 @@ pub fn naval_in_system(world: &World) -> bool {
 
 /// Build the encounter modifiers from the mainworld's traits.
 ///
-/// Traffic (first die): high-traffic `+1`, backwater `-1`.
-/// Security (second die): naval base `+2`, else secure `+1`, dangerous `-1`.
+/// Traffic (first die): high-traffic / on-the-trade-route `+1`, backwater `-1`.
+/// Security (second die): naval base `+2`, else secure `+1`, dangerous `-1`,
+/// plus a polity modifier — patrolled empires are more dangerous than
+/// non-aligned space (Imperium / Aslan / K'kree / Hiver `+1`, Zhodani `+2`).
 ///
-/// (The "capital `+2`" and "on the Imperium-Aslan trade route" clauses from
-/// the source table need data the per-hex world record doesn't carry; they're
-/// deferred — high-traffic alone drives the first die up for v1.)
-pub fn encounter_dms(world: &World) -> EncounterDms {
+/// `allegiance` is the TravellerMap allegiance code (e.g. `"Im"`, `"AsMw"`,
+/// `"Zh"`, `"NaHu"`).
+pub fn encounter_dms(world: &World, allegiance: Option<&str>) -> EncounterDms {
     let port = world.port;
     let law = world.get_law_level();
     let classes = world.get_trade_classes();
@@ -54,7 +55,9 @@ pub fn encounter_dms(world: &World) -> EncounterDms {
     let backwater = matches!(port, PortCode::X | PortCode::E | PortCode::Y);
 
     let mut traffic = 0;
-    if high_traffic {
+    // High-traffic *or* on a charted trade route is a single +1 (the two routes
+    // don't stack — being on either grants the one bonus).
+    if high_traffic || on_trade_route(&world.name) {
         traffic += 1;
     }
     if backwater {
@@ -76,8 +79,91 @@ pub fn encounter_dms(world: &World) -> EncounterDms {
     if dangerous {
         security -= 1;
     }
+    security += allegiance_security_dm(allegiance);
 
     EncounterDms { traffic, security }
+}
+
+/// Security modifier from a world's polity: a patrolled empire is more
+/// dangerous than non-aligned space. Imperium / Aslan Hierate / K'kree / Hiver
+/// Federation `+1`; Zhodani Consulate `+2`; non-aligned, client states, and
+/// unknown `0`.
+///
+/// The prefix tests catch *every* code of each polity — `"As"` covers all the
+/// Aslan clan codes (`AsMw`, `AsSc`, `AsT0`–`AsT9`, `AsWc`, …), `"Im"` all the
+/// Imperial sub-codes, and so on.
+fn allegiance_security_dm(allegiance: Option<&str>) -> i32 {
+    match allegiance.map(str::trim) {
+        Some(a) if a.starts_with("Zh") => 2,
+        Some(a)
+            if a.starts_with("Im")
+                || a.starts_with("As")
+                || a.starts_with("Kk")
+                || a.starts_with("Hv") =>
+        {
+            1
+        }
+        _ => 0,
+    }
+}
+
+/// Whether a world sits on a charted trade route — the Aslan–Imperium route
+/// (the Trojan Reach corridor) or the Florian/Imperial route. Either grants the
+/// single high-traffic bonus. Matched by world name (case-insensitive).
+fn on_trade_route(world_name: &str) -> bool {
+    const ROUTE_WORLDS: &[&str] = &[
+        // Florian / Imperial trade route.
+        "Yggdrasil",
+        "Dpres",
+        "Connaught",
+        "291-540",
+        "Janus",
+        "Caldos",
+        "Sagan",
+        "Tyr",
+        "Tktk",
+        "Hecarda",
+        "Acis",
+        "Ace",
+        "Number One",
+        "Thebus",
+        "Noricum",
+        "Oghma",
+        // Aslan–Imperium trade route (Trojan Reach corridor).
+        "Marduk",
+        "Borite",
+        "Torpol",
+        "Blue",
+        "Clarke",
+        "Asim",
+        "Drinax",
+        "Pourne",
+        "Hilfer",
+        "Paal",
+        "Sink",
+        "Kteiroa",
+        "Tyokh",
+        "Exocet",
+        "Iilgan",
+        "Wildeman",
+        "Pandora",
+        "Tanith",
+        "Arunisiir",
+        "Acrid",
+        "Cordan",
+        "Umemii",
+        "Argona",
+        "Exe",
+        "Inurin",
+        "Sperle",
+        "Tech-World",
+        "Falcon",
+        "Ergo",
+        "Byrni",
+    ];
+    ROUTE_WORLDS
+        .iter()
+        .any(|&w| w.eq_ignore_ascii_case(world_name))
 }
 
 /// Roll the (clamped) D66 dice given the modifiers. Returns `(first, second)`
@@ -204,25 +290,39 @@ mod tests {
     }
 
     #[test]
-    fn high_traffic_pushes_traffic_up() {
-        // A-port, high pop (pop 9) → high-traffic → +1.
+    fn high_traffic_world_has_traffic_bonus() {
+        // A-port, high pop → high-traffic; also on the trade route → +1.
         let w = world("A788999-A");
-        let dms = encounter_dms(&w);
+        let dms = encounter_dms(&w, Some("NaHu"));
         assert_eq!(dms.traffic, 1);
     }
 
     #[test]
-    fn backwater_pushes_traffic_down() {
+    fn backwater_off_route_pushes_traffic_down() {
+        // X-port backwater, not on a trade route → -1.
         let w = world("X788855-5");
-        let dms = encounter_dms(&w);
+        let dms = encounter_dms(&w, Some("NaHu"));
         assert_eq!(dms.traffic, -1);
     }
 
     #[test]
+    fn trade_route_world_gets_traffic_bonus() {
+        // A plain C-port world (not high-traffic) named for a trade-route world
+        // still gets the +1.
+        let mut on = World::from_uwp("Drinax", "C544540-8", false, true).unwrap();
+        on.gen_trade_classes();
+        assert_eq!(encounter_dms(&on, Some("NaHu")).traffic, 1);
+
+        let mut off = World::from_uwp("Nowhere", "C544540-8", false, true).unwrap();
+        off.gen_trade_classes();
+        assert_eq!(encounter_dms(&off, Some("NaHu")).traffic, 0);
+    }
+
+    #[test]
     fn dangerous_low_law_pushes_security_down() {
-        // Law 2 → dangerous.
+        // Law 2 → dangerous; non-aligned, so no polity modifier.
         let w = world("C788852-5");
-        let dms = encounter_dms(&w);
+        let dms = encounter_dms(&w, Some("NaHu"));
         assert_eq!(dms.security, -1);
     }
 
@@ -231,8 +331,22 @@ mod tests {
         // A-port, law 9, tech D(13); a naval base sets security to +2.
         let mut w = world("A78889D-D");
         w.set_facilities(vec![Facility::Naval]);
-        let dms = encounter_dms(&w);
+        let dms = encounter_dms(&w, Some("NaHu"));
         assert_eq!(dms.security, 2);
+    }
+
+    #[test]
+    fn patrolled_polities_raise_security() {
+        // A quiet C-port, law 5 (not dangerous, not secure), so the polity
+        // modifier is the whole security DM.
+        let w = world("C788855-7");
+        assert_eq!(encounter_dms(&w, Some("NaHu")).security, 0);
+        assert_eq!(encounter_dms(&w, Some("Im")).security, 1);
+        assert_eq!(encounter_dms(&w, Some("AsMw")).security, 1);
+        assert_eq!(encounter_dms(&w, Some("Kk")).security, 1);
+        assert_eq!(encounter_dms(&w, Some("Hv")).security, 1);
+        assert_eq!(encounter_dms(&w, Some("Zh")).security, 2);
+        assert_eq!(encounter_dms(&w, Some("CsIm")).security, 0);
     }
 
     #[test]

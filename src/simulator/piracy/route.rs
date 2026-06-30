@@ -74,7 +74,7 @@ pub fn route_mode(ctx: &PirateRouteContext) -> RouteMode {
 
 /// Expected-value score for HUNT mode. Higher is better.
 pub fn score_hunt(c: &Candidate, ctx: &PirateRouteContext) -> f64 {
-    let dms = encounter_dms(&c.world);
+    let dms = encounter_dms(&c.world, c.allegiance.as_deref());
     let econ = economy_multiplier(&c.world);
 
     let prey = HUNT_PREY_BASE * (1.0 + 0.3 * dms.traffic as f64).max(0.1) * econ;

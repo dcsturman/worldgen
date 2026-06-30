@@ -286,7 +286,7 @@ pub async fn run_simulation(
             // (P1) Encounter at the current system. A pirate never raids in
             // its own home port — at the hideout it just lies low and sails.
             let at_hideout = worldref_same_hex(&current_ref, &params.home_world);
-            let mut dms = encounter::encounter_dms(&current_world);
+            let mut dms = encounter::encounter_dms(&current_world, current_allegiance.as_deref());
             // A hunted pirate (reputation 20+) draws active patrols: +1 to the
             // security die means defenders turn up more often.
             if reputation > HUNTED_REPUTATION {
