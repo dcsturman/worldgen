@@ -1000,10 +1000,10 @@ datalist option {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
   gap: 0.5rem 1rem;
-  /* Don't stretch a short-label cell to a tall neighbour's height — that's
-     what made single-line fields (e.g. Weapons) balloon next to wrapping
-     ones like "Cargo capacity (tons)". */
-  align-items: start;
+  /* Cells in a row share the tallest one's height; each field then pins its
+     input to the bottom (see `.sim-grid label`), so inputs line up across the
+     row no matter how many lines a label wraps to. */
+  align-items: stretch;
 }
 
 /* Denser packing for the number-heavy Ship / Expenses / Crew cards so they
@@ -1016,6 +1016,9 @@ datalist option {
 .sim-grid label {
   display: flex;
   flex-direction: column;
+  /* Label on top, input pinned to the bottom of the (stretched) cell, so a
+     row's inputs align however much the labels wrap. */
+  justify-content: space-between;
   font-size: 0.85rem;
   gap: 0.2rem;
   min-width: 0;
@@ -1025,9 +1028,6 @@ datalist option {
   display: flex;
   align-items: flex-start;
   gap: 0.35em;
-  /* Reserve two lines so single-line labels line their inputs up with
-     neighbours whose labels wrap. */
-  min-height: 2.4em;
 }
 
 /* Hover-help `?` icon used next to form labels.
