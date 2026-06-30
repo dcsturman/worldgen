@@ -314,6 +314,7 @@ fn write_event(out: &mut String, step: &SimulationStep) {
             );
         }
         Action::Marooned {
+            reason,
             budget,
             total_parsecs_jumped,
             rescue_eta_days,
@@ -321,7 +322,7 @@ fn write_event(out: &mut String, step: &SimulationStep) {
         } => {
             let _ = writeln!(
                 out,
-                "{date} @ {here} — MAROONED — budget {budget} Cr, {total_parsecs_jumped} pc travelled; mayday reaches home on {} ({rescue_eta_days} days).",
+                "{date} @ {here} — MAROONED ({reason}) — budget {budget} Cr, {total_parsecs_jumped} pc travelled; mayday reaches home on {} ({rescue_eta_days} days).",
                 rescue_arrives_on.format()
             );
         }

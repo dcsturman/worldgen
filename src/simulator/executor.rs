@@ -104,6 +104,7 @@ pub async fn run_simulation(
     let mut total_parsecs_jumped: u32 = 0;
     let mut marooned: bool = false;
     let mut marooned_state: Option<(WorldRef, Date, Date)> = None;
+    let mut marooned_reason: Option<String> = None;
     let mut incident_eligible: bool = false;
 
     // Pirate state, threaded through the loop (only used in `Piracy` mode).
@@ -238,6 +239,9 @@ pub async fn run_simulation(
         if params.mode == SimulationMode::Piracy {
             let leadership = params.ship.leadership_skill;
             let mut force_maroon = false;
+            // What crippled the ship, if anything — names the cause in the
+            // Marooned log line.
+            let mut maroon_reason: Option<&str> = None;
 
             // Back at the hideout after travelling: a drop-off. Fence the hold
             // (best odds — treat the hideout as law 0) and bank any prizes,
@@ -380,7 +384,10 @@ pub async fn run_simulation(
                         // Weeks spent shaking a patrol are quiet days, not piracy.
                         days_since_act += added;
                     }
-                    force_maroon = maroon_flag;
+                    if maroon_flag {
+                        force_maroon = true;
+                        maroon_reason = Some("run down and boarded by a patrol");
+                    }
                     emit(
                         &mut on_step,
                         current_date,
@@ -426,6 +433,7 @@ pub async fn run_simulation(
                     && fencing::law_bonus(current_world.get_law_level()).is_none()
                 {
                     force_maroon = true;
+                    maroon_reason = Some("too crippled to dock in patrolled space");
                 }
 
                 // Loot into the hold, capped by remaining capacity.
@@ -656,12 +664,17 @@ pub async fn run_simulation(
                 let eta = rescue_eta_days(total_parsecs_jumped);
                 let arrives = current_date.add_days(eta);
                 marooned_state = Some((current_ref.clone(), current_date, arrives));
+                let reason = maroon_reason
+                    .unwrap_or("out of funds — couldn't make payroll")
+                    .to_string();
+                marooned_reason = Some(reason.clone());
                 emit(
                     &mut on_step,
                     current_date,
                     &current_ref,
                     budget,
                     Action::Marooned {
+                        reason,
                         budget,
                         total_parsecs_jumped,
                         rescue_eta_days: eta,
@@ -1089,12 +1102,14 @@ pub async fn run_simulation(
             let eta = rescue_eta_days(total_parsecs_jumped);
             let arrives = current_date.add_days(eta);
             marooned_state = Some((current_ref.clone(), current_date, arrives));
+            marooned_reason = Some("out of funds — couldn't make payroll".to_string());
             emit(
                 &mut on_step,
                 current_date,
                 &current_ref,
                 budget,
                 Action::Marooned {
+                    reason: "out of funds — couldn't make payroll".to_string(),
                     budget,
                     total_parsecs_jumped,
                     rescue_eta_days: eta,
@@ -1203,6 +1218,7 @@ pub async fn run_simulation(
         marooned,
         marooned_at: marooned_state.as_ref().map(|(w, _, _)| w.clone()),
         marooned_on: marooned_state.as_ref().map(|(_, d, _)| *d),
+        marooned_reason,
         rescue_arrives_on: marooned_state.as_ref().map(|(_, _, eta)| *eta),
         final_reputation: reputation,
         total_loot_fenced,

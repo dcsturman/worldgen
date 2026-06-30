@@ -1521,13 +1521,14 @@ fn describe_action(action: &Action, home_port: &str) -> Option<(String, &'static
         ),
 
         Action::Marooned {
+            reason,
             budget,
             total_parsecs_jumped,
             rescue_eta_days,
             rescue_arrives_on,
         } => (
             format!(
-                "MAROONED — budget {budget} Cr; mayday arrives at {home_port} on {} ({rescue_eta_days} days, {total_parsecs_jumped} pc travelled)",
+                "MAROONED — {reason}. Budget {budget} Cr; mayday arrives at {home_port} on {} ({rescue_eta_days} days, {total_parsecs_jumped} pc travelled)",
                 rescue_arrives_on.format()
             ),
             "sim-action sim-action-marooned",
@@ -1728,6 +1729,7 @@ fn SimSummary(
                     let loc = r.marooned_at.as_ref().map(|w| w.name.clone()).unwrap_or_default();
                     let on_date = r.marooned_on.map(|d| d.format()).unwrap_or_default();
                     let signal_date = r.rescue_arrives_on.map(|d| d.format()).unwrap_or_default();
+                    let reason = r.marooned_reason.clone().unwrap_or_default();
                     let home_name = last_params
                         .get()
                         .map(|p| p.home_world.name.clone())
@@ -1735,6 +1737,7 @@ fn SimSummary(
                     view! {
                         <div class="sim-summary sim-summary-marooned">
                             <h2>"⚠ Marooned"</h2>
+                            <p>"The cruise ended — "<strong>{reason}</strong>"."</p>
                             <p>"Marooned at "<strong>{loc}</strong>" on "<strong>{on_date}</strong>"."</p>
                             <p>"Distress signal received at "<strong>{home_name}</strong>" on "<strong>{signal_date}</strong>"."</p>
                         </div>

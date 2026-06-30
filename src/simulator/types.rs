@@ -670,9 +670,12 @@ pub enum Action {
         reason: String,
     },
 
-    /// Terminal: the end-of-port-stay budget check failed. The run ends
-    /// here; a help message will reach the home port after `rescue_eta_days`.
+    /// Terminal: the run ends here — the ship is too damaged to go on, or out
+    /// of funds. A help message reaches the home port after `rescue_eta_days`.
     Marooned {
+        /// What ended the cruise (e.g. "run down and boarded by a patrol",
+        /// "out of funds").
+        reason: String,
         budget: i64,
         total_parsecs_jumped: u32,
         rescue_eta_days: u32,
@@ -708,6 +711,8 @@ pub struct SimulationResult {
     pub marooned_at: Option<WorldRef>,
     /// Date the ship was marooned.
     pub marooned_on: Option<Date>,
+    /// Why the cruise ended (damage, out of funds, …).
+    pub marooned_reason: Option<String>,
     /// Date a rescue is expected to arrive (one week per 4 parsecs of the
     /// path actually travelled, rounded up).
     pub rescue_arrives_on: Option<Date>,
