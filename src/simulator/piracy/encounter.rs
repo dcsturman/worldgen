@@ -129,20 +129,18 @@ fn on_trade_route(world_name: &str) -> bool {
         "Thebus",
         "Noricum",
         "Oghma",
-        // Aslan–Imperium trade route (Trojan Reach corridor).
         "Marduk",
         "Borite",
         "Torpol",
         "Blue",
         "Clarke",
+        // Aslan–Imperium trade route (Trojan Reach corridor).
         "Asim",
         "Drinax",
         "Pourne",
         "Hilfer",
         "Paal",
         "Sink",
-        "Kteiroa",
-        "Tyokh",
         "Exocet",
         "Iilgan",
         "Wildeman",
@@ -160,6 +158,7 @@ fn on_trade_route(world_name: &str) -> bool {
         "Falcon",
         "Ergo",
         "Byrni",
+        "The World",
     ];
     ROUTE_WORLDS
         .iter()
