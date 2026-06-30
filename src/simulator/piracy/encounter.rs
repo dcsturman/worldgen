@@ -86,7 +86,7 @@ pub fn encounter_dms(world: &World, allegiance: Option<&str>) -> EncounterDms {
 
 /// Security modifier from a world's polity: a patrolled empire is more
 /// dangerous than non-aligned space. Imperium / Aslan Hierate / K'kree / Hiver
-/// Federation `+1`; Zhodani Consulate `+2`; non-aligned, client states, and
+/// Federation `+2`; Zhodani Consulate `+4`; non-aligned, client states, and
 /// unknown `0`.
 ///
 /// The prefix tests catch *every* code of each polity — `"As"` covers all the
@@ -94,14 +94,14 @@ pub fn encounter_dms(world: &World, allegiance: Option<&str>) -> EncounterDms {
 /// Imperial sub-codes, and so on.
 fn allegiance_security_dm(allegiance: Option<&str>) -> i32 {
     match allegiance.map(str::trim) {
-        Some(a) if a.starts_with("Zh") => 2,
+        Some(a) if a.starts_with("Zh") => 4,
         Some(a)
             if a.starts_with("Im")
                 || a.starts_with("As")
                 || a.starts_with("Kk")
                 || a.starts_with("Hv") =>
         {
-            1
+            2
         }
         _ => 0,
     }
@@ -340,11 +340,12 @@ mod tests {
         // modifier is the whole security DM.
         let w = world("C788855-7");
         assert_eq!(encounter_dms(&w, Some("NaHu")).security, 0);
-        assert_eq!(encounter_dms(&w, Some("Im")).security, 1);
-        assert_eq!(encounter_dms(&w, Some("AsMw")).security, 1);
-        assert_eq!(encounter_dms(&w, Some("Kk")).security, 1);
-        assert_eq!(encounter_dms(&w, Some("Hv")).security, 1);
-        assert_eq!(encounter_dms(&w, Some("Zh")).security, 2);
+        assert_eq!(encounter_dms(&w, Some("Im")).security, 2);
+        assert_eq!(encounter_dms(&w, Some("AsMw")).security, 2);
+        assert_eq!(encounter_dms(&w, Some("AsT4")).security, 2);
+        assert_eq!(encounter_dms(&w, Some("Kk")).security, 2);
+        assert_eq!(encounter_dms(&w, Some("Hv")).security, 2);
+        assert_eq!(encounter_dms(&w, Some("Zh")).security, 4);
         assert_eq!(encounter_dms(&w, Some("CsIm")).security, 0);
     }
 

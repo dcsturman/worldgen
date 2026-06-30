@@ -51,6 +51,10 @@ pub const ROUTE_P_DIST: f64 = 3.0;
 pub const HUNT_PREY_BASE: f64 = 400_000.0;
 /// Baseline expected defender risk at a neutral system.
 pub const HUNT_THREAT_BASE: f64 = 300_000.0;
+/// How sharply each point of security DM (naval bases, patrolled empires)
+/// multiplies the defender risk. High enough that a `+2` empire world repels
+/// the pirate even when its economy makes the prey rich.
+pub const HUNT_THREAT_PER_SECURITY: f64 = 0.7;
 
 /// Whether the pirate can wilderness-refuel here.
 pub fn is_refuelable(c: &Candidate) -> bool {
@@ -80,7 +84,7 @@ pub fn score_hunt(c: &Candidate, ctx: &PirateRouteContext) -> f64 {
     let prey = HUNT_PREY_BASE * (1.0 + 0.3 * dms.traffic as f64).max(0.1) * econ;
     let recognition = 1.0 + 0.04 * ctx.reputation;
     let threat = HUNT_THREAT_BASE
-        * (1.0 + 0.5 * dms.security.max(0) as f64)
+        * (1.0 + HUNT_THREAT_PER_SECURITY * dms.security.max(0) as f64)
         * recognition
         / (1.0 + 0.1 * ctx.ship_weapons.max(0) as f64);
     let dist = c.distance as f64 * ctx.base.fuel_cost_per_parsec as f64 * ROUTE_P_DIST;

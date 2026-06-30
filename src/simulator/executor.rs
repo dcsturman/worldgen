@@ -527,28 +527,32 @@ pub async fn run_simulation(
                 }
 
                 // Notoriety from this incident — Standing-style stacking
-                // categories (cargo / infamous / atrocity / interference).
-                let deeds = rep::IncidentDeeds {
-                    cargo_value: taken_value,
-                    crippled: res.act_tier == Some(ActTier::DamageShip),
-                    destroyed: res.act_tier == Some(ActTier::DestroyOrMurder),
-                    captured_prize: kept_prize,
-                    convoy: enc == EncounterType::Convoy,
-                };
-                let gain = rep::rep_gain_for_incident(&deeds, &mut pirate_rng);
-                if gain > 0.0 {
-                    reputation = rep::clamp(reputation + gain);
-                    emit(
-                        &mut on_step,
-                        current_date,
-                        &current_ref,
-                        budget,
-                        Action::ReputationChange {
-                            delta: gain,
-                            new_value: reputation,
-                            reason: "act of piracy".to_string(),
-                        },
-                    );
+                // categories (cargo / infamous / atrocity / interference). Only
+                // an actual act of piracy earns a reputation; a prey that jumped
+                // clear or drove us off (no take) is no notoriety at all.
+                if took {
+                    let deeds = rep::IncidentDeeds {
+                        cargo_value: taken_value,
+                        crippled: res.act_tier == Some(ActTier::DamageShip),
+                        destroyed: res.act_tier == Some(ActTier::DestroyOrMurder),
+                        captured_prize: kept_prize,
+                        convoy: enc == EncounterType::Convoy,
+                    };
+                    let gain = rep::rep_gain_for_incident(&deeds, &mut pirate_rng);
+                    if gain > 0.0 {
+                        reputation = rep::clamp(reputation + gain);
+                        emit(
+                            &mut on_step,
+                            current_date,
+                            &current_ref,
+                            budget,
+                            Action::ReputationChange {
+                                delta: gain,
+                                new_value: reputation,
+                                reason: "act of piracy".to_string(),
+                            },
+                        );
+                    }
                 }
 
                 // Any act of piracy (or a fight you started) staves off this
