@@ -8,7 +8,7 @@
 
 use rand::Rng;
 
-use super::{roll_1d6, roll_2d6};
+use super::roll_1d6;
 use crate::simulator::types::EncounterType;
 use crate::systems::world::World;
 use crate::trade::TradeClass;
@@ -111,6 +111,12 @@ const RATE_NAVAL: f64 = 3.0;
 /// Fraction of a target's hull that is sellable cargo.
 const CARGO_FRACTION: f64 = 0.5;
 
+/// Centre of the per-ton loot value, in credits. Pirates skim the valuable
+/// cargo — the trade table runs ~500/t (bulk ore, consumables) to 1,000,000/t
+/// (specialty/illegal goods), so a single centre with a wide spread (see
+/// [`roll_prey`]) covers "hauling ore" through "struck the mother lode".
+const LOOT_PER_TON_BASE: f64 = 30_000.0;
+
 /// A resolved prey: the concrete ship a pirate has run down.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Prey {
@@ -206,8 +212,12 @@ pub fn roll_prey(t: EncounterType, trade_mult: f64, rng: &mut impl Rng) -> Prey 
     let thrust = (base_thrust(shown) + rng.random_range(-1..=1) as i16).max(0);
 
     let cargo_tons = ((hull_tons as f64) * CARGO_FRACTION).round() as i32;
-    // Per-ton value: base 2000–6000 (2d6×~350 + floor) × economy multiplier.
-    let per_ton = (2000 + roll_2d6(rng) * 350) as f64 * trade_mult * value_mult;
+    // Per-ton value spreads wide around the base: a ratio of two d6 gives a
+    // fat-tailed multiplier (~0.17×–6×, median 1×), so most preys are middling
+    // but some haul near-worthless bulk and a lucky few a jackpot cargo. Then
+    // scaled by the system economy and the rich-freighter doubling.
+    let cargo_richness = roll_1d6(rng) as f64 / roll_1d6(rng) as f64;
+    let per_ton = LOOT_PER_TON_BASE * cargo_richness * trade_mult * value_mult;
     let cargo_value = (cargo_tons as f64 * per_ton).round() as i64;
 
     Prey {
