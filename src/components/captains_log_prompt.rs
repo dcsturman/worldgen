@@ -477,6 +477,7 @@ fn coalesce_visits(steps: &[SimulationStep]) -> Vec<Visit<'_>> {
             // arms (rather than a wildcard) keep future variants honest.
             Action::EncounterResolved { .. } => {}
             Action::EncounterNone { .. } => {}
+            Action::PreyPassed { .. } => {}
             Action::ThreatEncounter { .. } => {}
             Action::FenceAttempt { .. } => {}
             Action::PrizeTaken { .. } => {}

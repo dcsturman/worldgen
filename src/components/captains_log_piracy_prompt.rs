@@ -148,6 +148,16 @@ fn write_event(out: &mut String, step: &SimulationStep) {
                 from.name, distance
             );
         }
+        Action::PreyPassed {
+            class_name,
+            hull_tons,
+            ..
+        } => {
+            let _ = writeln!(
+                out,
+                "{date} @ {here} — Sighted a {class_name} (~{hull_tons}t) but the hold was full; let her go and made for a fence."
+            );
+        }
         Action::EncounterResolved {
             encounter,
             class_name,

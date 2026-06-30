@@ -1463,6 +1463,14 @@ fn describe_action(action: &Action, home_port: &str) -> Option<(String, &'static
             "sim-action sim-action-prize",
         ),
         Action::EncounterNone { .. } => return None,
+        Action::PreyPassed {
+            class_name,
+            hull_tons,
+            ..
+        } => (
+            format!("Let a {hull_tons}t {class_name} pass — hold full, making for a fence"),
+            "sim-action sim-action-threat",
+        ),
         Action::ThreatEncounter {
             class_name,
             q_ship,

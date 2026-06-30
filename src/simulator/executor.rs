@@ -406,6 +406,22 @@ pub async fn run_simulation(
                         },
                     );
                 }
+            } else if proute::hold_too_full_to_raid(plundered_tons, params.ship.cargo_capacity) {
+                // Hold all but full — not worth a fight for the scraps of room.
+                // Note the prey we let slip and make for a fence (the route is
+                // already in fence-run mode at this fullness).
+                let prey = strength::roll_prey(enc, 1.0, &mut pirate_rng);
+                emit(
+                    &mut on_step,
+                    current_date,
+                    &current_ref,
+                    budget,
+                    Action::PreyPassed {
+                        encounter: enc,
+                        class_name: prey.class_name.to_string(),
+                        hull_tons: prey.hull_tons,
+                    },
+                );
             } else {
                 // Prey: resolve the encounter.
                 let trade_mult = strength::economy_multiplier(&current_world);

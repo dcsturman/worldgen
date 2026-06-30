@@ -604,6 +604,13 @@ pub enum Action {
         traffic_dm: i32,
         security_dm: i32,
     },
+    /// Prey was met but the hold was too full to bother — waved it by and made
+    /// for a fence.
+    PreyPassed {
+        encounter: EncounterType,
+        class_name: String,
+        hull_tons: i32,
+    },
     /// A defender — System Defence Boat, Naval Patrol, or q-ship — was met.
     ThreatEncounter {
         /// Which defender.

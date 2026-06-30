@@ -44,6 +44,14 @@ pub const FENCE_HOLD_FRAC: f64 = 0.6;
 /// Cash floor (as a multiple of upcoming upkeep) below which the pirate
 /// breaks to fence to make payroll.
 pub const FENCE_CASH_FLOOR_MULT: i64 = 2;
+/// Hold-fullness at/above which the pirate won't start a new raid — only a
+/// small amount of room left, not worth a fight, so it makes for a fence.
+pub const RAID_HOLD_CEILING: f64 = 0.75;
+
+/// Whether the hold is too full to bother attacking (see [`RAID_HOLD_CEILING`]).
+pub fn hold_too_full_to_raid(plundered_tons: i32, cargo_capacity: i32) -> bool {
+    cargo_capacity > 0 && plundered_tons as f64 >= cargo_capacity as f64 * RAID_HOLD_CEILING
+}
 
 /// Distance-penalty multiplier for pirate routing.
 pub const ROUTE_P_DIST: f64 = 3.0;
