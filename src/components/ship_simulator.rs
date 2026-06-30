@@ -455,6 +455,22 @@ pub fn ShipSimulator(
     // aboard a captured ship (1 prize per 10 crew, rounding down).
     let crew_size = RwSignal::new(if initial_piracy { 10i32 } else { 4i32 });
 
+    // Snap the mode-specific fields to their defaults when the Trade/Piracy
+    // toggle flips — switching into Piracy should give a corsair's loadout
+    // (and back to a merchant's), overwriting whatever was typed.
+    let apply_mode_defaults = move |piracy: bool| {
+        weapons.set(if piracy { 6 } else { 2 });
+        crew_size.set(if piracy { 10 } else { 4 });
+        crew_staterooms.set(if piracy { 8 } else { 4 });
+        fuel_cost_per_parsec.set(if piracy { 0 } else { 500 });
+        salary_per_period.set(if piracy { 32_000 } else { 12_000 });
+        leadership_skill.set(if piracy { 2 } else { 1 });
+        crew_profit_share.set(if piracy { 0.80f32 } else { 0.10f32 });
+        if piracy {
+            attitude.set(Attitude::Hungry);
+        }
+    };
+
     // Voyage
     // Adversarial broker skill assumed for the planet's merchants on
     // every transaction. Default 2 reproduces the legacy constant.
@@ -604,7 +620,10 @@ pub fn ShipSimulator(
                     type="button"
                     class="sim-mode-button"
                     class:active=move || mode.get() == SimulationMode::Trade
-                    on:click=move |_| mode.set(SimulationMode::Trade)
+                    on:click=move |_| {
+                        mode.set(SimulationMode::Trade);
+                        apply_mode_defaults(false);
+                    }
                 >
                     "Trade"
                 </button>
@@ -612,7 +631,10 @@ pub fn ShipSimulator(
                     type="button"
                     class="sim-mode-button"
                     class:active=move || mode.get() == SimulationMode::Piracy
-                    on:click=move |_| mode.set(SimulationMode::Piracy)
+                    on:click=move |_| {
+                        mode.set(SimulationMode::Piracy);
+                        apply_mode_defaults(true);
+                    }
                 >
                     "Piracy"
                 </button>
