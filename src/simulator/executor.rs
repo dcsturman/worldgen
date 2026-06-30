@@ -117,10 +117,11 @@ pub async fn run_simulation(
     // the hideout into `delivered_prizes`, which frees those crews to take more.
     let mut prizes: Vec<Prize> = Vec::new();
     let mut delivered_prizes: Vec<Prize> = Vec::new();
-    // Reputation cools by 1 each 28-day period with no act of piracy. This
-    // flag is set whenever the pirate does something of consequence and reset
-    // at each period tick.
-    let mut acted_this_period = false;
+    // Reputation cools by 1 for every 28 quiet days. This counts days since the
+    // last act of piracy (reset to 0 on an act), kept separate from the payroll
+    // clock so a fight's lost weeks can't bunch several decays onto consecutive
+    // turns.
+    let mut days_since_act: u32 = 0;
     let mut pirate_rng: StdRng = match params.rng_seed {
         Some(s) => StdRng::seed_from_u64(s),
         None => StdRng::from_os_rng(),
@@ -176,10 +177,16 @@ pub async fn run_simulation(
                     },
                 );
             }
-            // Reputation cools by 1 each quiet month (a period with no act of
-            // piracy); trends back toward 0.
-            if params.mode == SimulationMode::Piracy {
-                if !acted_this_period && reputation > 0.0 {
+            days_since_payment -= PERIOD_DAYS;
+        }
+
+        // (1b) Reputation cools by 1 for every 28 quiet days — days since the
+        // last act of piracy. An act zeroes the clock, so this fires only during
+        // genuine lying-low, once per month, never bunched after a fight.
+        if params.mode == SimulationMode::Piracy {
+            while days_since_act >= PERIOD_DAYS {
+                days_since_act -= PERIOD_DAYS;
+                if reputation > 0.0 {
                     let before = reputation;
                     reputation = rep::decay_one_period(reputation);
                     emit(
@@ -194,10 +201,7 @@ pub async fn run_simulation(
                         },
                     );
                 }
-                acted_this_period = false;
             }
-
-            days_since_payment -= PERIOD_DAYS;
         }
 
         // (2) Abort check: too far past target.
@@ -224,6 +228,7 @@ pub async fn run_simulation(
         // top* of this in step (3).
         current_date = current_date.add_days(DAYS_IN_PORT);
         days_since_payment += DAYS_IN_PORT;
+        days_since_act += DAYS_IN_PORT;
 
         // ===== PIRACY TURN ===============================================
         // In Piracy mode the whole merchant port turn (steps 3–14 below) is
@@ -372,6 +377,8 @@ pub async fn run_simulation(
                         let added = weeks * DAYS_PER_WEEK;
                         current_date = current_date.add_days(added);
                         days_since_payment += added;
+                        // Weeks spent shaking a patrol are quiet days, not piracy.
+                        days_since_act += added;
                     }
                     force_maroon = maroon_flag;
                     emit(
@@ -408,6 +415,7 @@ pub async fn run_simulation(
                     let added = res.weeks_lost * DAYS_PER_WEEK;
                     current_date = current_date.add_days(added);
                     days_since_payment += added;
+                    days_since_act += added;
                 }
 
                 // Serious battle damage needs a shipyard, and a wanted pirate
@@ -555,10 +563,10 @@ pub async fn run_simulation(
                     }
                 }
 
-                // Any act of piracy (or a fight you started) staves off this
-                // month's reputation cooling.
+                // Any act of piracy (or a fight you started) resets the
+                // lying-low clock — you weren't keeping your head down.
                 if took || kept_prize || res.outcome == EncounterOutcome::DrivenOffMauled {
-                    acted_this_period = true;
+                    days_since_act = 0;
                 }
             }
 
@@ -740,6 +748,7 @@ pub async fn run_simulation(
             current_allegiance = next.allegiance.clone();
             current_date = current_date.add_days(DAYS_PER_JUMP);
             days_since_payment += DAYS_PER_JUMP;
+            days_since_act += DAYS_PER_JUMP;
             jumps_taken += 1;
             total_parsecs_jumped += next.distance.max(0) as u32;
             emit(
