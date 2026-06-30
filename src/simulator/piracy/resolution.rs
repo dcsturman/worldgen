@@ -37,18 +37,16 @@ fn maybe_prize(
     prey: &Prey,
     rng: &mut impl rand::Rng,
 ) -> Option<Prize> {
-    let capturable = outcome == EncounterOutcome::Surrendered
-        || (outcome == EncounterOutcome::FoughtAndWon && act_tier == Some(ActTier::DamageShip));
+    // No one hands over their ship without a fight — only a ship crippled and
+    // boarded (a won firefight) can be taken whole. An extorted surrender gives
+    // up cargo, not the hull.
+    let capturable =
+        outcome == EncounterOutcome::FoughtAndWon && act_tier == Some(ActTier::DamageShip);
     if !capturable || roll_unit(rng) >= prize_chance(attitude) {
         return None;
     }
-    let intact = outcome == EncounterOutcome::Surrendered;
-    // A ship crippled into surrender is shot up: 40–70% hull.
-    let condition = if intact {
-        1.0
-    } else {
-        0.4 + (roll_1d6(rng) as f64 - 1.0) / 5.0 * 0.3
-    };
+    // A ship crippled into capture is shot up: 40–70% hull.
+    let condition = 0.4 + (roll_1d6(rng) as f64 - 1.0) / 5.0 * 0.3;
     Some(Prize {
         ship_type: prey.kind,
         class_name: prey.class_name.to_string(),

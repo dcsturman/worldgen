@@ -34,6 +34,9 @@ pub struct PirateRouteContext<'a> {
     pub budget: i64,
     pub upcoming_upkeep: i64,
     pub ship_weapons: i16,
+    /// True when every prize crew is committed — head home to drop the prizes
+    /// off (banking them and freeing the crews) before hunting on.
+    pub prize_run: bool,
 }
 
 /// Hold-fullness fraction at/above which the pirate breaks to fence.
@@ -140,9 +143,10 @@ pub fn pick_next_pirate<'a>(
         refuelable
     };
 
-    // Head-home spiral: past the threshold, make for the hideout — pick the
-    // refuelable candidate closest to home (ties broken by hunt score).
-    if prog >= HEAD_HOME_THRESHOLD {
+    // Make for the hideout — past the head-home threshold (to finish the
+    // cruise), or on a prize drop-off run (all prize crews committed). Pick the
+    // refuelable candidate closest to home, ties broken by hunt score.
+    if prog >= HEAD_HOME_THRESHOLD || ctx.prize_run {
         let home_hex = (ctx.base.home.hex_x, ctx.base.home.hex_y);
         return pool
             .iter()
@@ -240,6 +244,7 @@ mod tests {
             budget: 1_000_000,
             upcoming_upkeep: 100_000,
             ship_weapons: 6,
+            prize_run: false,
         }
     }
 

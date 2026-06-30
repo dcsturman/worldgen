@@ -113,7 +113,10 @@ pub async fn run_simulation(
     let mut total_loot_fenced: i64 = 0;
     let mut raids: u32 = 0;
     let mut ships_destroyed: u32 = 0;
+    // Prizes currently flown alongside us (prize crews committed); dropped at
+    // the hideout into `delivered_prizes`, which frees those crews to take more.
     let mut prizes: Vec<Prize> = Vec::new();
+    let mut delivered_prizes: Vec<Prize> = Vec::new();
     // Reputation cools by 1 each 28-day period with no act of piracy. This
     // flag is set whenever the pirate does something of consequence and reset
     // at each period tick.
@@ -231,14 +234,13 @@ pub async fn run_simulation(
             let leadership = params.ship.leadership_skill;
             let mut force_maroon = false;
 
-            // End of voyage: back at the hideout after travelling. The
-            // syndicate buys out whatever's still in the hold at a safe flat
-            // rate (no fence risk at home), then the run ends.
+            // Back at the hideout after travelling: a drop-off. Fence the hold
+            // (best odds — treat the hideout as law 0) and bank any prizes,
+            // which frees the prize crews to take more. The cruise only *ends*
+            // here once we're heading home to finish (past the head-home
+            // threshold); earlier visits drop off and keep hunting.
             let at_home = jumps_taken > 0 && worldref_same_hex(&current_ref, &params.home_world);
             if at_home {
-                // The hideout fences at the best odds — treat it as law 0,
-                // whatever the world's actual law — so bringing a full hold
-                // home to sell is usually lucrative.
                 if plundered_value > 0
                     && let Some(out) = fencing::fence(plundered_value, leadership, 0, &mut pirate_rng)
                 {
@@ -264,9 +266,21 @@ pub async fn run_simulation(
                             tons_disposed: plundered_tons,
                         },
                     );
+                    plundered_value = 0;
+                    plundered_tons = 0;
                 }
-                returned_home = true;
-                break;
+                if !prizes.is_empty() {
+                    delivered_prizes.append(&mut prizes);
+                }
+                let total =
+                    params.start_date.days_until(params.target_completion_date) as f64;
+                let elapsed = params.start_date.days_until(current_date) as f64;
+                let prog = if total > 0.0 { elapsed / total } else { 1.0 };
+                if prog >= route::HEAD_HOME_THRESHOLD {
+                    returned_home = true;
+                    break;
+                }
+                // Mid-cruise drop-off: keep hunting.
             }
 
             // (P1) Encounter at the current system. A pirate never raids in
@@ -556,6 +570,9 @@ pub async fn run_simulation(
             };
             let upcoming_upkeep =
                 params.ship.monthly_expenses() + params.ship.crew_life_support_per_jump();
+            // All prize crews committed → head home to drop the prizes off.
+            let max_prizes = params.ship.crew_size.max(0) as usize / 10;
+            let prize_run = max_prizes > 0 && prizes.len() >= max_prizes;
 
             // (P3) Fence the hold if we're under fence pressure and this is a
             // low-law world.
@@ -567,6 +584,7 @@ pub async fn run_simulation(
                 budget,
                 upcoming_upkeep,
                 ship_weapons: params.ship.weapons,
+                prize_run,
             };
             if proute::route_mode(&pctx_pre) == proute::RouteMode::FenceRun
                 && plundered_value > 0
@@ -671,6 +689,7 @@ pub async fn run_simulation(
                 budget,
                 upcoming_upkeep,
                 ship_weapons: params.ship.weapons,
+                prize_run,
             };
             let mode = proute::route_mode(&pctx_route);
             let next = match proute::pick_next_pirate(&candidates, mode, &pctx_route) {
@@ -1176,7 +1195,9 @@ pub async fn run_simulation(
         total_loot_fenced,
         raids,
         ships_destroyed,
-        prizes,
+        // Only prizes actually delivered to the hideout count; any still flown
+        // alongside us when the cruise ended elsewhere are lost.
+        prizes: delivered_prizes,
     })
 }
 
@@ -1829,7 +1850,7 @@ mod tests {
                 crew_staterooms: 2,
                 passenger_staterooms: 0,
                 low_berths: 0,
-                crew_size: 6,
+                crew_size: 12,
                 jump_rating: 2,
                 mortgage_per_period: 0,
                 maintenance_per_period: 30_000,
