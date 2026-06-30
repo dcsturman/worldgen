@@ -429,15 +429,17 @@ pub fn ShipSimulator(
     // Ship
     let ship_name = RwSignal::new(String::new());
     let cargo_capacity = RwSignal::new(80i32);
-    let crew_staterooms = RwSignal::new(4i32);
+    // A corsair berths a big boarding crew; pirates wilderness-refuel (no fuel
+    // cost) and pay a heftier payroll.
+    let crew_staterooms = RwSignal::new(if initial_piracy { 8i32 } else { 4i32 });
     let passenger_staterooms = RwSignal::new(4i32);
     let low_berths = RwSignal::new(4i32);
     let jump_rating = RwSignal::new(2i16);
     let thrust = RwSignal::new(2i16);
     let attitude = RwSignal::new(Attitude::Hungry);
-    let fuel_cost_per_parsec = RwSignal::new(500i64);
+    let fuel_cost_per_parsec = RwSignal::new(if initial_piracy { 0i64 } else { 500i64 });
     let maintenance_per_period = RwSignal::new(5_000i64);
-    let salary_per_period = RwSignal::new(12_000i64);
+    let salary_per_period = RwSignal::new(if initial_piracy { 32_000i64 } else { 12_000i64 });
     let mortgage_per_period = RwSignal::new(0i64);
     // Pirate crews split the plunder heavily; merchant crews take a small cut.
     let crew_profit_share = RwSignal::new(if initial_piracy { 0.80f32 } else { 0.10f32 });
@@ -445,7 +447,8 @@ pub fn ShipSimulator(
     // Crew
     let broker_skill = RwSignal::new(1i16);
     let steward_skill = RwSignal::new(1i16);
-    let leadership_skill = RwSignal::new(1i16);
+    // A pirate captain leads from the front.
+    let leadership_skill = RwSignal::new(if initial_piracy { 2i16 } else { 1i16 });
     // Pirates need teeth; merchants default to a token defensive turret.
     let weapons = RwSignal::new(if initial_piracy { 6i16 } else { 2i16 });
     // A corsair carries boarders — and needs 10 crew to put a prize crew

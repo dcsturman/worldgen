@@ -2,9 +2,10 @@
 //!
 //! Loot rides in the hold until the pirate diverts to a low-law port to
 //! fence it. The fence rate is `2d6 + leadership + law_bonus` on a ladder
-//! topping out at 50%, **except** a natural 2d6 of 2–3 is a sting: the goods
-//! are seized outright (0%) no matter the modifiers, and the botched deal
-//! adds heat (reputation).
+//! (≤7→10% / 8-10→20% / 11-13→30% / 14-16→40% / 17+→50%) — a stiff cut, so
+//! ~30% is about the best a captain gets fencing at his own (law-0) homeworld,
+//! **except** a natural 2d6 of 2–3 is a sting: the goods are seized outright
+//! (0%) no matter the modifiers, and the botched deal adds heat (reputation).
 
 use rand::Rng;
 
@@ -69,10 +70,10 @@ pub fn fence(
     }
 
     let payout_pct = match total {
-        ..=6 => 10,
-        7..=9 => 20,
-        10..=12 => 30,
-        13..=15 => 40,
+        ..=7 => 10,
+        8..=10 => 20,
+        11..=13 => 30,
+        14..=16 => 40,
         _ => 50,
     };
     let payout = cargo_value * payout_pct as i64 / 100;
@@ -129,7 +130,7 @@ mod tests {
 
     #[test]
     fn solid_roll_pays_thirty_percent() {
-        // total in 10..=12 → 30%.
+        // total in 11..=13 → 30%.
         let out = FenceOutcome {
             roll: 11,
             seized: false,
