@@ -37,7 +37,7 @@ use crate::trade::table::TradeTable;
 /// rather than a field patch. Taking this much in a high-law system — where a
 /// wanted ship can't dock — strands the pirate (see the repair-maroon logic
 /// in the piracy turn). First-cut; tune alongside the resolution damage model.
-const SHIPYARD_DAMAGE_THRESHOLD: i64 = 250_000;
+const SHIPYARD_DAMAGE_THRESHOLD: i64 = 500_000;
 
 /// Reputation at/above which any pirate hunter (System Defence Boat, Naval
 /// Patrol) attacks on sight — no bluffing past; you must outrun them.
