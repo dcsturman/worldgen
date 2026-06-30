@@ -37,6 +37,9 @@ pub struct PirateRouteContext<'a> {
     /// True when every prize crew is committed — head home to drop the prizes
     /// off (banking them and freeing the crews) before hunting on.
     pub prize_run: bool,
+    /// True when reputation is too hot — break off raiding and run for the
+    /// hideout to lie low until it cools.
+    pub lying_low: bool,
 }
 
 /// Hold-fullness fraction at/above which the pirate breaks to fence.
@@ -156,9 +159,10 @@ pub fn pick_next_pirate<'a>(
     };
 
     // Make for the hideout — past the head-home threshold (to finish the
-    // cruise), or on a prize drop-off run (all prize crews committed). Pick the
-    // refuelable candidate closest to home, ties broken by hunt score.
-    if prog >= HEAD_HOME_THRESHOLD || ctx.prize_run {
+    // cruise), on a prize drop-off run (all prize crews committed), or lying
+    // low (reputation too hot). Pick the refuelable candidate closest to home,
+    // ties broken by hunt score.
+    if prog >= HEAD_HOME_THRESHOLD || ctx.prize_run || ctx.lying_low {
         let home_hex = (ctx.base.home.hex_x, ctx.base.home.hex_y);
         return pool
             .iter()
@@ -257,6 +261,7 @@ mod tests {
             upcoming_upkeep: 100_000,
             ship_weapons: 6,
             prize_run: false,
+            lying_low: false,
         }
     }
 
@@ -300,6 +305,20 @@ mod tests {
         let cands = [dry, wet];
         let chosen = pick_next_pirate(&cands, RouteMode::Hunt, &ctx).unwrap();
         assert!(is_refuelable(chosen));
+    }
+
+    #[test]
+    fn lying_low_routes_home_mid_cruise() {
+        let h = home_ref();
+        let b = base(&h, &[]); // prog 0.1 — well before the head-home threshold
+        let mut ctx = pctx(&b);
+        ctx.lying_low = true;
+        // The hideout (hex 0,0) and a richer world farther out, both refuelable.
+        let home = cand("A788899-A", 0, 0, 1, 0);
+        let away = cand("A788899-A", 5, 0, 1, 0);
+        let cands = [away, home];
+        let chosen = pick_next_pirate(&cands, RouteMode::Hunt, &ctx).unwrap();
+        assert_eq!(chosen.world.coordinates, Some((0, 0)));
     }
 
     #[test]

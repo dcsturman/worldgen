@@ -176,6 +176,25 @@ impl ActTier {
     }
 }
 
+/// Why a sighted prey was waved by instead of raided.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PreyPassedReason {
+    /// The hold was all but full — not worth a fight for the scraps of room.
+    HoldFull,
+    /// Reputation is too hot — breaking off and running for the hideout to lie low.
+    LyingLow,
+}
+
+impl PreyPassedReason {
+    /// Short clause for prompts/logs.
+    pub fn label(self) -> &'static str {
+        match self {
+            PreyPassedReason::HoldFull => "the hold was full",
+            PreyPassedReason::LyingLow => "the heat was too high",
+        }
+    }
+}
+
 /// What a Prey Encounter roll produced. `None` covers the table's empty
 /// cells plus the "Traveller" and (for now) "Unusual Vessel" results, all of
 /// which the pirate simulator treats as no encounter.
@@ -610,6 +629,7 @@ pub enum Action {
         encounter: EncounterType,
         class_name: String,
         hull_tons: i32,
+        reason: PreyPassedReason,
     },
     /// A defender — System Defence Boat, Naval Patrol, or q-ship — was met.
     ThreatEncounter {

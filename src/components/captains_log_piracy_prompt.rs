@@ -151,11 +151,17 @@ fn write_event(out: &mut String, step: &SimulationStep) {
         Action::PreyPassed {
             class_name,
             hull_tons,
+            reason,
             ..
         } => {
+            use crate::simulator::types::PreyPassedReason as PP;
+            let tail = match reason {
+                PP::HoldFull => "the hold was full; let her go and made for a fence",
+                PP::LyingLow => "the heat was too high; let her go and ran for the hideout to lie low",
+            };
             let _ = writeln!(
                 out,
-                "{date} @ {here} — Sighted a {class_name} (~{hull_tons}t) but the hold was full; let her go and made for a fence."
+                "{date} @ {here} — Sighted a {class_name} (~{hull_tons}t) but {tail}."
             );
         }
         Action::EncounterResolved {

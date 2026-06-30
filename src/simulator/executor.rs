@@ -21,8 +21,8 @@ use crate::simulator::piracy::route as proute;
 use crate::simulator::piracy::{encounter, escape, fencing, reputation as rep, resolution, strength};
 use crate::simulator::route::{self, RouteContext};
 use crate::simulator::types::{
-    Action, ActTier, Date, EncounterOutcome, EncounterType, Prize, SimulationMode,
-    SimulationParams, SimulationResult, SimulationStep, WorldRef,
+    Action, ActTier, Date, EncounterOutcome, EncounterType, PreyPassedReason, Prize,
+    SimulationMode, SimulationParams, SimulationResult, SimulationStep, WorldRef,
 };
 use crate::simulator::world_fetch::{FetchError, WorldCache};
 use rand::SeedableRng;
@@ -50,6 +50,16 @@ const CONVOY_HOSTILE_REPUTATION: f64 = 10.0;
 /// Reputation above which patrols actively hunt the pirate — `+1` to the
 /// encounter's security die, so defenders turn up more often.
 const HUNTED_REPUTATION: f64 = 20.0;
+
+/// Reputation at/above which the heat is too much: the pirate breaks off
+/// raiding, runs for the hideout, and lies low. Paired with [`LAY_LOW_EXIT`]
+/// as a hysteresis band so it doesn't flip back to hunting the moment it cools
+/// a single point.
+const LAY_LOW_ENTER: f64 = 40.0;
+
+/// Reputation at/below which a pirate that's been lying low judges the heat to
+/// have died down and resumes hunting. See [`LAY_LOW_ENTER`].
+const LAY_LOW_EXIT: f64 = 35.0;
 
 /// Errors the executor can return before producing a [`SimulationResult`].
 #[derive(Debug, thiserror::Error)]
@@ -118,6 +128,9 @@ pub async fn run_simulation(
     // the hideout into `delivered_prizes`, which frees those crews to take more.
     let mut prizes: Vec<Prize> = Vec::new();
     let mut delivered_prizes: Vec<Prize> = Vec::new();
+    // Hysteresis flag: once reputation crosses `LAY_LOW_ENTER` the pirate runs
+    // for the hideout and stops raiding until it cools to `LAY_LOW_EXIT`.
+    let mut lying_low: bool = false;
     // Reputation cools by 1 for every 28 quiet days. This counts days since the
     // last act of piracy (reset to 0 on an act), kept separate from the payroll
     // clock so a fight's lost weeks can't bunch several decays onto consecutive
@@ -243,6 +256,16 @@ pub async fn run_simulation(
             // Marooned log line.
             let mut maroon_reason: Option<&str> = None;
 
+            // Lay-low hysteresis: at `LAY_LOW_ENTER` the heat is too much —
+            // break off raiding and run for the hideout; stay lying low until
+            // reputation cools back to `LAY_LOW_EXIT`. Re-evaluated each turn,
+            // after the quiet-time decay at the top of the loop.
+            if reputation >= LAY_LOW_ENTER {
+                lying_low = true;
+            } else if reputation <= LAY_LOW_EXIT {
+                lying_low = false;
+            }
+
             // Back at the hideout after travelling: a drop-off. Fence the hold
             // (best odds — treat the hideout as law 0) and bank any prizes,
             // which frees the prize crews to take more. The cruise only *ends*
@@ -288,6 +311,14 @@ pub async fn run_simulation(
                 if prog >= route::HEAD_HOME_THRESHOLD {
                     returned_home = true;
                     break;
+                }
+                // Lying low at the hideout: don't sail back out into the heat.
+                // Sit in port and let the days bleed reputation down (the port
+                // stay and quiet-time decay run at the top of the loop). Resume
+                // once `lying_low` clears — i.e. reputation has cooled to
+                // `LAY_LOW_EXIT`.
+                if lying_low {
+                    continue;
                 }
                 // Mid-cruise drop-off: keep hunting.
             }
@@ -406,6 +437,22 @@ pub async fn run_simulation(
                         },
                     );
                 }
+            } else if lying_low {
+                // Too hot to raid — break off and run for the hideout. Note the
+                // prey we let slip; the route is already homebound.
+                let prey = strength::roll_prey(enc, 1.0, &mut pirate_rng);
+                emit(
+                    &mut on_step,
+                    current_date,
+                    &current_ref,
+                    budget,
+                    Action::PreyPassed {
+                        encounter: enc,
+                        class_name: prey.class_name.to_string(),
+                        hull_tons: prey.hull_tons,
+                        reason: PreyPassedReason::LyingLow,
+                    },
+                );
             } else if proute::hold_too_full_to_raid(plundered_tons, params.ship.cargo_capacity) {
                 // Hold all but full — not worth a fight for the scraps of room.
                 // Note the prey we let slip and make for a fence (the route is
@@ -420,6 +467,7 @@ pub async fn run_simulation(
                         encounter: enc,
                         class_name: prey.class_name.to_string(),
                         hull_tons: prey.hull_tons,
+                        reason: PreyPassedReason::HoldFull,
                     },
                 );
             } else {
@@ -621,6 +669,7 @@ pub async fn run_simulation(
                 upcoming_upkeep,
                 ship_weapons: params.ship.weapons,
                 prize_run,
+                lying_low,
             };
             if proute::route_mode(&pctx_pre) == proute::RouteMode::FenceRun
                 && plundered_value > 0
@@ -731,6 +780,7 @@ pub async fn run_simulation(
                 upcoming_upkeep,
                 ship_weapons: params.ship.weapons,
                 prize_run,
+                lying_low,
             };
             let mode = proute::route_mode(&pctx_route);
             let next = match proute::pick_next_pirate(&candidates, mode, &pctx_route) {
