@@ -1708,6 +1708,7 @@ mod tests {
         let params = SimulationParams {
             ship: Ship {
                 name: "Test".into(),
+                captain_name: String::new(),
                 broker_skill: 0,
                 steward_skill: 0,
                 leadership_skill: 0,
@@ -1795,6 +1796,7 @@ mod tests {
         let params = SimulationParams {
             ship: Ship {
                 name: "Test".into(),
+                captain_name: String::new(),
                 broker_skill: 2,
                 steward_skill: 1,
                 leadership_skill: 1,
@@ -1860,6 +1862,7 @@ mod tests {
         let params = SimulationParams {
             ship: Ship {
                 name: "Test".into(),
+                captain_name: String::new(),
                 broker_skill: 0,
                 steward_skill: 0,
                 leadership_skill: 0,
@@ -1936,6 +1939,7 @@ mod tests {
             rng_seed: Some(42),
             ship: Ship {
                 name: "Black Kite".into(),
+                captain_name: String::new(),
                 broker_skill: 0,
                 steward_skill: 0,
                 leadership_skill: 2,

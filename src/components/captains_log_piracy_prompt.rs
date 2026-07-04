@@ -17,12 +17,13 @@ use crate::trade::ZoneClassification;
 
 /// Build the full pirate-log prompt string from a completed simulation.
 ///
-/// `ship_name` is taken from the simulator's `Ship::name` field. If blank,
-/// the data line tells the model to invent one in keeping with Traveller
-/// corsair naming. `tone` selects the tonal register of the instruction
-/// header.
+/// `ship_name` and `captain_name` are taken from the simulator's
+/// `Ship::name` / `Ship::captain_name` fields. When either is blank the data
+/// line tells the model to invent one in keeping with Traveller corsair
+/// naming. `tone` selects the tonal register of the instruction header.
 pub fn build_piracy_prompt(
     ship_name: &str,
+    captain_name: &str,
     params: &SimulationParams,
     steps: &[SimulationStep],
     result: &SimulationResult,
@@ -35,7 +36,7 @@ pub fn build_piracy_prompt(
 
     out.push_str(&header);
     out.push_str("\n== CRUISE DATA ==\n\n");
-    write_cruise_header(&mut out, ship_name, params, result);
+    write_cruise_header(&mut out, ship_name, captain_name, params, result);
 
     out.push_str("\n== CRUISE EVENTS (chronological) ==\n");
     for step in steps {
@@ -49,6 +50,7 @@ pub fn build_piracy_prompt(
 fn write_cruise_header(
     out: &mut String,
     ship_name: &str,
+    captain_name: &str,
     params: &SimulationParams,
     result: &SimulationResult,
 ) {
@@ -59,6 +61,15 @@ fn write_cruise_header(
         );
     } else {
         let _ = writeln!(out, "Ship: {trimmed}");
+    }
+
+    let captain = captain_name.trim();
+    if captain.is_empty() {
+        out.push_str(
+            "Captain: (unnamed — invent a name per the distribution in the instructions and use it consistently throughout)\n",
+        );
+    } else {
+        let _ = writeln!(out, "Captain: {captain}");
     }
 
     let home = &params.home_world;

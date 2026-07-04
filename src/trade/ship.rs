@@ -56,6 +56,11 @@ pub struct Ship {
     /// when this `Ship` is persisted server-side, so it must be unique
     /// per session.
     pub name: String,
+    /// Optional name of the captain. Purely narrative — like `name`, it has
+    /// no mechanical effect; the simulator's captain's-log generator uses it
+    /// (when non-empty) so the log names the right captain instead of
+    /// inventing one.
+    pub captain_name: String,
 
     // -- Capacity --------------------------------------------------------
     /// Cargo hold capacity in tons.
@@ -177,6 +182,7 @@ mod tests {
     fn ship_default_is_zeroed() {
         let ship = Ship::default();
         assert_eq!(ship.name, "");
+        assert_eq!(ship.captain_name, "");
         assert_eq!(ship.cargo_capacity, 0);
         assert_eq!(ship.jump_rating, 0);
         assert_eq!(ship.monthly_expenses(), 0);
@@ -186,6 +192,7 @@ mod tests {
     fn ship_round_trips_through_serde() {
         let ship = Ship {
             name: "Beowulf".to_string(),
+            captain_name: "Alois Kadmon".to_string(),
             cargo_capacity: 82,
             passenger_staterooms: 6,
             low_berths: 4,

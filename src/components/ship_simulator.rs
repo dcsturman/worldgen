@@ -428,6 +428,7 @@ pub fn ShipSimulator(
     // ---- Form state ----
     // Ship
     let ship_name = RwSignal::new(String::new());
+    let captain_name = RwSignal::new(String::new());
     let cargo_capacity = RwSignal::new(80i32);
     // A corsair berths a big boarding crew; pirates wilderness-refuel (no fuel
     // cost) and pay a heftier payroll.
@@ -555,6 +556,7 @@ pub fn ShipSimulator(
                 // narrative; the simulator itself runs against
                 // `home_world` for identity, not `ship.name`.
                 name: ship_name.get_untracked().trim().to_string(),
+                captain_name: captain_name.get_untracked().trim().to_string(),
                 broker_skill: broker_skill.get_untracked(),
                 steward_skill: steward_skill.get_untracked(),
                 leadership_skill: leadership_skill.get_untracked(),
@@ -643,6 +645,7 @@ pub fn ShipSimulator(
             <SimForm
                 mode=mode
                 ship_name=ship_name
+                captain_name=captain_name
                 cargo_capacity=cargo_capacity
                 crew_staterooms=crew_staterooms
                 passenger_staterooms=passenger_staterooms
@@ -727,6 +730,7 @@ pub fn ShipSimulator(
 fn SimForm(
     mode: RwSignal<SimulationMode>,
     ship_name: RwSignal<String>,
+    captain_name: RwSignal<String>,
     cargo_capacity: RwSignal<i32>,
     crew_staterooms: RwSignal<i32>,
     passenger_staterooms: RwSignal<i32>,
@@ -772,6 +776,16 @@ fn SimForm(
                             type="text"
                             placeholder="(optional — invent one)"
                             bind:value=ship_name
+                        />
+                    </label>
+                    <label>
+                        <span class="sim-label-row">
+                            "Captain name"
+                        </span>
+                        <input
+                            type="text"
+                            placeholder="(optional — invent one)"
+                            bind:value=captain_name
                         />
                     </label>
                     {move || is_piracy().then(|| view! {
@@ -1946,7 +1960,13 @@ fn CaptainsLog(
             let steps_ref = steps.read();
             match mode.get_untracked() {
                 SimulationMode::Trade => {
-                    build_prompt(&params.ship.name, &params, &steps_ref, &result)
+                    build_prompt(
+                        &params.ship.name,
+                        &params.ship.captain_name,
+                        &params,
+                        &steps_ref,
+                        &result,
+                    )
                 }
                 SimulationMode::Piracy => {
                     // The user picks Criminal vs Genteel; the Bloodthirsty
@@ -1958,7 +1978,14 @@ fn CaptainsLog(
                         }
                         _ => LogTone::CriminalReport,
                     };
-                    build_piracy_prompt(&params.ship.name, &params, &steps_ref, &result, tone)
+                    build_piracy_prompt(
+                        &params.ship.name,
+                        &params.ship.captain_name,
+                        &params,
+                        &steps_ref,
+                        &result,
+                        tone,
+                    )
                 }
             }
         };

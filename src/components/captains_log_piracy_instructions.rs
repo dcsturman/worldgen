@@ -57,8 +57,8 @@ const ROLE_TONE_GENTEEL: &str = r#"== ROLE & TONE ==
 - Euphemize relentlessly: you "invite a vessel to a voluntary redistribution of cargo"; a ship you crippled "experienced an unscheduled reduction in capability"; one you destroyed was "permanently retired from active service"; a crew you killed were "released from their obligations"; fencing is "liaising with a private acquisitions specialist"; a fence sting is "a regrettable lapse in our partner's discretion"; reputation is "our growing professional profile"; the navy is "the relevant authorities".
 - Refer to yourself in the first person ("I", "we"), unfailingly gracious about all of it."#;
 
-const REST: &str = r#"== INVENT YOUR CAPTAIN ONCE ==
-At the very start of the log, decide your captain's name and use it consistently throughout. Roll once on this distribution and KEEP THE SAME NAME for the whole entry; do not rename mid-log.
+const REST: &str = r#"== YOUR CAPTAIN ==
+If the cruise data line "Captain:" gives a name, that is YOUR captain — use exactly that name, spelled that way, consistently throughout, and do NOT roll on the distribution below. Only if that line reads "(unnamed ...)" do you invent one: decide your captain's name at the very start of the log by rolling once on this distribution, and KEEP THE SAME NAME for the whole entry; do not rename mid-log.
 
 - 40% Vilani (human, Imperial-core culture). Examples of style: Sumarrgha Lugaadiin, Khimkhi Naashar, Lugaadiin Kashagga. Tend to long, sibilant, doubled-consonant names.
 - 40% Solomani (human, Earth-derived). Real Earth-style names from any culture: Sarah Chen, Marcus Beaumont, Aleksei Volkov, Adaeze Okonkwo, Yuki Tanaka, Diego Marquez, Fatima al-Rashid.
