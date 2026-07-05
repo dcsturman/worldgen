@@ -154,6 +154,12 @@ pub async fn run_simulation(
         },
     );
 
+    // The world the pirate cruise makes for to *finish*: the destination when
+    // one is set, else the hideout (a round trip). The hideout (`home_world`)
+    // keeps its mid-cruise roles — law-0 fencing, prize banking, lie-low
+    // sanctuary — regardless.
+    let terminal_ref: &WorldRef = params.destination.as_ref().unwrap_or(&params.home_world);
+
     // === main loop =======================================================
     loop {
         // (1) Periodic costs.
@@ -268,9 +274,9 @@ pub async fn run_simulation(
 
             // Back at the hideout after travelling: a drop-off. Fence the hold
             // (best odds — treat the hideout as law 0) and bank any prizes,
-            // which frees the prize crews to take more. The cruise only *ends*
-            // here once we're heading home to finish (past the head-home
-            // threshold); earlier visits drop off and keep hunting.
+            // which frees the prize crews to take more. The cruise doesn't end
+            // here (unless the hideout is also the terminal, handled below);
+            // mid-cruise visits drop off and keep hunting.
             let at_home = jumps_taken > 0 && worldref_same_hex(&current_ref, &params.home_world);
             if at_home {
                 if plundered_value > 0
@@ -304,6 +310,15 @@ pub async fn run_simulation(
                 if !prizes.is_empty() {
                     delivered_prizes.append(&mut prizes);
                 }
+            }
+
+            // Reached the finish line — the destination when one is set, else
+            // the hideout. Once we're in the head-home window, arriving here
+            // ends the cruise. (With no destination, this coincides with the
+            // hideout drop-off above, preserving the round-trip behaviour.)
+            let at_terminal =
+                jumps_taken > 0 && worldref_same_hex(&current_ref, terminal_ref);
+            if at_terminal {
                 let total =
                     params.start_date.days_until(params.target_completion_date) as f64;
                 let elapsed = params.start_date.days_until(current_date) as f64;
@@ -312,15 +327,14 @@ pub async fn run_simulation(
                     returned_home = true;
                     break;
                 }
-                // Lying low at the hideout: don't sail back out into the heat.
-                // Sit in port and let the days bleed reputation down (the port
-                // stay and quiet-time decay run at the top of the loop). Resume
-                // once `lying_low` clears — i.e. reputation has cooled to
-                // `LAY_LOW_EXIT`.
-                if lying_low {
-                    continue;
-                }
-                // Mid-cruise drop-off: keep hunting.
+            }
+
+            // Lying low at the hideout: don't sail back out into the heat. Sit
+            // in port and let the days bleed reputation down (the port stay and
+            // quiet-time decay run at the top of the loop). Resume once
+            // `lying_low` clears — i.e. reputation has cooled to `LAY_LOW_EXIT`.
+            if at_home && lying_low {
+                continue;
             }
 
             // (P1) Encounter at the current system. A pirate never raids in
@@ -670,6 +684,7 @@ pub async fn run_simulation(
                 ship_weapons: params.ship.weapons,
                 prize_run,
                 lying_low,
+                terminal_hex: (terminal_ref.hex_x, terminal_ref.hex_y),
             };
             if proute::route_mode(&pctx_pre) == proute::RouteMode::FenceRun
                 && plundered_value > 0
@@ -781,6 +796,7 @@ pub async fn run_simulation(
                 ship_weapons: params.ship.weapons,
                 prize_run,
                 lying_low,
+                terminal_hex: (terminal_ref.hex_x, terminal_ref.hex_y),
             };
             let mode = proute::route_mode(&pctx_route);
             let next = match proute::pick_next_pirate(&candidates, mode, &pctx_route) {
@@ -1728,6 +1744,7 @@ mod tests {
             crew_profit_share: 0.0,
             starting_budget: 0,
             home_world: dummy_home(),
+            destination: None,
             start_date: crate::simulator::types::Date::new(0, 1105),
             target_completion_date: crate::simulator::types::Date::new(100, 1105),
             illegal_goods: false,
@@ -1823,6 +1840,7 @@ mod tests {
                 hex_y: 10,
                 zone: ZoneClassification::Green,
             },
+            destination: None,
             start_date: crate::simulator::types::Date::new(1, 1105),
             target_completion_date: crate::simulator::types::Date::new(180, 1105),
             illegal_goods: false,
@@ -1889,6 +1907,7 @@ mod tests {
                 hex_y: 10,
                 zone: ZoneClassification::Green,
             },
+            destination: None,
             start_date: crate::simulator::types::Date::new(1, 1105),
             target_completion_date: crate::simulator::types::Date::new(31, 1105),
             illegal_goods: false,
@@ -1966,6 +1985,7 @@ mod tests {
                 hex_y: 10,
                 zone: ZoneClassification::Green,
             },
+            destination: None,
             start_date: crate::simulator::types::Date::new(1, 1105),
             target_completion_date: crate::simulator::types::Date::new(180, 1105),
             illegal_goods: false,

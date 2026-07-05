@@ -332,6 +332,13 @@ pub struct SimulationParams {
 
     /// World the simulation starts at and tries to return to.
     pub home_world: WorldRef,
+    /// Optional cruise destination (Piracy mode only). When set, the pirate
+    /// cruise makes for this world to finish instead of looping back to the
+    /// hideout; the hideout (`home_world`) still serves as the mid-cruise
+    /// fence, prize bank, and lie-low sanctuary. `None` → round trip back to
+    /// `home_world` (the original behaviour). Ignored in Trade mode.
+    #[serde(default)]
+    pub destination: Option<WorldRef>,
     /// Date the simulation begins.
     pub start_date: Date,
     /// Target completion date — the executor pushes the planner to head

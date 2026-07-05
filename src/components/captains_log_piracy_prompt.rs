@@ -125,6 +125,21 @@ fn write_cruise_header(
         }
     }
 
+    if let Some(dest) = &params.destination {
+        let reached = result.returned_home && !result.marooned;
+        let _ = writeln!(
+            out,
+            "Cruise destination (one-way run — made for here to finish, NOT a round trip to the hideout): {} ({}, hex {:02}{:02}), UWP {}, {} zone — {}",
+            dest.name,
+            dest.sector,
+            dest.hex_x,
+            dest.hex_y,
+            dest.uwp,
+            zone_label(dest.zone),
+            if reached { "REACHED" } else { "did not reach" },
+        );
+    }
+
     if result.marooned
         && let (Some(loc), Some(on)) = (result.marooned_at.as_ref(), result.marooned_on)
     {

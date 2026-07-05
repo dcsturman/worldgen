@@ -1145,6 +1145,24 @@ datalist option {
 .sim-zone-amber { color: #f1c40f; font-weight: 600; }
 .sim-zone-red   { color: #e74c3c; font-weight: 600; }
 
+/* Inline "Clear" for the optional destination — a subtle text button that
+   drops the picked world and reverts to the round-trip-home behaviour. */
+.sim-dest-clear {
+  margin-left: 0.6rem;
+  padding: 0 0.4rem;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+  color: #bbb;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.sim-dest-clear:hover {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.45);
+}
+
 /* Trade / Piracy mode switch — a segmented control above the form. */
 .sim-mode-toggle {
   display: flex;

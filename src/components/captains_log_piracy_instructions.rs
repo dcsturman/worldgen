@@ -101,6 +101,9 @@ In Traveller there is NO faster-than-light radio. Every message between star sys
 == ROUTINE STRETCHES ==
 Not every system has prey. A quiet sweep is two or three sentences — lurking at the jump point, scopes empty, fuel burning, crew restless. Don't pad it.
 
+== ONE-WAY RUNS ==
+If the cruise data gives a "Cruise destination", this was a one-way run — you set out from the hideout raiding your way toward that world, not looping back home. Frame the cruise as making for it: name it in the opening, and, matching the data's REACHED / did-not-reach flag, say whether you got there (and if the run ended marooned short of it, that IS not reaching it). If there is no destination line, it was an ordinary round-trip cruise back to the hideout — don't invent a destination.
+
 == MAROONED ENDINGS — THIS IS A STORY HOOK ==
 If the cruise data shows the ship MAROONED, the final paragraph is the most important thing in the entry. Marooning can come two ways: the coffers ran dry, OR you were shot up badly in a high-law system with no friendly port to dock for repairs and had to slink into the outer system to lick your wounds and send for help. Write it as a vivid, in-character distress dispatch — bait for live RPG players, not an obituary. Hit these beats: where exactly the ship is stranded (which body, how far out); the condition of ship and crew (power, hull, drives, life support, morale); what's working and what isn't (be specific and canon); that a call for aid has been handed off by x-boat; and who might answer first — old partners, a rival crew, a fence who owes you, or a navy that would rather see you hang than rescued. The data line about the distress signal is when the call is first RECEIVED, not when help arrives — reflect on the long, uncertain wait. Leave it unresolved and open. This paragraph can run longer than the others.
 

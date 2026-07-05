@@ -491,6 +491,15 @@ pub fn ShipSimulator(
     let home_uwp = RwSignal::new("A788899-A".to_string());
     let home_zone = RwSignal::new(ZoneClassification::Green);
 
+    // Optional cruise destination (Piracy only). Blank by default → the ship
+    // returns to the hideout as before; set a world and the cruise makes for
+    // it to finish instead.
+    let dest_name = RwSignal::new(String::new());
+    let dest_sector = RwSignal::new(String::new());
+    let dest_coords = RwSignal::new(None::<(i32, i32)>);
+    let dest_uwp = RwSignal::new(String::new());
+    let dest_zone = RwSignal::new(ZoneClassification::Green);
+
     // Captain's-log tonal register (pirate mode). A persistent switch — not a
     // per-click roll — so regenerating a given ship's log keeps one voice.
     let log_tone = RwSignal::new(LogTone::CriminalReport);
@@ -590,6 +599,22 @@ pub fn ShipSimulator(
                     zone: home_zone.get_untracked(),
                 }
             },
+            // Optional destination: only when a world has actually been picked
+            // (name + coords). Blank → None → the original round-trip behaviour.
+            destination: {
+                let name = dest_name.get_untracked().trim().to_string();
+                match dest_coords.get_untracked() {
+                    Some((hex_x, hex_y)) if !name.is_empty() => Some(WorldRef {
+                        name,
+                        uwp: dest_uwp.get_untracked(),
+                        sector: dest_sector.get_untracked(),
+                        hex_x,
+                        hex_y,
+                        zone: dest_zone.get_untracked(),
+                    }),
+                    _ => None,
+                }
+            },
             start_date: parse_ddd_yyyy(&start_date_text.get_untracked())
                 .unwrap_or_else(|| Date::new(1, 1105)),
             target_completion_date: parse_ddd_yyyy(&target_date_text.get_untracked())
@@ -673,6 +698,11 @@ pub fn ShipSimulator(
                 home_coords=home_coords
                 home_uwp=home_uwp
                 home_zone=home_zone
+                dest_name=dest_name
+                dest_sector=dest_sector
+                dest_coords=dest_coords
+                dest_uwp=dest_uwp
+                dest_zone=dest_zone
             />
 
             <div class="sim-controls no-print">
@@ -758,6 +788,11 @@ fn SimForm(
     home_coords: RwSignal<Option<(i32, i32)>>,
     home_uwp: RwSignal<String>,
     home_zone: RwSignal<ZoneClassification>,
+    dest_name: RwSignal<String>,
+    dest_sector: RwSignal<String>,
+    dest_coords: RwSignal<Option<(i32, i32)>>,
+    dest_uwp: RwSignal<String>,
+    dest_zone: RwSignal<ZoneClassification>,
 ) -> impl IntoView {
     // Reactive predicate so the form re-renders its mode-specific fields when
     // the Trade/Piracy toggle flips. Copy (captures only the Copy `mode`
@@ -1147,6 +1182,67 @@ fn SimForm(
                     }}
                 </div>
             </fieldset>
+
+            {move || is_piracy().then(|| view! {
+                <fieldset class="sim-fieldset">
+                    <legend>"Destination (optional)"</legend>
+                    <WorldSearch
+                        label="Destination".to_string()
+                        name=dest_name
+                        uwp=dest_uwp
+                        coords=dest_coords
+                        zone=dest_zone
+                        sector=dest_sector
+                        show_uwp=false
+                    />
+                    <div class="sim-home-summary">
+                        {move || {
+                            let coords = dest_coords.get();
+                            let sector = dest_sector.get();
+                            let uwp = dest_uwp.get();
+                            let zone = dest_zone.get();
+                            if let Some((hx, hy)) = coords && !sector.is_empty() && uwp.len() == 9 {
+                                view! {
+                                    <div class="sim-home-detail">
+                                        <div>
+                                            <strong>{sector}</strong>
+                                            " · hex "
+                                            <code>{format!("{:02}{:02}", hx, hy)}</code>
+                                            " · UWP "
+                                            <code>{uwp}</code>
+                                        </div>
+                                        <div>
+                                            <span class={format!("sim-zone-{}", zone.to_string().to_lowercase())}>
+                                                {zone.to_string()}
+                                            </span>
+                                            " zone"
+                                            <button
+                                                type="button"
+                                                class="sim-dest-clear"
+                                                on:click=move |_| {
+                                                    dest_name.set(String::new());
+                                                    dest_sector.set(String::new());
+                                                    dest_coords.set(None);
+                                                    dest_uwp.set(String::new());
+                                                    dest_zone.set(ZoneClassification::Green);
+                                                }
+                                            >
+                                                "Clear"
+                                            </button>
+                                        </div>
+                                    </div>
+                                }.into_any()
+                            } else {
+                                view! {
+                                    <div class="sim-home-detail sim-home-empty">
+                                        "Leave blank to return to the hideout, or search for a world to make for."
+                                    </div>
+                                }.into_any()
+                            }
+                        }}
+                    </div>
+                </fieldset>
+            })}
 
             <fieldset class="sim-fieldset">
                 <legend>"Voyage"</legend>
@@ -1864,6 +1960,17 @@ fn SimSummary(
                                     </span>
                                 </div>
                             })}
+                            {(is_piracy && !marooned)
+                                .then(|| last_params.get().and_then(|p| p.destination))
+                                .flatten()
+                                .map(|dest| view! {
+                                    <div class="sim-summary-row">
+                                        <span class="sim-summary-label">{format!("Reached {}?", dest.name)}</span>
+                                        <span class="sim-summary-value">
+                                            {if r.returned_home { "Yes" } else { "No" }}
+                                        </span>
+                                    </div>
+                                })}
                             <div class="sim-summary-row">
                                 <span class="sim-summary-label">"Went negative?"</span>
                                 <span class="sim-summary-value">
