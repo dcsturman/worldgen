@@ -500,6 +500,12 @@ pub fn ShipSimulator(
     let dest_uwp = RwSignal::new(String::new());
     let dest_zone = RwSignal::new(ZoneClassification::Green);
 
+    // Haven flags: a haven is a safe port where the pirate fences at law 0,
+    // banks prizes, and lies low. The hideout defaults to a haven; the
+    // destination defaults to a plain waypoint.
+    let home_haven = RwSignal::new(true);
+    let dest_haven = RwSignal::new(false);
+
     // Captain's-log tonal register (pirate mode). A persistent switch — not a
     // per-click roll — so regenerating a given ship's log keeps one voice.
     let log_tone = RwSignal::new(LogTone::CriminalReport);
@@ -599,6 +605,8 @@ pub fn ShipSimulator(
                     zone: home_zone.get_untracked(),
                 }
             },
+            home_is_haven: home_haven.get_untracked(),
+            destination_is_haven: dest_haven.get_untracked(),
             // Optional destination: only when a world has actually been picked
             // (name + coords). Blank → None → the original round-trip behaviour.
             destination: {
@@ -703,6 +711,8 @@ pub fn ShipSimulator(
                 dest_coords=dest_coords
                 dest_uwp=dest_uwp
                 dest_zone=dest_zone
+                home_haven=home_haven
+                dest_haven=dest_haven
             />
 
             <div class="sim-controls no-print">
@@ -793,6 +803,8 @@ fn SimForm(
     dest_coords: RwSignal<Option<(i32, i32)>>,
     dest_uwp: RwSignal<String>,
     dest_zone: RwSignal<ZoneClassification>,
+    home_haven: RwSignal<bool>,
+    dest_haven: RwSignal<bool>,
 ) -> impl IntoView {
     // Reactive predicate so the form re-renders its mode-specific fields when
     // the Trade/Piracy toggle flips. Copy (captures only the Copy `mode`
@@ -1148,6 +1160,16 @@ fn SimForm(
                     sector=home_sector
                     show_uwp=false
                 />
+                {move || is_piracy().then(|| view! {
+                    <label class="sim-haven-toggle">
+                        <input
+                            type="checkbox"
+                            prop:checked=move || home_haven.get()
+                            on:change=move |ev| home_haven.set(event_target_checked(&ev))
+                        />
+                        <span>"Haven — safe port to fence, bank prizes & lie low"</span>
+                    </label>
+                })}
                 <div class="sim-home-summary">
                     {move || {
                         let coords = home_coords.get();
@@ -1195,6 +1217,14 @@ fn SimForm(
                         sector=dest_sector
                         show_uwp=false
                     />
+                    <label class="sim-haven-toggle">
+                        <input
+                            type="checkbox"
+                            prop:checked=move || dest_haven.get()
+                            on:change=move |ev| dest_haven.set(event_target_checked(&ev))
+                        />
+                        <span>"Haven — safe port to fence, bank prizes & lie low"</span>
+                    </label>
                     <div class="sim-home-summary">
                         {move || {
                             let coords = dest_coords.get();

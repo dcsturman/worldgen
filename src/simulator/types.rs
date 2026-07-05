@@ -332,6 +332,13 @@ pub struct SimulationParams {
 
     /// World the simulation starts at and tries to return to.
     pub home_world: WorldRef,
+    /// Whether the home world is a **haven** (Piracy mode) — a safe port
+    /// where the pirate fences the whole hold at best odds (law 0), banks
+    /// captured prizes, and lies low to let the heat cool. Defaults to `true`
+    /// (the hideout). Turn it off and the home world is only a start point,
+    /// with no safe fencing / prize bank / lie-low there.
+    #[serde(default = "default_true")]
+    pub home_is_haven: bool,
     /// Optional cruise destination (Piracy mode only). When set, the pirate
     /// cruise makes for this world to finish instead of looping back to the
     /// hideout; the hideout (`home_world`) still serves as the mid-cruise
@@ -339,6 +346,12 @@ pub struct SimulationParams {
     /// `home_world` (the original behaviour). Ignored in Trade mode.
     #[serde(default)]
     pub destination: Option<WorldRef>,
+    /// Whether the destination is also a **haven** (see `home_is_haven`).
+    /// Defaults to `false` — the destination is just where the cruise is
+    /// headed, not necessarily a safe port. Ignored when `destination` is
+    /// `None`.
+    #[serde(default)]
+    pub destination_is_haven: bool,
     /// Date the simulation begins.
     pub start_date: Date,
     /// Target completion date — the executor pushes the planner to head
@@ -361,6 +374,10 @@ pub struct SimulationParams {
 
 fn default_planetary_broker_skill() -> i16 {
     2
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Per-step record. Streamed to the UI as the simulation runs.

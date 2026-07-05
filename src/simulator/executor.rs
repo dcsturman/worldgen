@@ -155,10 +155,25 @@ pub async fn run_simulation(
     );
 
     // The world the pirate cruise makes for to *finish*: the destination when
-    // one is set, else the hideout (a round trip). The hideout (`home_world`)
-    // keeps its mid-cruise roles — law-0 fencing, prize banking, lie-low
-    // sanctuary — regardless.
+    // one is set, else the hideout (a round trip). Independent of haven status.
     let terminal_ref: &WorldRef = params.destination.as_ref().unwrap_or(&params.home_world);
+
+    // The pirate's havens — safe ports where it fences the whole hold at law 0,
+    // banks prizes, and lies low. The home world and/or the destination, per
+    // their haven flags. Usually just the home world (the hideout).
+    let havens: Vec<&WorldRef> = {
+        let mut v: Vec<&WorldRef> = Vec::new();
+        if params.home_is_haven {
+            v.push(&params.home_world);
+        }
+        if params.destination_is_haven
+            && let Some(dest) = params.destination.as_ref()
+        {
+            v.push(dest);
+        }
+        v
+    };
+    let haven_hexes: Vec<(i32, i32)> = havens.iter().map(|w| (w.hex_x, w.hex_y)).collect();
 
     // === main loop =======================================================
     loop {
@@ -272,13 +287,17 @@ pub async fn run_simulation(
                 lying_low = false;
             }
 
-            // Back at the hideout after travelling: a drop-off. Fence the hold
-            // (best odds — treat the hideout as law 0) and bank any prizes,
-            // which frees the prize crews to take more. The cruise doesn't end
-            // here (unless the hideout is also the terminal, handled below);
-            // mid-cruise visits drop off and keep hunting.
-            let at_home = jumps_taken > 0 && worldref_same_hex(&current_ref, &params.home_world);
-            if at_home {
+            // Are we sitting at one of our havens (a safe port)?
+            let at_haven = havens
+                .iter()
+                .any(|h| worldref_same_hex(&current_ref, h));
+
+            // Put in at a haven after travelling: a drop-off. Fence the hold
+            // (best odds — a haven counts as law 0) and bank any prizes, which
+            // frees the prize crews to take more. The cruise doesn't end here
+            // (unless the haven is also the terminal, handled below); mid-cruise
+            // visits drop off and keep hunting.
+            if jumps_taken > 0 && at_haven {
                 if plundered_value > 0
                     && let Some(out) = fencing::fence(plundered_value, leadership, 0, &mut pirate_rng)
                 {
@@ -329,24 +348,23 @@ pub async fn run_simulation(
                 }
             }
 
-            // Lying low at the hideout: don't sail back out into the heat. Sit
-            // in port and let the days bleed reputation down (the port stay and
+            // Lying low at a haven: don't sail back out into the heat. Sit in
+            // port and let the days bleed reputation down (the port stay and
             // quiet-time decay run at the top of the loop). Resume once
             // `lying_low` clears — i.e. reputation has cooled to `LAY_LOW_EXIT`.
-            if at_home && lying_low {
+            if at_haven && lying_low {
                 continue;
             }
 
-            // (P1) Encounter at the current system. A pirate never raids in
-            // its own home port — at the hideout it just lies low and sails.
-            let at_hideout = worldref_same_hex(&current_ref, &params.home_world);
+            // (P1) Encounter at the current system. A pirate never raids at
+            // one of its own havens — a safe port it just lies low in and sails.
             let mut dms = encounter::encounter_dms(&current_world, current_allegiance.as_deref());
             // A hunted pirate (reputation 20+) draws active patrols: +1 to the
             // security die means defenders turn up more often.
             if reputation > HUNTED_REPUTATION {
                 dms.security += 1;
             }
-            let (d1, d2, enc) = if at_hideout {
+            let (d1, d2, enc) = if at_haven {
                 (0, 0, EncounterType::None)
             } else {
                 let (d1, d2) = encounter::roll_d66_clamped(&dms, &mut pirate_rng);
@@ -685,6 +703,7 @@ pub async fn run_simulation(
                 prize_run,
                 lying_low,
                 terminal_hex: (terminal_ref.hex_x, terminal_ref.hex_y),
+                haven_hexes: haven_hexes.clone(),
             };
             if proute::route_mode(&pctx_pre) == proute::RouteMode::FenceRun
                 && plundered_value > 0
@@ -797,6 +816,7 @@ pub async fn run_simulation(
                 prize_run,
                 lying_low,
                 terminal_hex: (terminal_ref.hex_x, terminal_ref.hex_y),
+                haven_hexes: haven_hexes.clone(),
             };
             let mode = proute::route_mode(&pctx_route);
             let next = match proute::pick_next_pirate(&candidates, mode, &pctx_route) {
@@ -1745,6 +1765,8 @@ mod tests {
             starting_budget: 0,
             home_world: dummy_home(),
             destination: None,
+            home_is_haven: true,
+            destination_is_haven: false,
             start_date: crate::simulator::types::Date::new(0, 1105),
             target_completion_date: crate::simulator::types::Date::new(100, 1105),
             illegal_goods: false,
@@ -1841,6 +1863,8 @@ mod tests {
                 zone: ZoneClassification::Green,
             },
             destination: None,
+            home_is_haven: true,
+            destination_is_haven: false,
             start_date: crate::simulator::types::Date::new(1, 1105),
             target_completion_date: crate::simulator::types::Date::new(180, 1105),
             illegal_goods: false,
@@ -1908,6 +1932,8 @@ mod tests {
                 zone: ZoneClassification::Green,
             },
             destination: None,
+            home_is_haven: true,
+            destination_is_haven: false,
             start_date: crate::simulator::types::Date::new(1, 1105),
             target_completion_date: crate::simulator::types::Date::new(31, 1105),
             illegal_goods: false,
@@ -1986,6 +2012,8 @@ mod tests {
                 zone: ZoneClassification::Green,
             },
             destination: None,
+            home_is_haven: true,
+            destination_is_haven: false,
             start_date: crate::simulator::types::Date::new(1, 1105),
             target_completion_date: crate::simulator::types::Date::new(180, 1105),
             illegal_goods: false,

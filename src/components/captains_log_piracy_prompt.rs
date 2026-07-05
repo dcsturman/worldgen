@@ -73,9 +73,15 @@ fn write_cruise_header(
     }
 
     let home = &params.home_world;
+    let home_role = if params.home_is_haven {
+        "hideout / home base (a safe haven — fence at best odds, bank prizes, and lie low here)"
+    } else {
+        "home base / start point (NOT a safe haven — no friendly fence, prize bank, or bolt-hole here)"
+    };
     let _ = writeln!(
         out,
-        "Hideout / home base: {} ({}, hex {:02}{:02}), UWP {}, {} zone",
+        "Start world — {}: {} ({}, hex {:02}{:02}), UWP {}, {} zone",
+        home_role,
         home.name,
         home.sector,
         home.hex_x,
@@ -127,9 +133,14 @@ fn write_cruise_header(
 
     if let Some(dest) = &params.destination {
         let reached = result.returned_home && !result.marooned;
+        let haven_note = if params.destination_is_haven {
+            " This destination is also a safe haven — a friendly port to fence, bank prizes, and lie low."
+        } else {
+            ""
+        };
         let _ = writeln!(
             out,
-            "Cruise destination (one-way run — made for here to finish, NOT a round trip to the hideout): {} ({}, hex {:02}{:02}), UWP {}, {} zone — {}",
+            "Cruise destination (one-way run — made for here to finish, NOT a round trip to the hideout): {} ({}, hex {:02}{:02}), UWP {}, {} zone — {}.{}",
             dest.name,
             dest.sector,
             dest.hex_x,
@@ -137,6 +148,7 @@ fn write_cruise_header(
             dest.uwp,
             zone_label(dest.zone),
             if reached { "REACHED" } else { "did not reach" },
+            haven_note,
         );
     }
 

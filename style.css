@@ -1163,6 +1163,23 @@ datalist option {
   border-color: rgba(255, 255, 255, 0.45);
 }
 
+/* "Haven" flag under the Home Base / Destination search — marks a world as a
+   safe port (fence at law 0, bank prizes, lie low). */
+.sim-haven-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+  color: #ddd;
+  cursor: pointer;
+}
+
+.sim-haven-toggle input {
+  width: auto;
+  margin: 0;
+}
+
 /* Trade / Piracy mode switch — a segmented control above the form. */
 .sim-mode-toggle {
   display: flex;
