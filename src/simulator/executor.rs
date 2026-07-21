@@ -24,7 +24,7 @@ use crate::simulator::types::{
     Action, ActTier, Date, EncounterOutcome, EncounterType, PreyPassedReason, Prize,
     SimulationMode, SimulationParams, SimulationResult, SimulationStep, WorldRef,
 };
-use crate::simulator::world_fetch::{FetchError, WorldCache};
+use crate::simulator::world_fetch::{self, FetchError, WorldCache};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use crate::systems::world::World;
@@ -154,26 +154,48 @@ pub async fn run_simulation(
         },
     );
 
-    // The world the pirate cruise makes for to *finish*: the destination when
-    // one is set, else the hideout (a round trip). Independent of haven status.
-    let terminal_ref: &WorldRef = params.destination.as_ref().unwrap_or(&params.home_world);
+    // Resolve home and destination to **absolute** hex coordinates — the
+    // simulator's canonical space for all routing math, so home, destination,
+    // and candidates can sit in different sectors. Two `/api/coordinates`
+    // lookups at most, cached in the WorldCache.
+    let home_abs = world_fetch::absolute_hex(
+        cache.sector_offset(&params.home_world.sector).await?,
+        (params.home_world.hex_x, params.home_world.hex_y),
+    );
+    let dest_abs: Option<(i32, i32)> = match params.destination.as_ref() {
+        Some(d) => Some(world_fetch::absolute_hex(
+            cache.sector_offset(&d.sector).await?,
+            (d.hex_x, d.hex_y),
+        )),
+        None => None,
+    };
+    let mut current_abs = home_abs;
+
+    // The absolute hex the trip makes for to *finish*: the destination when
+    // one is set, else home/the hideout (a round trip). Independent of haven
+    // status.
+    let terminal_abs = dest_abs.unwrap_or(home_abs);
+    // A distinct destination makes this a one-way "direct run": the trade
+    // planner steers for the terminal from the start instead of exploring then
+    // looping home. Only consumed by the merchant planner (`route::pick_next`);
+    // the pirate planner has its own terminal handling.
+    let direct_run = params.destination.is_some();
 
     // The pirate's havens — safe ports where it fences the whole hold at law 0,
     // banks prizes, and lies low. The home world and/or the destination, per
     // their haven flags. Usually just the home world (the hideout).
-    let havens: Vec<&WorldRef> = {
-        let mut v: Vec<&WorldRef> = Vec::new();
+    let haven_abs: Vec<(i32, i32)> = {
+        let mut v: Vec<(i32, i32)> = Vec::new();
         if params.home_is_haven {
-            v.push(&params.home_world);
+            v.push(home_abs);
         }
         if params.destination_is_haven
-            && let Some(dest) = params.destination.as_ref()
+            && let Some(da) = dest_abs
         {
-            v.push(dest);
+            v.push(da);
         }
         v
     };
-    let haven_hexes: Vec<(i32, i32)> = havens.iter().map(|w| (w.hex_x, w.hex_y)).collect();
 
     // === main loop =======================================================
     loop {
@@ -288,9 +310,7 @@ pub async fn run_simulation(
             }
 
             // Are we sitting at one of our havens (a safe port)?
-            let at_haven = havens
-                .iter()
-                .any(|h| worldref_same_hex(&current_ref, h));
+            let at_haven = haven_abs.contains(&current_abs);
 
             // Put in at a haven after travelling: a drop-off. Fence the hold
             // (best odds — a haven counts as law 0) and bank any prizes, which
@@ -335,8 +355,7 @@ pub async fn run_simulation(
             // the hideout. Once we're in the head-home window, arriving here
             // ends the cruise. (With no destination, this coincides with the
             // hideout drop-off above, preserving the round-trip behaviour.)
-            let at_terminal =
-                jumps_taken > 0 && worldref_same_hex(&current_ref, terminal_ref);
+            let at_terminal = jumps_taken > 0 && current_abs == terminal_abs;
             if at_terminal {
                 let total =
                     params.start_date.days_until(params.target_completion_date) as f64;
@@ -676,13 +695,15 @@ pub async fn run_simulation(
 
             // Build the routing context (current_date may have advanced).
             let base_ctx = RouteContext {
-                home: &params.home_world,
+                terminal_abs,
+                current_abs,
                 current_date,
                 start_date: params.start_date,
                 target_date: params.target_completion_date,
                 jump: params.ship.jump_rating as i32,
                 fuel_cost_per_parsec: params.fuel_cost_per_parsec,
                 history: &history,
+                direct_run,
             };
             let upcoming_upkeep =
                 params.ship.monthly_expenses() + params.ship.crew_life_support_per_jump();
@@ -702,8 +723,8 @@ pub async fn run_simulation(
                 ship_weapons: params.ship.weapons,
                 prize_run,
                 lying_low,
-                terminal_hex: (terminal_ref.hex_x, terminal_ref.hex_y),
-                haven_hexes: haven_hexes.clone(),
+                terminal_abs,
+                haven_abs: haven_abs.clone(),
             };
             if proute::route_mode(&pctx_pre) == proute::RouteMode::FenceRun
                 && plundered_value > 0
@@ -815,8 +836,8 @@ pub async fn run_simulation(
                 ship_weapons: params.ship.weapons,
                 prize_run,
                 lying_low,
-                terminal_hex: (terminal_ref.hex_x, terminal_ref.hex_y),
-                haven_hexes: haven_hexes.clone(),
+                terminal_abs,
+                haven_abs: haven_abs.clone(),
             };
             let mode = proute::route_mode(&pctx_route);
             let next = match proute::pick_next_pirate(&candidates, mode, &pctx_route) {
@@ -835,7 +856,7 @@ pub async fn run_simulation(
                     break;
                 }
             };
-            let next_ref = world_ref_for(&next.world, &current_ref.sector);
+            let next_ref = world_ref_for(&next.world, &next.sector);
 
             // (P7) Pay fuel and jump.
             let fuel_for_jump = (next.distance as i64) * params.fuel_cost_per_parsec;
@@ -860,6 +881,7 @@ pub async fn run_simulation(
             }
             current_world = next.world.clone();
             current_ref = next_ref.clone();
+            current_abs = next.abs;
             current_allegiance = next.allegiance.clone();
             current_date = current_date.add_days(DAYS_PER_JUMP);
             days_since_payment += DAYS_PER_JUMP;
@@ -916,12 +938,14 @@ pub async fn run_simulation(
             }
         }
 
-        // (4) End-of-trip detection. We're home and have actually travelled.
-        // Price and sell whatever's still in the hold (anything we bought on
-        // the last leg expecting to sell at home), then break out of the
-        // loop. Without this, profitable cargo bought for the home leg sits
-        // unrealized and the trip P&L is skewed by hundreds of kCr.
-        let at_home = jumps_taken > 0 && worldref_same_hex(&current_ref, &params.home_world);
+        // (4) End-of-trip detection. We've reached the terminal — the
+        // destination when one is set, else home — and have actually
+        // travelled. Price and sell whatever's still in the hold (anything we
+        // bought on the last leg expecting to sell at the finish), then break
+        // out of the loop. Without this, profitable cargo bought for the final
+        // leg sits unrealized and the trip P&L is skewed by hundreds of kCr.
+        // The planner's first-half exclusion keeps us from arriving here early.
+        let at_terminal = jumps_taken > 0 && current_abs == terminal_abs;
 
         // (5) Generate this port's market and price to buy locally.
         let trade_table = TradeTable::global();
@@ -996,11 +1020,11 @@ pub async fn run_simulation(
             }
         }
 
-        // (5b) End-of-trip settlement. If we're back home, realize the sale
-        // revenue from the cargo we just priced and break. We pass empty
-        // `buy_goods` and `None` passengers because the next-jump prep
-        // (steps 7-10) is skipped when at home.
-        if at_home {
+        // (5b) End-of-trip settlement. If we've reached the terminal, realize
+        // the sale revenue from the cargo we just priced and break. We pass
+        // empty `buy_goods` and `None` passengers because the next-jump prep
+        // (steps 7-10) is skipped at the finish.
+        if at_terminal {
             // Sale proceeds were already applied to `budget` per-good in
             // step (5); we just need to flush the manifest mutations
             // (clear sold cargo) without double-counting revenue.
@@ -1032,13 +1056,15 @@ pub async fn run_simulation(
         }
 
         let ctx = RouteContext {
-            home: &params.home_world,
+            terminal_abs,
+            current_abs,
             current_date,
             start_date: params.start_date,
             target_date: params.target_completion_date,
             jump: params.ship.jump_rating as i32,
             fuel_cost_per_parsec: params.fuel_cost_per_parsec,
             history: &history,
+            direct_run,
         };
         let next = match route::pick_next(&candidates, &market, &ctx) {
             Some(n) => n,
@@ -1056,7 +1082,7 @@ pub async fn run_simulation(
                 break;
             }
         };
-        let next_ref = world_ref_for(&next.world, &current_ref.sector);
+        let next_ref = world_ref_for(&next.world, &next.sector);
 
         // (7) PAX FIRST: each passenger reserves a personal-cargo
         // allotment (1 ton high, 0.1 medium, 0.01 basic, 0 low), so we
@@ -1267,6 +1293,7 @@ pub async fn run_simulation(
         }
         current_world = next.world.clone();
         current_ref = next_ref.clone();
+        current_abs = next.abs;
         current_allegiance = next.allegiance.clone();
         // Jump time only — the port stay was already added at step (2b).
         current_date = current_date.add_days(DAYS_PER_JUMP);
@@ -1566,9 +1593,9 @@ fn emit(
     });
 }
 
-/// Build a `WorldRef` for one of the executor's neighbouring worlds.
-/// In v1 the simulator stays in-sector so we propagate the current
-/// sector unchanged.
+/// Build a `WorldRef` for one of the executor's neighbouring worlds,
+/// stamped with the candidate's **own** sector — which may differ from
+/// the current location's when a jump crosses a sector boundary.
 fn world_ref_for(world: &World, sector: &str) -> WorldRef {
     let (hex_x, hex_y) = world.coordinates.unwrap_or((0, 0));
     WorldRef {
@@ -1579,13 +1606,6 @@ fn world_ref_for(world: &World, sector: &str) -> WorldRef {
         hex_y,
         zone: world.travel_zone,
     }
-}
-
-/// Two `WorldRef`s point at the same world iff they share sector and
-/// hex. We don't compare names or UWPs because either could differ
-/// between the user's input and what TravellerMap returned.
-fn worldref_same_hex(a: &WorldRef, b: &WorldRef) -> bool {
-    a.sector == b.sector && a.hex_x == b.hex_x && a.hex_y == b.hex_y
 }
 
 /// Quick upper-bound estimate of life-support + stateroom costs we
@@ -1726,17 +1746,6 @@ mod tests {
             hex_y: 10,
             zone: ZoneClassification::Green,
         }
-    }
-
-    #[test]
-    fn worldref_same_hex_compares_sector_and_hex() {
-        let a = dummy_home();
-        let mut b = a.clone();
-        b.name = "Different".to_string();
-        b.uwp = "X000000-0".to_string();
-        assert!(worldref_same_hex(&a, &b));
-        b.hex_x = 11;
-        assert!(!worldref_same_hex(&a, &b));
     }
 
     #[test]
@@ -1891,6 +1900,96 @@ mod tests {
         eprintln!("Steps: {}", step_count);
         eprintln!("Result: {:#?}", result);
         assert!(result.jumps > 0, "should have made at least one jump");
+    }
+
+    /// Cross-sector smoke: Drinax (Trojan Reach 2223) to Regina (Spinward
+    /// Marches 1910) with jump 4 — ~54 parsecs, crossing the sector seam.
+    /// Exercises the jumpworlds candidate fetch, absolute-coordinate
+    /// routing, and the direct-run destination pull end to end. Ignored
+    /// because it requires network (one jumpworlds call per jump).
+    #[tokio::test]
+    #[ignore]
+    async fn simulator_smoke_drinax_to_regina() {
+        let _ = env_logger::Builder::from_default_env()
+            .is_test(true)
+            .try_init();
+        let params = SimulationParams {
+            ship: Ship {
+                name: "Harrier".into(),
+                captain_name: String::new(),
+                broker_skill: 2,
+                steward_skill: 1,
+                leadership_skill: 1,
+                weapons: 2,
+                thrust: 0,
+                cargo_capacity: 80,
+                crew_staterooms: 4,
+                passenger_staterooms: 6,
+                low_berths: 4,
+                jump_rating: 4,
+                crew_size: 4,
+                mortgage_per_period: 0,
+                maintenance_per_period: 30_000,
+                salary_per_period: 12_000,
+            },
+            fuel_cost_per_parsec: 5_000,
+            crew_profit_share: 0.1,
+            starting_budget: 2_000_000,
+            home_world: WorldRef {
+                name: "Drinax".to_string(),
+                uwp: "A43645A-E".to_string(),
+                sector: "Trojan Reach".to_string(),
+                hex_x: 22,
+                hex_y: 23,
+                zone: ZoneClassification::Green,
+            },
+            destination: Some(WorldRef {
+                name: "Regina".to_string(),
+                uwp: "A788899-A".to_string(),
+                sector: "Spinward Marches".to_string(),
+                hex_x: 19,
+                hex_y: 10,
+                zone: ZoneClassification::Green,
+            }),
+            home_is_haven: true,
+            destination_is_haven: false,
+            // ~54 parsecs at J-4 is ~15 jumps; every visit costs 14+ days
+            // (port + jump), and a single Government Complication incident
+            // can eat 2d6 *weeks*, so a realistic worst case runs 500+
+            // days. The strict-progress filter steers from the first hop
+            // regardless of the target date; the generous target just keeps
+            // the overflow-abort guard out of the picture.
+            start_date: crate::simulator::types::Date::new(1, 1105),
+            target_completion_date: crate::simulator::types::Date::new(300, 1106),
+            illegal_goods: false,
+            planetary_broker_skill: 2,
+            mode: SimulationMode::Trade,
+            attitude: Attitude::Hungry,
+            starting_reputation: 0.0,
+            rng_seed: None,
+        };
+        let mut cache = WorldCache::new();
+        let result = run_simulation(params, &mut cache, |s| {
+            if let Action::Arrive { distance, .. } = &s.action {
+                eprintln!(
+                    "[{}] arrived {} ({}, {:02}{:02}) after J-{}",
+                    s.date.format(),
+                    s.location.name,
+                    s.location.sector,
+                    s.location.hex_x,
+                    s.location.hex_y,
+                    distance
+                );
+            }
+        })
+        .await
+        .expect("simulation should complete");
+        eprintln!("Result: jumps={} returned_home={}", result.jumps, result.returned_home);
+        assert!(
+            result.returned_home,
+            "ship should reach Regina (marooned={} reason={:?})",
+            result.marooned, result.marooned_reason
+        );
     }
 
     /// Marooning smoke: starve the ship of cash and confirm it terminates

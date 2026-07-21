@@ -18,9 +18,21 @@ use crate::trade::table::TradeTable;
 use crate::util::calculate_hex_distance;
 
 /// One destination world the planner is considering.
+#[derive(Clone)]
 pub struct Candidate {
-    /// The candidate world (already populated, with trade classes).
+    /// The candidate world (already populated, with trade classes). Its
+    /// `coordinates` are the **sector-local** hex, matching the wire-format
+    /// `WorldRef` the frontend renders.
     pub world: World,
+    /// Canonical TravellerMap sector name this world belongs to — its *own*
+    /// sector, which may differ from the current location's when the jump
+    /// neighbourhood spills across a sector boundary.
+    pub sector: String,
+    /// Absolute hex coordinates: `(sx*32 + hex_x, sy*40 + hex_y)` where
+    /// `(sx, sy)` are the sector's TravellerMap offsets. Globally unique and
+    /// parity-preserving, so `calculate_hex_distance` works across sector
+    /// boundaries. All planner distance math uses these.
+    pub abs: (i32, i32),
     /// Distance in parsecs from the current location to this candidate.
     pub distance: i32,
     /// TravellerMap allegiance code (e.g. `"Im"`, `"ImAp"`, `"AsT4"`,
@@ -39,8 +51,15 @@ pub struct Candidate {
 /// `history` is interpreted as **most-recent first** — index `0` is the
 /// last world we visited, index `1` is the one before that, etc.
 pub struct RouteContext<'a> {
-    /// Home world (for the "head home" bias and forced-home override).
-    pub home: &'a WorldRef,
+    /// Absolute hex of the world the trip makes for to *finish*: the
+    /// destination when one is set, else the home world (a round trip).
+    /// Drives the terminal bias, the forced-terminal override, the
+    /// head-for-finish spiral, and the first-half exclusion (so the trip
+    /// doesn't end early by arriving at the finish world). Once the ship has
+    /// left, routing only ever cares about where it's headed — this hex —
+    /// not where it started. Absolute (see [`Candidate::abs`]) so a terminal
+    /// in another sector still exerts a correct pull.
+    pub terminal_abs: (i32, i32),
     /// Current in-game date.
     pub current_date: Date,
     /// Date the run started — used to compute trip progress.
@@ -54,8 +73,24 @@ pub struct RouteContext<'a> {
     pub jump: i32,
     /// Fuel cost per parsec, used by the distance penalty.
     pub fuel_cost_per_parsec: i64,
+    /// Absolute hex of the ship's current position. On a direct run this
+    /// anchors the strict-progress filter: only candidates strictly closer
+    /// to the terminal than we are now stay in the pool.
+    pub current_abs: (i32, i32),
     /// Recently visited worlds, **most recent first**.
     pub history: &'a [WorldRef],
+    /// When `true`, the terminal is a distinct destination (a one-way run),
+    /// not the home world of a round trip. The planner then steers toward the
+    /// terminal from the very first hop: no first-half exclusion (arriving
+    /// early is fine), a **strict-progress filter** (only candidates strictly
+    /// closer to the terminal than the current position stay in the pool, so
+    /// the ship can never move backward — distance monotonically decreases
+    /// and arrival is guaranteed; falls back to the full pool only when boxed
+    /// in), and a directional pull (`ROUTE_W_TERMINAL_DIRECT`) that favours
+    /// faster progress among the forward options. `false` → the classic
+    /// round trip: explore first, then lean home after the halfway point via
+    /// `ROUTE_W_HOME_BIAS`.
+    pub direct_run: bool,
 }
 
 // === Scoring weights ============================================================
@@ -92,6 +127,16 @@ pub const ROUTE_W_FOREIGN_EMPIRE: f64 = 10_000_000.0;
 /// the 50–75% window. Past `HEAD_HOME_THRESHOLD` the planner switches to
 /// a hard "minimize distance to home" mode (see `pick_next`).
 pub const ROUTE_W_HOME_BIAS: f64 = 50_000.0;
+
+/// Directional pull toward the terminal on a **direct run** (a one-way trip
+/// to a distinct destination — see `RouteContext::direct_run`). Applied per
+/// hex of remaining distance to the terminal, from the very first hop.
+/// "Never move backward" is enforced structurally by the strict-progress
+/// filter in `pick_next`, not by this weight — the pull's job is only to
+/// favour *faster* progress among the forward options (a few hexes ≈ a
+/// port-A bonus), while a genuinely outsized on-the-way trade can still
+/// justify the slower forward stop. Round trips use `ROUTE_W_HOME_BIAS`.
+pub const ROUTE_W_TERMINAL_DIRECT: f64 = 200_000.0;
 
 /// Trip-progress fraction at which the planner abandons trade-value
 /// optimization and starts spiralling home. Past this threshold,
@@ -133,35 +178,47 @@ pub fn score_candidate(
     // 4) Distance penalty.
     score -= candidate.distance as f64 * ctx.fuel_cost_per_parsec as f64 * ROUTE_W_DIST;
 
-    // 5) History penalty. Match by (sector, hex_x, hex_y), not name.
+    // 5) History penalty. Match by (sector, hex_x, hex_y), not name — the
+    //    candidate's own sector against the history entry's, so the same
+    //    local hex in a *different* sector doesn't false-match.
     //    Decays linearly with recency: most recent → full penalty,
     //    second most recent → half, third → third, etc.
-    let cand_sector = home_sector_of(candidate);
-    if let Some((sector, hx, hy)) = cand_sector
+    if let Some((hx, hy)) = candidate.world.coordinates
         && let Some(idx) = ctx
             .history
             .iter()
-            .position(|w| w.sector == sector && w.hex_x == hx && w.hex_y == hy)
+            .position(|w| w.sector == candidate.sector && w.hex_x == hx && w.hex_y == hy)
     {
         let recency = (idx as f64) + 1.0;
         score -= ROUTE_W_HISTORY / recency;
     }
 
-    // 6) Home bias. Past 50% of the trip, push toward home.
-    let total = ctx.start_date.days_until(ctx.target_date) as f64;
-    let elapsed = ctx.start_date.days_until(ctx.current_date) as f64;
-    if total > 0.0 {
-        let progress = elapsed / total;
-        if progress > 0.5
-            && let (Some(cand_coords), Some(home_coords)) =
-                (candidate.world.coordinates, sector_hex_of(ctx.home))
-        {
-            let dist_home =
-                calculate_hex_distance(cand_coords.0, cand_coords.1, home_coords.0, home_coords.1)
-                    as f64;
-            // Linear ramp: 0 at progress=0.5, full at progress>=1.0.
-            let ramp = ((progress - 0.5) / 0.5).clamp(0.0, 1.0);
-            score -= dist_home * ROUTE_W_HOME_BIAS * ramp;
+    // 6) Terminal bias — pull toward the finish world (the destination when
+    //    set, else home). On a direct run to a distinct destination we steer
+    //    from the very first hop with a steady, stronger pull so every stop
+    //    makes net progress; on a round trip we explore first and lean home
+    //    only after the halfway point. Absolute coords, so the pull is
+    //    correct even when the terminal lies in another sector.
+    {
+        let dist_term = calculate_hex_distance(
+            candidate.abs.0,
+            candidate.abs.1,
+            ctx.terminal_abs.0,
+            ctx.terminal_abs.1,
+        ) as f64;
+        if ctx.direct_run {
+            score -= dist_term * ROUTE_W_TERMINAL_DIRECT;
+        } else {
+            let total = ctx.start_date.days_until(ctx.target_date) as f64;
+            let elapsed = ctx.start_date.days_until(ctx.current_date) as f64;
+            if total > 0.0 {
+                let progress = elapsed / total;
+                if progress > 0.5 {
+                    // Linear ramp: 0 at progress=0.5, full at progress>=1.0.
+                    let ramp = ((progress - 0.5) / 0.5).clamp(0.0, 1.0);
+                    score -= dist_term * ROUTE_W_HOME_BIAS * ramp;
+                }
+            }
         }
     }
 
@@ -202,9 +259,9 @@ pub fn is_allegiance_friendly(allegiance: Option<&str>) -> bool {
 /// Pick the best destination from `candidates`. Returns `None` only if
 /// the list is empty.
 ///
-/// Forced-home override: if we're at or past the target date and any
-/// candidate is the home world (matched by `sector + hex_x + hex_y`),
-/// that candidate wins immediately regardless of score.
+/// Forced-terminal override: if we're at or past the target date and any
+/// candidate is the terminal world (matched by absolute hex), that
+/// candidate wins immediately regardless of score.
 pub fn pick_next<'a>(
     candidates: &'a [Candidate],
     market: &AvailableGoodsTable,
@@ -218,19 +275,37 @@ pub fn pick_next<'a>(
     let elapsed = ctx.start_date.days_until(ctx.current_date) as f64;
     let progress = if total > 0.0 { elapsed / total } else { 0.0 };
 
-    // Exclude home from the candidate pool while we're still in the first
-    // half of the trip — otherwise the planner returns home immediately on
-    // the first or second hop because home worlds are typically high-pop
-    // A-port and score very well. Falls back to all candidates if home is
-    // somehow the only option.
-    let is_home = |c: &&Candidate| -> bool {
-        matches!(
-            home_sector_of(c),
-            Some((_, hx, hy)) if hx == ctx.home.hex_x && hy == ctx.home.hex_y
-        )
+    // On a round trip, exclude the terminal (home) from the candidate pool
+    // while we're still in the first half — otherwise the planner heads home
+    // immediately on the first or second hop (home is typically high-pop
+    // A-port and scores very well), ending the trip early. On a direct run to
+    // a distinct destination we skip this: arriving early is fine, and the
+    // directional pull in `score_candidate` steers us there steadily.
+    // Falls back to all candidates if the terminal is somehow the only option.
+    let is_terminal = |c: &&Candidate| -> bool { c.abs == ctx.terminal_abs };
+    let dist_to_terminal = |p: (i32, i32)| -> i32 {
+        calculate_hex_distance(p.0, p.1, ctx.terminal_abs.0, ctx.terminal_abs.1)
     };
-    let candidates_for_search: Vec<&Candidate> = if progress < 0.5 {
-        let filtered: Vec<&Candidate> = candidates.iter().filter(|c| !is_home(c)).collect();
+    let candidates_for_search: Vec<&Candidate> = if ctx.direct_run {
+        // Strict-progress filter: on a direct run, only candidates strictly
+        // closer to the terminal than the current position are eligible —
+        // the ship never moves backward, no matter how rich a market behind
+        // it looks, so remaining distance decreases every hop and arrival is
+        // guaranteed. Falls back to the full pool only when boxed in (no
+        // forward world within jump range), where a sidestep is the only way
+        // out.
+        let cur_d = dist_to_terminal(ctx.current_abs);
+        let forward: Vec<&Candidate> = candidates
+            .iter()
+            .filter(|c| dist_to_terminal(c.abs) < cur_d)
+            .collect();
+        if forward.is_empty() {
+            candidates.iter().collect()
+        } else {
+            forward
+        }
+    } else if progress < 0.5 {
+        let filtered: Vec<&Candidate> = candidates.iter().filter(|c| !is_terminal(c)).collect();
         if filtered.is_empty() {
             candidates.iter().collect()
         } else {
@@ -240,34 +315,32 @@ pub fn pick_next<'a>(
         candidates.iter().collect()
     };
 
-    // Forced-home override. At or past target, if home itself is reachable,
-    // take it regardless of score. v1 is in-sector, so we match purely on
-    // hex coordinates.
-    if progress >= 1.0 {
-        for c in candidates {
-            if let Some((_, hx, hy)) = home_sector_of(c)
-                && hx == ctx.home.hex_x
-                && hy == ctx.home.hex_y
-            {
-                return Some(c);
-            }
-        }
+    // Forced-terminal override. At or past target, if the finish world
+    // (destination, or home when none is set) is reachable, take it
+    // regardless of score. Matched on absolute hex, so it works across
+    // sector boundaries.
+    if progress >= 1.0
+        && let Some(term) = candidates.iter().find(|c| c.abs == ctx.terminal_abs)
+    {
+        return Some(term);
     }
 
-    // Head-home mode. Past `HEAD_HOME_THRESHOLD` of trip progress, the
+    // Head-for-finish mode. Past `HEAD_HOME_THRESHOLD` of trip progress, the
     // trade-value score (which can be in the tens of millions) drowns out
-    // the home-bias penalty, so we override it entirely: pick the candidate
-    // with the smallest hex distance to home, breaking ties by score.
-    if progress >= HEAD_HOME_THRESHOLD
-        && let Some(home_coords) = sector_hex_of(ctx.home)
-    {
+    // the terminal-bias penalty, so we override it entirely: pick the
+    // candidate with the smallest hex distance to the terminal, breaking ties
+    // by score.
+    if progress >= HEAD_HOME_THRESHOLD {
         return candidates
             .iter()
-            .filter_map(|c| {
-                c.world.coordinates.map(|(x, y)| {
-                    let dh = calculate_hex_distance(x, y, home_coords.0, home_coords.1);
-                    (c, dh)
-                })
+            .map(|c| {
+                let dh = calculate_hex_distance(
+                    c.abs.0,
+                    c.abs.1,
+                    ctx.terminal_abs.0,
+                    ctx.terminal_abs.1,
+                );
+                (c, dh)
             })
             .min_by(|a, b| {
                 a.1.cmp(&b.1).then_with(|| {
@@ -279,8 +352,8 @@ pub fn pick_next<'a>(
             .map(|(c, _)| c);
     }
 
-    // Normal mode: pick highest score among non-home candidates (in the
-    // first half of the trip) or all candidates (in the second half).
+    // Normal mode: pick highest score among candidates excluding the terminal
+    // (in the first half of the trip) or all candidates (in the second half).
     candidates_for_search.into_iter().max_by(|a, b| {
         let sa = score_candidate(a, market, ctx);
         let sb = score_candidate(b, market, ctx);
@@ -289,27 +362,6 @@ pub fn pick_next<'a>(
 }
 
 // ---- helpers --------------------------------------------------------------
-
-/// Return `(sector, hex_x, hex_y)` for a candidate world, if its
-/// coordinates are populated. We don't have a sector on the `World`
-/// itself, so it comes back empty — the caller compares against the
-/// home `WorldRef.sector` separately.
-///
-/// In v1 the simulator is in-sector, so all worlds share one sector;
-/// equality on sector is implicitly satisfied. We surface only the
-/// hex pair here and let the history-match code combine sectors at the
-/// `WorldRef` level.
-fn home_sector_of(candidate: &Candidate) -> Option<(String, i32, i32)> {
-    candidate
-        .world
-        .coordinates
-        .map(|(x, y)| (String::new(), x, y))
-}
-
-/// Convenience — extract `(hex_x, hex_y)` from a `WorldRef`.
-fn sector_hex_of(w: &WorldRef) -> Option<(i32, i32)> {
-    Some((w.hex_x, w.hex_y))
-}
 
 /// Local copy of the `find_max_dm` helper used in `available_goods.rs`.
 /// Returns the max DM across the candidate world's trade classes, or 0
@@ -360,6 +412,18 @@ mod tests {
         w
     }
 
+    /// Test candidate: single unnamed sector, so `abs` == the local hex.
+    fn cand(name: &str, uwp: &str, x: i32, y: i32, distance: i32) -> Candidate {
+        Candidate {
+            world: mk_world(name, uwp, x, y),
+            sector: String::new(),
+            abs: (x, y),
+            distance,
+            allegiance: None,
+            gas_giants: 0,
+        }
+    }
+
     fn mk_world_ref(name: &str, uwp: &str, x: i32, y: i32) -> WorldRef {
         WorldRef {
             name: name.to_string(),
@@ -371,23 +435,27 @@ mod tests {
         }
     }
 
-    fn ctx<'a>(home: &'a WorldRef, history: &'a [WorldRef]) -> RouteContext<'a> {
+    fn ctx(terminal_abs: (i32, i32), history: &[WorldRef]) -> RouteContext<'_> {
         RouteContext {
-            home,
+            terminal_abs,
             current_date: Date::new(0, 1105),
             start_date: Date::new(0, 1105),
             target_date: Date::new(100, 1105),
             jump: 2,
             fuel_cost_per_parsec: 10_000,
+            // Far from every test terminal by default, so the direct-run
+            // strict-progress filter keeps all candidates unless a test
+            // positions the ship deliberately.
+            current_abs: (100, 100),
             history,
+            direct_run: false,
         }
     }
 
     #[test]
     fn empty_candidates_returns_none() {
-        let home = mk_world_ref("Home", "A788899-A", 0, 0);
         let market = AvailableGoodsTable::default();
-        let c = ctx(&home, &[]);
+        let c = ctx((0, 0), &[]);
         assert!(pick_next(&[], &market, &c).is_none());
     }
 
@@ -395,26 +463,13 @@ mod tests {
     fn forced_home_when_past_target() {
         // Two candidates: a wonderful non-home world and home itself.
         // Past target date, home should win regardless of score.
-        let home_ref = mk_world_ref("Home", "A788899-A", 5, 5);
-
-        let great = Candidate {
-            world: mk_world("Great", "A999999-F", 1, 1),
-            distance: 1,
-            allegiance: None,
-            gas_giants: 0,
-        };
-        let home = Candidate {
-            world: mk_world("Home", "A788899-A", 5, 5),
-            distance: 4,
-            allegiance: None,
-            gas_giants: 0,
-        };
+        let great = cand("Great", "A999999-F", 1, 1, 1);
+        let home = cand("Home", "A788899-A", 5, 5, 4);
 
         let market = AvailableGoodsTable::default();
-        let mut c = ctx(&home_ref, &[]);
+        let mut c = ctx((5, 5), &[]);
         c.current_date = Date::new(150, 1105); // past target (100)
 
-        // Order matters? Try both orders.
         let cands = [great, home];
         let chosen = pick_next(&cands, &market, &c).unwrap();
         assert_eq!(chosen.world.name, "Home");
@@ -423,21 +478,10 @@ mod tests {
     #[test]
     fn closer_preferred_all_else_equal() {
         // Two identical worlds at different distances → closer wins.
-        let home_ref = mk_world_ref("Home", "A788899-A", 0, 0);
-        let near = Candidate {
-            world: mk_world("Near", "C555555-7", 1, 0),
-            distance: 1,
-            allegiance: None,
-            gas_giants: 0,
-        };
-        let far = Candidate {
-            world: mk_world("Far", "C555555-7", 3, 0),
-            distance: 3,
-            allegiance: None,
-            gas_giants: 0,
-        };
+        let near = cand("Near", "C555555-7", 1, 0, 1);
+        let far = cand("Far", "C555555-7", 3, 0, 3);
         let market = AvailableGoodsTable::default();
-        let c = ctx(&home_ref, &[]);
+        let c = ctx((0, 0), &[]);
 
         let cands = [near, far];
         let chosen = pick_next(&cands, &market, &c).unwrap();
@@ -447,21 +491,10 @@ mod tests {
     #[test]
     fn higher_port_wins_all_else_equal() {
         // Same UWP-body except port: A vs E, identical distance.
-        let home_ref = mk_world_ref("Home", "A788899-A", 0, 0);
-        let porta = Candidate {
-            world: mk_world("PortA", "A555555-7", 1, 0),
-            distance: 1,
-            allegiance: None,
-            gas_giants: 0,
-        };
-        let porte = Candidate {
-            world: mk_world("PortE", "E555555-7", 0, 1),
-            distance: 1,
-            allegiance: None,
-            gas_giants: 0,
-        };
+        let porta = cand("PortA", "A555555-7", 1, 0, 1);
+        let porte = cand("PortE", "E555555-7", 0, 1, 1);
         let market = AvailableGoodsTable::default();
-        let c = ctx(&home_ref, &[]);
+        let c = ctx((0, 0), &[]);
 
         let cands = [porta, porte];
         let chosen = pick_next(&cands, &market, &c).unwrap();
@@ -470,26 +503,15 @@ mod tests {
 
     #[test]
     fn history_penalty_applies() {
-        let home_ref = mk_world_ref("Home", "A788899-A", 0, 0);
         let visited_ref = mk_world_ref("Visited", "C555555-7", 1, 0);
 
         // Same shape candidates; only difference is whether history has it.
-        let visited_cand = Candidate {
-            world: mk_world("Visited", "C555555-7", 1, 0),
-            distance: 1,
-            allegiance: None,
-            gas_giants: 0,
-        };
-        let fresh_cand = Candidate {
-            world: mk_world("Fresh", "C555555-7", 0, 1),
-            distance: 1,
-            allegiance: None,
-            gas_giants: 0,
-        };
+        let visited_cand = cand("Visited", "C555555-7", 1, 0, 1);
+        let fresh_cand = cand("Fresh", "C555555-7", 0, 1, 1);
 
         let market = AvailableGoodsTable::default();
         let history = vec![visited_ref];
-        let c = ctx(&home_ref, &history);
+        let c = ctx((0, 0), &history);
 
         let visited_score = score_candidate(&visited_cand, &market, &c);
         let fresh_score = score_candidate(&fresh_cand, &market, &c);
@@ -504,43 +526,45 @@ mod tests {
     }
 
     #[test]
+    fn history_requires_matching_sector() {
+        // Same local hex, DIFFERENT sector → not a revisit. Cross-sector
+        // routes must not false-match history entries by hex alone.
+        let mut visited_ref = mk_world_ref("Visited", "C555555-7", 1, 0);
+        visited_ref.sector = "Spinward Marches".to_string();
+
+        // The candidate is at local hex (1,0) too, but in another sector.
+        let mut lookalike = cand("Lookalike", "C555555-7", 1, 0, 1);
+        lookalike.sector = "Trojan Reach".to_string();
+
+        let market = AvailableGoodsTable::default();
+        let history = vec![visited_ref];
+        let c = ctx((0, 0), &history);
+
+        // A genuinely fresh world in a third position for comparison.
+        let fresh = cand("Fresh", "C555555-7", 0, 1, 1);
+        let lookalike_score = score_candidate(&lookalike, &market, &c);
+        let fresh_score = score_candidate(&fresh, &market, &c);
+        // Neither carries a history penalty; the tiny difference left is
+        // the terminal-distance bias, which is zero this early in the trip.
+        assert!(
+            (lookalike_score - fresh_score).abs() < 1.0,
+            "sector-mismatched candidate must not be history-penalized; got {lookalike_score} vs {fresh_score}"
+        );
+    }
+
+    #[test]
     fn home_bias_kicks_in_after_halfway() {
         // Home at (0,0). One candidate near home, one far. Far has a
         // small port advantage that's enough to win when the bias is
         // off, but should lose once we're past 50% of the trip.
-        let home_ref = mk_world_ref("Home", "A788899-A", 0, 0);
-
-        let near_home = Candidate {
-            world: mk_world("Near", "C555555-7", 1, 0),
-            distance: 1,
-            allegiance: None,
-            gas_giants: 0,
-        };
-        let far_with_a = Candidate {
-            world: mk_world("FarA", "A555555-7", 8, 0),
-            distance: 1, // distance from current location, not from home
-            allegiance: None,
-            gas_giants: 0,
-        };
-
         let market = AvailableGoodsTable::default();
 
         // Early in trip: FarA's port-A bonus should beat Near.
-        let mut c_early = ctx(&home_ref, &[]);
+        let mut c_early = ctx((0, 0), &[]);
         c_early.current_date = Date::new(0, 1105); // progress = 0
         let cands_early = [
-            Candidate {
-                world: near_home.world.clone(),
-                distance: 1,
-                allegiance: None,
-                gas_giants: 0,
-            },
-            Candidate {
-                world: far_with_a.world.clone(),
-                distance: 1,
-                allegiance: None,
-                gas_giants: 0,
-            },
+            cand("Near", "C555555-7", 1, 0, 1),
+            cand("FarA", "A555555-7", 8, 0, 1),
         ];
         let early = pick_next(&cands_early, &market, &c_early).unwrap();
         assert_eq!(
@@ -548,23 +572,13 @@ mod tests {
             "Early in trip, port-A world should win"
         );
 
-        // Late in trip: home bias on far_with_a (far from home) should
+        // Late in trip: home bias on FarA (far from home) should
         // outweigh its port-A bonus.
-        let mut c_late = ctx(&home_ref, &[]);
+        let mut c_late = ctx((0, 0), &[]);
         c_late.current_date = Date::new(95, 1105); // progress ~ 0.95
         let cands_late = [
-            Candidate {
-                world: near_home.world.clone(),
-                distance: 1,
-                allegiance: None,
-                gas_giants: 0,
-            },
-            Candidate {
-                world: far_with_a.world.clone(),
-                distance: 1,
-                allegiance: None,
-                gas_giants: 0,
-            },
+            cand("Near", "C555555-7", 1, 0, 1),
+            cand("FarA", "A555555-7", 8, 0, 1),
         ];
         let late = pick_next(&cands_late, &market, &c_late).unwrap();
         assert_eq!(
@@ -582,8 +596,6 @@ mod tests {
         // should win because the sale_dm is favourable there. We pick
         // worlds whose other features (population, port) are roughly
         // balanced so the trade-value signal dominates.
-        let home_ref = mk_world_ref("Home", "A788899-A", 0, 0);
-
         let entry_52 = TradeTable::global()
             .get(52)
             .expect("trade table entry 52 should exist");
@@ -611,40 +623,29 @@ mod tests {
         // World::gen_trade_classes). UWP "A302666-7": port A, size 3,
         // atm 0, hydro 2, pop 6 → Non-Ag (also Vacuum and
         // NonIndustrial; that's fine).
-        let non_ag_world = mk_world("NonAg", "A302666-7", 1, 0);
+        let non_ag = cand("NonAg", "A302666-7", 1, 0, 1);
         assert!(
-            non_ag_world
+            non_ag
+                .world
                 .get_trade_classes()
                 .contains(&TradeClass::NonAgricultural),
             "fixture should be Non-Agricultural; got {:?}",
-            non_ag_world.get_trade_classes()
+            non_ag.world.get_trade_classes()
         );
 
         // Neutral counterpart: same population, same port, but not Non-Ag.
         // A666666-7 has atm 6, hydro 6, pop 6 → Agricultural+Rich, not Non-Ag.
-        let neutral_world = mk_world("Neutral", "A666666-7", 0, 1);
+        let neutral = cand("Neutral", "A666666-7", 0, 1, 1);
         assert!(
-            !neutral_world
+            !neutral
+                .world
                 .get_trade_classes()
                 .contains(&TradeClass::NonAgricultural),
             "neutral fixture shouldn't be Non-Agricultural; got {:?}",
-            neutral_world.get_trade_classes()
+            neutral.world.get_trade_classes()
         );
 
-        let non_ag = Candidate {
-            world: non_ag_world,
-            distance: 1,
-            allegiance: None,
-            gas_giants: 0,
-        };
-        let neutral = Candidate {
-            world: neutral_world,
-            distance: 1,
-            allegiance: None,
-            gas_giants: 0,
-        };
-
-        let c = ctx(&home_ref, &[]);
+        let c = ctx((0, 0), &[]);
 
         // Score directly first to compare the two.
         let s_non_ag = score_candidate(&non_ag, &market, &c);
@@ -667,21 +668,10 @@ mod tests {
         // Home is a great trade target (high pop, A port), but in the first
         // half of the trip we should NOT pick it — otherwise the trip ends
         // immediately. Should pick the non-home option.
-        let home_ref = mk_world_ref("Home", "A999999-F", 5, 5);
-        let home = Candidate {
-            world: mk_world("Home", "A999999-F", 5, 5),
-            distance: 1,
-            allegiance: None,
-            gas_giants: 0,
-        };
-        let other = Candidate {
-            world: mk_world("Other", "C555555-7", 6, 5),
-            distance: 1,
-            allegiance: None,
-            gas_giants: 0,
-        };
+        let home = cand("Home", "A999999-F", 5, 5, 1);
+        let other = cand("Other", "C555555-7", 6, 5, 1);
         let market = AvailableGoodsTable::default();
-        let mut c = ctx(&home_ref, &[]);
+        let mut c = ctx((5, 5), &[]);
         c.current_date = Date::new(10, 1105); // ~10% progress
 
         let cands = [home, other];
@@ -693,21 +683,10 @@ mod tests {
     fn home_allowed_after_halfway() {
         // Same setup as above but past 50% progress — home becomes eligible
         // and (because A-port pop 9) should win on score.
-        let home_ref = mk_world_ref("Home", "A999999-F", 5, 5);
-        let home = Candidate {
-            world: mk_world("Home", "A999999-F", 5, 5),
-            distance: 1,
-            allegiance: None,
-            gas_giants: 0,
-        };
-        let other = Candidate {
-            world: mk_world("Other", "C555555-7", 6, 5),
-            distance: 1,
-            allegiance: None,
-            gas_giants: 0,
-        };
+        let home = cand("Home", "A999999-F", 5, 5, 1);
+        let other = cand("Other", "C555555-7", 6, 5, 1);
         let market = AvailableGoodsTable::default();
-        let mut c = ctx(&home_ref, &[]);
+        let mut c = ctx((5, 5), &[]);
         c.current_date = Date::new(60, 1105); // 60% progress
 
         let cands = [home, other];
@@ -721,26 +700,162 @@ mod tests {
         // closest to home (not the one with the best trade score). Set up:
         // home at (0, 0). A great trade world far from home (5 hexes) vs a
         // mediocre one near home (1 hex). The mediocre one must win.
-        let home_ref = mk_world_ref("Home", "A788899-A", 0, 0);
-        let great_far = Candidate {
-            world: mk_world("Great", "A999999-F", 5, 0),
-            distance: 2,
-            allegiance: None,
-            gas_giants: 0,
-        };
-        let mediocre_near = Candidate {
-            world: mk_world("Near", "E555555-5", 1, 0),
-            distance: 2,
-            allegiance: None,
-            gas_giants: 0,
-        };
+        let great_far = cand("Great", "A999999-F", 5, 0, 2);
+        let mediocre_near = cand("Near", "E555555-5", 1, 0, 2);
         let market = AvailableGoodsTable::default();
-        let mut c = ctx(&home_ref, &[]);
+        let mut c = ctx((0, 0), &[]);
         c.current_date = Date::new(80, 1105); // 80% progress, past 0.75
 
         let cands = [great_far, mediocre_near];
         let chosen = pick_next(&cands, &market, &c).unwrap();
         assert_eq!(chosen.world.name, "Near");
+    }
+
+    #[test]
+    fn head_for_finish_spirals_to_destination_not_home() {
+        // With a destination set (terminal at (5,0), distinct from the (0,0)
+        // start), past the head-home threshold the planner must spiral toward
+        // the *destination*, not back toward the origin. A great trade world
+        // sitting at the origin must lose to a mediocre one at the destination.
+        let great_at_origin = cand("Great", "A999999-F", 0, 0, 2);
+        let mediocre_at_dest = cand("AtDest", "E555555-5", 5, 0, 2);
+        let market = AvailableGoodsTable::default();
+        let mut c = ctx((5, 0), &[]); // terminal = destination (5,0)
+        c.current_date = Date::new(80, 1105); // 80% progress, past 0.75
+
+        let cands = [great_at_origin, mediocre_at_dest];
+        let chosen = pick_next(&cands, &market, &c).unwrap();
+        assert_eq!(chosen.world.name, "AtDest");
+    }
+
+    #[test]
+    fn cross_sector_terminal_pull_uses_absolute_coords() {
+        // The terminal lies in the next sector coreward: local hexes would
+        // put it "far away" (or at a phantom in-sector position), but the
+        // absolute coords place it just past the boundary. Of two forward
+        // options, the one closer in ABSOLUTE terms must win the
+        // head-for-finish spiral, even though its *local* hex is not closer
+        // to the terminal's local hex.
+        //
+        // Layout (absolute columns 10, rows around the sector seam at 0):
+        //   terminal   abs (10, -2)  — two rows into the coreward sector
+        //   nearer     abs (10,  1)  — local hex (10, 1), 3 rows from terminal
+        //   farther    abs (10,  6)  — local hex (10, 6), 8 rows from terminal
+        //
+        // In *local-hex* space the terminal would sit at (10, 38) of its own
+        // sector — nearer to local (10,6) than to (10,1) — so a local-hex
+        // planner picks the wrong world. Absolute coords pick correctly.
+        let mut nearer = cand("Nearer", "E555555-5", 10, 1, 2);
+        nearer.abs = (10, 1);
+        let mut farther = cand("Farther", "A999999-F", 10, 6, 2);
+        farther.abs = (10, 6);
+
+        let market = AvailableGoodsTable::default();
+        let mut c = ctx((10, -2), &[]); // terminal beyond the sector seam
+        c.current_date = Date::new(80, 1105); // head-for-finish mode
+
+        let cands = [farther, nearer];
+        let chosen = pick_next(&cands, &market, &c).unwrap();
+        assert_eq!(chosen.world.name, "Nearer");
+    }
+
+    #[test]
+    fn terminal_excluded_in_first_half_on_round_trip() {
+        // On a round trip (no destination), the planner must not end early by
+        // arriving home in the first half — even if home scores best. Home is
+        // excluded from the first-half candidate pool.
+        let home = cand("Home", "A999999-F", 5, 5, 1);
+        let other = cand("Other", "C555555-7", 6, 5, 1);
+        let market = AvailableGoodsTable::default();
+        let mut c = ctx((5, 5), &[]); // direct_run = false (round trip)
+        c.current_date = Date::new(10, 1105); // ~10% progress
+
+        let cands = [home, other];
+        let chosen = pick_next(&cands, &market, &c).unwrap();
+        assert_eq!(chosen.world.name, "Other");
+    }
+
+    #[test]
+    fn direct_run_does_not_exclude_terminal_early() {
+        // On a direct run to a distinct destination, arriving early is fine:
+        // the destination is NOT excluded in the first half, and when it's the
+        // best-scoring option it wins (contrast the round-trip test above).
+        let dest = cand("Dest", "A999999-F", 5, 5, 1);
+        let other = cand("Other", "C555555-7", 6, 5, 1);
+        let market = AvailableGoodsTable::default();
+        let mut c = ctx((5, 5), &[]);
+        c.current_date = Date::new(10, 1105); // ~10% progress
+        c.direct_run = true;
+
+        let cands = [dest, other];
+        let chosen = pick_next(&cands, &market, &c).unwrap();
+        assert_eq!(chosen.world.name, "Dest");
+    }
+
+    #[test]
+    fn direct_run_steers_toward_the_destination_from_the_start() {
+        // Early in the trip, a direct run steers toward the destination: of two
+        // equal-jump forward options (neither the destination itself), the one
+        // closer to the destination wins on the directional pull — even against
+        // a port-A advantage on the farther one. A round trip at the same early
+        // point has no such pull, so the port-A world wins there instead.
+        let mk_cands = || {
+            [
+                // Farther from the destination (4 hexes) but a nicer port.
+                cand("Away", "A555555-5", 2, 0, 1),
+                // Closer to the destination (1 hex), plainer port.
+                cand("Toward", "E555555-5", 5, 0, 1),
+            ]
+        };
+        let market = AvailableGoodsTable::default();
+
+        // Direct run, 10% in: the directional pull picks the closer world.
+        let mut c_direct = ctx((6, 0), &[]);
+        c_direct.current_date = Date::new(10, 1105);
+        c_direct.direct_run = true;
+        let direct_cands = mk_cands();
+        let direct = pick_next(&direct_cands, &market, &c_direct).unwrap();
+        assert_eq!(direct.world.name, "Toward");
+
+        // Round trip, same early point: no directional pull yet → port-A wins.
+        let mut c_round = ctx((6, 0), &[]);
+        c_round.current_date = Date::new(10, 1105);
+        let round_cands = mk_cands();
+        let round = pick_next(&round_cands, &market, &c_round).unwrap();
+        assert_eq!(round.world.name, "Away");
+    }
+
+    #[test]
+    fn direct_run_never_moves_backward() {
+        // The strict-progress filter: a fabulously rich market BEHIND the
+        // ship must lose to a modest world ahead — no trade score can buy a
+        // backward hop on a direct run.
+        let rich_behind = cand("RichBehind", "A999999-F", 3, 0, 2);
+        let modest_ahead = cand("ModestAhead", "E555555-5", 7, 0, 2);
+        let market = AvailableGoodsTable::default();
+        let mut c = ctx((10, 0), &[]); // terminal well ahead
+        c.current_abs = (5, 0); // ship between the two candidates
+        c.current_date = Date::new(10, 1105); // early in the trip
+        c.direct_run = true;
+
+        let cands = [rich_behind, modest_ahead];
+        let chosen = pick_next(&cands, &market, &c).unwrap();
+        assert_eq!(chosen.world.name, "ModestAhead");
+    }
+
+    #[test]
+    fn direct_run_boxed_in_falls_back_to_full_pool() {
+        // If nothing within jump range makes progress (a dead end), the
+        // planner must still return something — a sidestep beats a stall.
+        let backward = cand("OnlyOption", "C555555-7", 3, 0, 2);
+        let market = AvailableGoodsTable::default();
+        let mut c = ctx((10, 0), &[]);
+        c.current_abs = (5, 0); // the only candidate is behind us
+        c.direct_run = true;
+
+        let cands = [backward];
+        let chosen = pick_next(&cands, &market, &c).unwrap();
+        assert_eq!(chosen.world.name, "OnlyOption");
     }
 
     #[test]
@@ -775,21 +890,16 @@ mod tests {
     fn foreign_empire_loses_to_friendly() {
         // A great-on-paper foreign world (A-port, high pop) should still
         // lose to a mediocre Imperial world thanks to the heavy penalty.
-        let home_ref = mk_world_ref("Home", "A788899-A", 0, 0);
         let foreign_great = Candidate {
-            world: mk_world("AslanA", "A999999-F", 1, 0),
-            distance: 1,
             allegiance: Some("AsT4".to_string()),
-            gas_giants: 0,
+            ..cand("AslanA", "A999999-F", 1, 0, 1)
         };
         let imperial_meh = Candidate {
-            world: mk_world("ImpC", "C555555-7", 2, 0),
-            distance: 2,
             allegiance: Some("Im".to_string()),
-            gas_giants: 0,
+            ..cand("ImpC", "C555555-7", 2, 0, 2)
         };
         let market = AvailableGoodsTable::default();
-        let c = ctx(&home_ref, &[]);
+        let c = ctx((0, 0), &[]);
 
         let cands = [foreign_great, imperial_meh];
         let chosen = pick_next(&cands, &market, &c).unwrap();
@@ -804,15 +914,12 @@ mod tests {
         // If foreign space is the *only* option, the planner still
         // returns it rather than `None` — the penalty is heavy but not
         // a hard block.
-        let home_ref = mk_world_ref("Home", "A788899-A", 0, 0);
         let only_foreign = Candidate {
-            world: mk_world("Zhodane", "C555555-7", 1, 0),
-            distance: 1,
             allegiance: Some("Zh".to_string()),
-            gas_giants: 0,
+            ..cand("Zhodane", "C555555-7", 1, 0, 1)
         };
         let market = AvailableGoodsTable::default();
-        let c = ctx(&home_ref, &[]);
+        let c = ctx((0, 0), &[]);
 
         let cands = [only_foreign];
         let chosen = pick_next(&cands, &market, &c).unwrap();

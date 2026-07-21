@@ -40,15 +40,16 @@ pub struct PirateRouteContext<'a> {
     /// True when reputation is too hot — break off raiding and run for the
     /// hideout to lie low until it cools.
     pub lying_low: bool,
-    /// Hex of the world the cruise makes for to *finish* — the destination
-    /// when one is set, else the hideout.
-    pub terminal_hex: (i32, i32),
-    /// Hexes of the pirate's **havens** — safe ports (the home world and/or
-    /// destination, per their haven flags) where the pirate fences at law 0,
-    /// banks prizes, and lies low. The lying-low / prize drop-off diversions
-    /// make for the nearest of these. Empty when the pirate has no safe port,
-    /// in which case those diversions are simply skipped.
-    pub haven_hexes: Vec<(i32, i32)>,
+    /// **Absolute** hex of the world the cruise makes for to *finish* — the
+    /// destination when one is set, else the hideout. Absolute coords (see
+    /// [`Candidate::abs`]) so a finish line in another sector still works.
+    pub terminal_abs: (i32, i32),
+    /// Absolute hexes of the pirate's **havens** — safe ports (the home world
+    /// and/or destination, per their haven flags) where the pirate fences at
+    /// law 0, banks prizes, and lies low. The lying-low / prize drop-off
+    /// diversions make for the nearest of these. Empty when the pirate has no
+    /// safe port, in which case those diversions are simply skipped.
+    pub haven_abs: Vec<(i32, i32)>,
 }
 
 /// Hold-fullness fraction at/above which the pirate breaks to fence.
@@ -123,14 +124,14 @@ pub fn score_fence(c: &Candidate, ctx: &PirateRouteContext) -> f64 {
     fenceability - dist
 }
 
-/// Is this candidate at hex `target` (matched by coordinates)?
-fn is_at_hex(c: &Candidate, target: (i32, i32)) -> bool {
-    matches!(c.world.coordinates, Some((x, y)) if x == target.0 && y == target.1)
+/// Is this candidate at absolute hex `target`?
+fn is_at_abs(c: &Candidate, target: (i32, i32)) -> bool {
+    c.abs == target
 }
 
 /// From `pool`, the candidate that gets closest (in hexes) to *any* of
-/// `targets`, ties broken by hunt score. `None` only if `pool` has no
-/// candidate with coordinates (or `targets` is empty).
+/// `targets` (absolute coords), ties broken by hunt score. `None` only if
+/// `pool` or `targets` is empty.
 fn closest_to_any<'a>(
     pool: &[&'a Candidate],
     targets: &[(i32, i32)],
@@ -140,15 +141,13 @@ fn closest_to_any<'a>(
         return None;
     }
     pool.iter()
-        .filter_map(|c| {
-            c.world.coordinates.map(|(x, y)| {
-                let dist = targets
-                    .iter()
-                    .map(|t| calculate_hex_distance(x, y, t.0, t.1))
-                    .min()
-                    .unwrap_or(i32::MAX);
-                (*c, dist)
-            })
+        .map(|c| {
+            let dist = targets
+                .iter()
+                .map(|t| calculate_hex_distance(c.abs.0, c.abs.1, t.0, t.1))
+                .min()
+                .unwrap_or(i32::MAX);
+            (*c, dist)
         })
         .min_by(|a, b| {
             a.1.cmp(&b.1).then_with(|| {
@@ -184,7 +183,7 @@ pub fn pick_next_pirate<'a>(
     // finish world (destination, or hideout when none is set) is reachable,
     // take it regardless of score.
     if prog >= 1.0
-        && let Some(term) = candidates.iter().find(|c| is_at_hex(c, ctx.terminal_hex))
+        && let Some(term) = candidates.iter().find(|c| is_at_abs(c, ctx.terminal_abs))
     {
         return Some(term);
     }
@@ -202,14 +201,14 @@ pub fn pick_next_pirate<'a>(
     // lying low (reputation too hot), make for the nearest *haven* — a safe
     // port to bank prizes / let the heat cool — not the finish line. Skipped
     // when the pirate has no haven at all.
-    if (ctx.prize_run || ctx.lying_low) && !ctx.haven_hexes.is_empty() {
-        return closest_to_any(&pool, &ctx.haven_hexes, ctx);
+    if (ctx.prize_run || ctx.lying_low) && !ctx.haven_abs.is_empty() {
+        return closest_to_any(&pool, &ctx.haven_abs, ctx);
     }
 
     // Head for the finish: past the head-home threshold, spiral toward the
     // terminal (the destination when set, else the hideout).
     if prog >= HEAD_HOME_THRESHOLD {
-        return closest_to_any(&pool, &[ctx.terminal_hex], ctx);
+        return closest_to_any(&pool, &[ctx.terminal_abs], ctx);
     }
 
     // In the first half, exclude the terminal so the cruise doesn't end early
@@ -218,7 +217,7 @@ pub fn pick_next_pirate<'a>(
         let filtered: Vec<&Candidate> = pool
             .iter()
             .copied()
-            .filter(|c| !is_at_hex(c, ctx.terminal_hex))
+            .filter(|c| !is_at_abs(c, ctx.terminal_abs))
             .collect();
         if filtered.is_empty() { pool } else { filtered }
     } else {
@@ -254,6 +253,8 @@ mod tests {
     fn cand(uwp: &str, x: i32, y: i32, dist: i32, gas: u8) -> Candidate {
         Candidate {
             world: world(uwp, x, y),
+            sector: String::new(),
+            abs: (x, y),
             distance: dist,
             allegiance: None,
             gas_giants: gas,
@@ -271,15 +272,17 @@ mod tests {
         }
     }
 
-    fn base<'a>(home: &'a WorldRef, history: &'a [WorldRef]) -> RouteContext<'a> {
+    fn base<'a>(terminal: &'a WorldRef, history: &'a [WorldRef]) -> RouteContext<'a> {
         RouteContext {
-            home,
+            terminal_abs: (terminal.hex_x, terminal.hex_y),
             current_date: Date::new(10, 1105),
             start_date: Date::new(0, 1105),
             target_date: Date::new(100, 1105),
             jump: 2,
             fuel_cost_per_parsec: 10_000,
+            current_abs: (0, 0),
             history,
+            direct_run: false,
         }
     }
 
@@ -294,8 +297,8 @@ mod tests {
             ship_weapons: 6,
             prize_run: false,
             lying_low: false,
-            terminal_hex: (0, 0),      // == home hex by default (round-trip)
-            haven_hexes: vec![(0, 0)], // home is a haven by default
+            terminal_abs: (0, 0),     // == home hex by default (round-trip)
+            haven_abs: vec![(0, 0)],  // home is a haven by default
         }
     }
 
@@ -363,7 +366,7 @@ mod tests {
         let mut b = base(&h, &[]);
         b.current_date = Date::new(80, 1105); // prog 0.8, past HEAD_HOME_THRESHOLD
         let mut ctx = pctx(&b);
-        ctx.terminal_hex = (5, 0); // destination, distinct from home (0,0)
+        ctx.terminal_abs = (5, 0); // destination, distinct from home (0,0)
         // Hideout (0,0) and the destination (5,0), both refuelable.
         let hideout = cand("A788899-A", 0, 0, 1, 0);
         let dest = cand("A788899-A", 5, 0, 1, 0);
@@ -380,7 +383,7 @@ mod tests {
         let b = base(&h, &[]); // prog 0.1
         let mut ctx = pctx(&b);
         ctx.lying_low = true;
-        ctx.terminal_hex = (5, 0); // destination elsewhere
+        ctx.terminal_abs = (5, 0); // destination elsewhere
         let hideout = cand("A788899-A", 0, 0, 1, 0);
         let dest = cand("A788899-A", 5, 0, 1, 0);
         let cands = [dest, hideout];
@@ -397,7 +400,7 @@ mod tests {
         let b = base(&h, &[]); // prog 0.1
         let mut ctx = pctx(&b);
         ctx.prize_run = true;
-        ctx.haven_hexes = vec![(0, 0), (20, 0)];
+        ctx.haven_abs = vec![(0, 0), (20, 0)];
         let near_far_haven = cand("A788899-A", 18, 0, 1, 0); // 2 from (20,0)
         let midway = cand("A788899-A", 10, 0, 1, 0); // 10 from either haven
         let cands = [midway, near_far_haven];
@@ -414,7 +417,7 @@ mod tests {
         let b = base(&h, &[]); // prog 0.1
         let mut ctx = pctx(&b);
         ctx.lying_low = true;
-        ctx.haven_hexes = vec![];
+        ctx.haven_abs = vec![];
         let a = cand("A788899-A", 1, 0, 1, 0);
         let bb = cand("C788510-7", 2, 0, 1, 0);
         let cands = [a, bb];

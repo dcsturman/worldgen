@@ -1,34 +1,37 @@
 //! Server-side TravellerMap client for the simulator.
 //!
-//! In v1 the simulator stays inside one sector. To build the candidate
-//! list for a single jump we enumerate every hex within `jump` parsecs
-//! of the current location, fetch each from `https://travellermap.com/`,
-//! and turn the populated hexes into [`Candidate`]s. Empty hexes (404
-//! responses) are cached as `None` so a re-visit doesn't pay the
-//! network cost again.
+//! Candidate lookups use the `/api/jumpworlds` endpoint, which returns
+//! every world within `jump` parsecs of a hex **including worlds in
+//! adjacent sectors** — so a route can cross sector boundaries. Each
+//! returned world carries its own sector name, sector-local hex, and
+//! TravellerMap's absolute `WorldX`/`WorldY` coordinates.
+//!
+//! ## Absolute hex coordinates
+//!
+//! Cross-sector distance math needs one global grid. We use
+//! `abs = (sx*32 + hx, sy*40 + hy)`, where `(sx, sy)` are the sector
+//! offsets from `/api/coordinates`. Because the column shift `sx*32` is
+//! always even, column parity is preserved, so `calculate_hex_distance`
+//! (odd-q offset) stays exact across sector seams. TravellerMap's own
+//! `WorldX`/`WorldY` relate to this grid by a fixed translation:
+//! `abs = (WorldX + 1, WorldY + 40)` — verified against the live API
+//! (Regina SM 1910 → WorldX/Y (-110, -70) → abs (-109, -30)).
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
-use futures_util::future::join_all;
 use serde::Deserialize;
-use tokio::sync::Semaphore;
 
 use crate::simulator::route::Candidate;
 use crate::systems::world::{Facility, World};
 use crate::trade::ZoneClassification;
 use crate::util::calculate_hex_distance;
 
-/// Sector-relative hex column range. TravellerMap subsectors are 8x10 each
-/// and a sector is 4x4 subsectors, giving 32 columns and 40 rows.
-const SECTOR_HEX_X_RANGE: std::ops::RangeInclusive<i32> = 1..=32;
-/// Sector-relative hex row range. See [`SECTOR_HEX_X_RANGE`].
-const SECTOR_HEX_Y_RANGE: std::ops::RangeInclusive<i32> = 1..=40;
-
-/// Max number of concurrent TravellerMap fetches. The public service
-/// resets connections aggressively when we hammer it with > ~10
-/// parallel requests, so we throttle hard.
-const MAX_CONCURRENT_FETCHES: usize = 4;
+/// Attempts for the jumpworlds / coordinates calls before giving up. A
+/// failure mid-run aborts the whole simulation, so we absorb transient
+/// TravellerMap hiccups with a couple of retries.
+const MAX_FETCH_ATTEMPTS: usize = 3;
+/// Pause between retry attempts.
+const RETRY_DELAY_MS: u64 = 500;
 
 /// Errors fetching world data from TravellerMap.
 #[derive(Debug, thiserror::Error)]
@@ -44,11 +47,15 @@ pub enum FetchError {
     Malformed(String),
 }
 
-/// One world entry from the TravellerMap `/data/{sector}/{hex}` endpoint.
-///
-/// We keep our own deserialize struct here (instead of reusing the one
-/// in `components/traveller_map.rs`) because that one is wired to
-/// `wasm-bindgen` and lives in a frontend module agent 3 may be touching.
+/// Absolute hex from a sector offset `(sx, sy)` and a sector-local hex.
+/// See the module docs for why this grid (and not raw `WorldX`/`WorldY`)
+/// is the simulator's canonical coordinate space.
+pub fn absolute_hex(offset: (i32, i32), hex: (i32, i32)) -> (i32, i32) {
+    (offset.0 * 32 + hex.0, offset.1 * 40 + hex.1)
+}
+
+/// One world entry from the TravellerMap `/data/{sector}/{hex}` or
+/// `/api/jumpworlds` endpoints (same schema).
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct WorldEntry {
@@ -68,15 +75,34 @@ struct WorldEntry {
     /// `"D"` (depot). Mapped onto the world's facilities.
     #[serde(default)]
     bases: Option<String>,
+    /// The world's own sector name (jumpworlds fills this; a neighbourhood
+    /// near a boundary spans sectors).
+    #[serde(default)]
+    sector: Option<String>,
+    /// Sector-local hex, e.g. `"1910"`.
+    #[serde(default)]
+    hex: Option<String>,
+    /// TravellerMap absolute world coordinates. `abs = (world_x + 1,
+    /// world_y + 40)` — see module docs.
+    #[serde(default)]
+    world_x: Option<i32>,
+    #[serde(default)]
+    world_y: Option<i32>,
 }
 
-/// Wrapper for `/data/{sector}/{hex}` responses. The endpoint always
-/// returns a `Worlds` array — usually a single element, sometimes empty
-/// (treated as a 404).
+/// Wrapper for world-list responses. The endpoints always return a
+/// `Worlds` array — sometimes empty (treated as a 404).
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct WorldsEnvelope {
     worlds: Vec<WorldEntry>,
+}
+
+/// `/api/coordinates?sector=…` response (we only need the sector offsets).
+#[derive(Debug, Deserialize)]
+struct CoordinatesResponse {
+    sx: i32,
+    sy: i32,
 }
 
 /// One cached lookup result: a populated `World`, its TravellerMap
@@ -87,11 +113,16 @@ struct WorldsEnvelope {
 /// `World`'s facilities, since `World` already models those.)
 type CachedWorld = (World, Option<String>, u8);
 
-/// Cache of TravellerMap world data lookups, keyed by
-/// `(sector_name, hex_x, hex_y)`. `None` = empty hex (404 from
-/// TravellerMap), so subsequent fetches return immediately.
+/// Cache of TravellerMap lookups: single-hex world data, per-sector
+/// offsets, and whole jump-neighbourhood candidate lists.
 pub struct WorldCache {
     inner: HashMap<(String, i32, i32), Option<CachedWorld>>,
+    /// Sector name → `(sx, sy)` offsets from `/api/coordinates`.
+    sector_offsets: HashMap<String, (i32, i32)>,
+    /// `(sector, hex_x, hex_y, jump)` → candidate list. The universe is
+    /// static, so revisiting a hex re-serves the same neighbourhood
+    /// without another network round-trip.
+    jump_cache: HashMap<(String, i32, i32, i32), Vec<Candidate>>,
     client: reqwest::Client,
 }
 
@@ -115,6 +146,8 @@ impl WorldCache {
             .expect("reqwest client must build");
         Self {
             inner: HashMap::new(),
+            sector_offsets: HashMap::new(),
+            jump_cache: HashMap::new(),
             client,
         }
     }
@@ -138,100 +171,190 @@ impl WorldCache {
         Ok(entry)
     }
 
-    /// Find every world within `jump` parsecs of the given hex (excluding
-    /// the hex itself). All fetches run in parallel; empty hexes and any
-    /// individual fetch failures are skipped silently — we'd rather make
-    /// progress on the run than abort because one neighbouring hex
-    /// hiccupped.
+    /// The `(sx, sy)` offsets of a sector, from `/api/coordinates`.
+    /// Cached per sector name — a run touches at most a handful.
+    pub async fn sector_offset(&mut self, sector: &str) -> Result<(i32, i32), FetchError> {
+        if let Some(&off) = self.sector_offsets.get(sector) {
+            return Ok(off);
+        }
+        let url = format!(
+            "{}/api/coordinates?sector={}",
+            crate::util::travellermap_base_url(),
+            urlencode(sector)
+        );
+        let body = get_with_retries(&self.client, &url).await?;
+        let coords: CoordinatesResponse = serde_json::from_str(&body)
+            .map_err(|e| FetchError::Malformed(format!("{}: {}", url, e)))?;
+        self.sector_offsets
+            .insert(sector.to_string(), (coords.sx, coords.sy));
+        Ok((coords.sx, coords.sy))
+    }
+
+    /// Every world within `jump` parsecs of the given hex (excluding the
+    /// hex itself), **across sector boundaries**. One `/api/jumpworlds`
+    /// call; individual malformed entries are skipped so a single odd
+    /// world can't sink the run.
     pub async fn candidates_within(
         &mut self,
         sector: &str,
         from_hex: (i32, i32),
         jump: i32,
     ) -> Result<Vec<Candidate>, FetchError> {
-        // Build the list of hexes worth fetching.
-        let mut targets: Vec<(i32, i32, i32)> = Vec::new();
-        for x in SECTOR_HEX_X_RANGE {
-            for y in SECTOR_HEX_Y_RANGE {
-                if (x, y) == from_hex {
-                    continue;
-                }
-                let d = calculate_hex_distance(from_hex.0, from_hex.1, x, y);
-                if d > 0 && d <= jump {
-                    targets.push((x, y, d));
-                }
-            }
+        let key = (sector.to_string(), from_hex.0, from_hex.1, jump);
+        if let Some(cached) = self.jump_cache.get(&key) {
+            return Ok(cached.clone());
         }
 
-        // Split into already-cached hits and ones that need fetching.
+        let origin_abs = absolute_hex(self.sector_offset(sector).await?, from_hex);
+        let url = format!(
+            "{}/api/jumpworlds?sector={}&hex={:02}{:02}&jump={}",
+            crate::util::travellermap_base_url(),
+            urlencode(sector),
+            from_hex.0,
+            from_hex.1,
+            jump
+        );
+        log::trace!("world_fetch: GET {}", url);
+        let body = get_with_retries(&self.client, &url).await?;
+        let envelope: WorldsEnvelope = serde_json::from_str(&body)
+            .map_err(|e| FetchError::Malformed(format!("{}: {}", url, e)))?;
+
         let mut candidates: Vec<Candidate> = Vec::new();
-        let mut to_fetch: Vec<(i32, i32, i32)> = Vec::new();
-        for (x, y, d) in targets {
-            let key = (sector.to_string(), x, y);
-            if let Some(cached) = self.inner.get(&key) {
-                if let Some((world, allegiance, gas_giants)) = cached {
-                    candidates.push(Candidate {
-                        world: world.clone(),
-                        distance: d,
-                        allegiance: allegiance.clone(),
-                        gas_giants: *gas_giants,
-                    });
-                }
-            } else {
-                to_fetch.push((x, y, d));
+        for entry in envelope.worlds {
+            let entry_sector = entry
+                .sector
+                .clone()
+                .unwrap_or_else(|| sector.to_string());
+            let Some(hex) = entry.hex.as_deref().and_then(parse_hex) else {
+                log::debug!(
+                    "world_fetch: skipping {:?} in {} — missing/bad hex {:?}",
+                    entry.name,
+                    entry_sector,
+                    entry.hex
+                );
+                continue;
+            };
+            // Absolute coords: prefer the entry's own WorldX/WorldY;
+            // fall back to the sector-offset formula.
+            let abs = match (entry.world_x, entry.world_y) {
+                (Some(wx), Some(wy)) => (wx + 1, wy + 40),
+                _ => absolute_hex(self.sector_offset(&entry_sector).await?, hex),
+            };
+            let d = calculate_hex_distance(origin_abs.0, origin_abs.1, abs.0, abs.1);
+            if d == 0 || d > jump {
+                // The origin world itself, or (belt & braces) something
+                // outside jump range.
+                continue;
             }
-        }
-
-        // Fetch the rest in parallel, throttled by a semaphore to avoid
-        // overwhelming TravellerMap (which resets connections under
-        // load).
-        let client = self.client.clone();
-        let sector_owned = sector.to_string();
-        let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_FETCHES));
-        let futs = to_fetch.iter().map(|&(x, y, _d)| {
-            let client = client.clone();
-            let sector = sector_owned.clone();
-            let sem = semaphore.clone();
-            async move {
-                let _permit = sem.acquire_owned().await.ok();
-                let res = fetch_one(&client, &sector, x, y).await;
-                (x, y, res)
-            }
-        });
-        let results = join_all(futs).await;
-
-        for ((x, y, d), (rx, ry, res)) in to_fetch.iter().zip(results) {
-            debug_assert_eq!((*x, *y), (rx, ry));
-            let key = (sector.to_string(), *x, *y);
-            match res {
-                Ok(Some((world, allegiance, gas_giants))) => {
-                    self.inner
-                        .insert(key, Some((world.clone(), allegiance.clone(), gas_giants)));
+            match build_world(&entry, hex) {
+                Ok((world, gas_giants)) => {
+                    // Keep the single-hex cache warm too.
+                    self.inner.insert(
+                        (entry_sector.clone(), hex.0, hex.1),
+                        Some((world.clone(), entry.allegiance.clone(), gas_giants)),
+                    );
                     candidates.push(Candidate {
                         world,
-                        distance: *d,
-                        allegiance,
+                        sector: entry_sector,
+                        abs,
+                        distance: d,
+                        allegiance: entry.allegiance,
                         gas_giants,
                     });
                 }
-                Ok(None) => {
-                    self.inner.insert(key, None);
-                }
                 Err(e) => {
                     log::debug!(
-                        "world_fetch: skipping hex {:02}{:02} in {} ({:?})",
-                        x,
-                        y,
-                        sector,
+                        "world_fetch: skipping {} {:02}{:02} in {} ({:?})",
+                        entry.name,
+                        hex.0,
+                        hex.1,
+                        entry_sector,
                         e
                     );
-                    // Don't cache; transient errors might recover.
                 }
             }
         }
 
+        self.jump_cache.insert(key, candidates.clone());
         Ok(candidates)
     }
+}
+
+/// GET a URL, retrying transient failures a couple of times. Returns the
+/// response body on the first 2xx.
+async fn get_with_retries(client: &reqwest::Client, url: &str) -> Result<String, FetchError> {
+    let mut last_err: Option<FetchError> = None;
+    for attempt in 1..=MAX_FETCH_ATTEMPTS {
+        match client.get(url).send().await {
+            Ok(resp) if resp.status().is_success() => match resp.text().await {
+                Ok(body) => return Ok(body),
+                Err(e) => last_err = Some(e.into()),
+            },
+            Ok(resp) => {
+                last_err = Some(FetchError::Malformed(format!(
+                    "{} returned status {}",
+                    url,
+                    resp.status()
+                )));
+            }
+            Err(e) => last_err = Some(e.into()),
+        }
+        if attempt < MAX_FETCH_ATTEMPTS {
+            log::debug!("world_fetch: retrying {} (attempt {})", url, attempt);
+            tokio::time::sleep(std::time::Duration::from_millis(RETRY_DELAY_MS)).await;
+        }
+    }
+    Err(last_err.unwrap_or_else(|| FetchError::Malformed(format!("{}: no attempts made", url))))
+}
+
+/// Parse a TravellerMap 4-digit hex string (`"1910"`) into `(x, y)`.
+fn parse_hex(hex: &str) -> Option<(i32, i32)> {
+    if hex.len() != 4 {
+        return None;
+    }
+    let x = hex[0..2].parse::<i32>().ok()?;
+    let y = hex[2..4].parse::<i32>().ok()?;
+    Some((x, y))
+}
+
+/// Build a populated `World` (plus gas-giant count) from a fetched entry.
+/// `coords` are the sector-local hex, stored on `World.coordinates` to
+/// match the wire-format `WorldRef` the frontend renders.
+fn build_world(entry: &WorldEntry, coords: (i32, i32)) -> Result<(World, u8), FetchError> {
+    let mut world = World::from_uwp(&entry.name, &entry.uwp, false, true)
+        .map_err(|e| FetchError::InvalidUwp(format!("{}: {}", entry.uwp, e)))?;
+    world.gen_trade_classes();
+    world.coordinates = Some(coords);
+    world.travel_zone = match entry.zone.as_deref() {
+        Some("A") => ZoneClassification::Amber,
+        Some("R") => ZoneClassification::Red,
+        _ => ZoneClassification::Green,
+    };
+
+    // Map base codes onto the world's facilities (used by the pirate
+    // simulator's encounter modifiers).
+    if let Some(bases) = entry.bases.as_deref() {
+        let mut facilities = Vec::new();
+        if bases.contains('N') || bases.contains('A') {
+            facilities.push(Facility::Naval);
+        }
+        if bases.contains('S') || bases.contains('A') {
+            facilities.push(Facility::Scout);
+        }
+        if !facilities.is_empty() {
+            world.set_facilities(facilities);
+        }
+    }
+
+    // Gas giants are the third digit of the PBG code.
+    let gas_giants = entry
+        .pbg
+        .as_deref()
+        .and_then(|p| p.chars().nth(2))
+        .and_then(|c| c.to_digit(16))
+        .unwrap_or(0) as u8;
+
+    Ok((world, gas_giants))
 }
 
 /// Fetch one hex from TravellerMap. Returns `Ok(None)` on 404 / empty
@@ -277,39 +400,7 @@ async fn fetch_one(
         None => return Ok(None),
     };
 
-    let mut world = World::from_uwp(&entry.name, &entry.uwp, false, true)
-        .map_err(|e| FetchError::InvalidUwp(format!("{}: {}", entry.uwp, e)))?;
-    world.gen_trade_classes();
-    world.coordinates = Some((hex_x, hex_y));
-    world.travel_zone = match entry.zone.as_deref() {
-        Some("A") => ZoneClassification::Amber,
-        Some("R") => ZoneClassification::Red,
-        _ => ZoneClassification::Green,
-    };
-
-    // Map base codes onto the world's facilities (used by the pirate
-    // simulator's encounter modifiers).
-    if let Some(bases) = entry.bases.as_deref() {
-        let mut facilities = Vec::new();
-        if bases.contains('N') || bases.contains('A') {
-            facilities.push(Facility::Naval);
-        }
-        if bases.contains('S') || bases.contains('A') {
-            facilities.push(Facility::Scout);
-        }
-        if !facilities.is_empty() {
-            world.set_facilities(facilities);
-        }
-    }
-
-    // Gas giants are the third digit of the PBG code.
-    let gas_giants = entry
-        .pbg
-        .as_deref()
-        .and_then(|p| p.chars().nth(2))
-        .and_then(|c| c.to_digit(16))
-        .unwrap_or(0) as u8;
-
+    let (world, gas_giants) = build_world(&entry, (hex_x, hex_y))?;
     Ok(Some((world, entry.allegiance, gas_giants)))
 }
 
@@ -344,6 +435,34 @@ mod tests {
         assert_eq!(urlencode("a/b"), "a%2Fb");
     }
 
+    #[test]
+    fn parse_hex_valid_and_invalid() {
+        assert_eq!(parse_hex("1910"), Some((19, 10)));
+        assert_eq!(parse_hex("0140"), Some((1, 40)));
+        assert_eq!(parse_hex("19"), None);
+        assert_eq!(parse_hex("abcd"), None);
+    }
+
+    #[test]
+    fn absolute_hex_matches_travellermap_worldxy() {
+        // Regina: Spinward Marches (sx -4, sy -1) hex 1910. TravellerMap
+        // reports WorldX/WorldY = (-110, -70); our grid is that plus
+        // (1, 40) — verified against the live /api/coordinates endpoint.
+        assert_eq!(absolute_hex((-4, -1), (19, 10)), (-109, -30));
+        // Borite: Trojan Reach (sx -4, sy 0) hex 2219; WorldX/Y (-107, -21).
+        assert_eq!(absolute_hex((-4, 0), (22, 19)), (-106, 19));
+    }
+
+    #[test]
+    fn absolute_hex_distance_across_sector_seam() {
+        // Aramis (Spinward Marches 2540, bottom row) and Labora (Trojan
+        // Reach 2501, top row) sit on adjacent rows across the seam.
+        let aramis = absolute_hex((-4, -1), (25, 40));
+        let labora = absolute_hex((-4, 0), (25, 1));
+        let d = calculate_hex_distance(aramis.0, aramis.1, labora.0, labora.1);
+        assert_eq!(d, 1, "adjacent rows across the seam are 1 apart");
+    }
+
     #[tokio::test]
     #[ignore]
     async fn fetch_one_regina() {
@@ -368,5 +487,43 @@ mod tests {
             allegiance
         );
         eprintln!("entry: {:?}", entry);
+    }
+
+    /// Live check that `/api/jumpworlds` crosses sector boundaries and our
+    /// absolute-coordinate math agrees with TravellerMap's `WorldX`/`WorldY`.
+    #[tokio::test]
+    #[ignore]
+    async fn jumpworlds_crosses_sector_boundary() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let mut cache = WorldCache::new();
+        // Trojan Reach 2402 is near the coreward edge; jump 4 reaches the
+        // Spinward Marches bottom rows (Aramis, Thisbe, …).
+        let candidates = cache
+            .candidates_within("Trojan Reach", (24, 2), 4)
+            .await
+            .expect("jumpworlds fetch should succeed");
+        assert!(!candidates.is_empty());
+        let cross: Vec<&Candidate> = candidates
+            .iter()
+            .filter(|c| c.sector == "Spinward Marches")
+            .collect();
+        assert!(
+            !cross.is_empty(),
+            "expected Spinward Marches worlds within jump-4 of Trojan Reach 2402"
+        );
+        for c in &candidates {
+            assert!(
+                c.distance >= 1 && c.distance <= 4,
+                "{} distance {} out of range",
+                c.world.name,
+                c.distance
+            );
+        }
+        // Offsets should agree with the hardcoded map table.
+        assert_eq!(cache.sector_offset("Trojan Reach").await.unwrap(), (-4, 0));
+        assert_eq!(
+            cache.sector_offset("Spinward Marches").await.unwrap(),
+            (-4, -1)
+        );
     }
 }
