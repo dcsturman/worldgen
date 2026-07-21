@@ -118,6 +118,8 @@
 //! - Scalable text and spacing
 
 pub mod captains_log_instructions;
+pub mod captains_log_piracy_instructions;
+pub mod captains_log_piracy_prompt;
 pub mod captains_log_prompt;
 pub mod help_tooltip;
 pub mod selector;

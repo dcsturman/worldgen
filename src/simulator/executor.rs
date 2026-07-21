@@ -16,16 +16,50 @@ use crate::simulator::incidents::{
     avoidance_modifier, incident_table_modifier, pirate_cargo, rescue_eta_days, roll_1d3, roll_1d6,
     roll_2d6,
 };
+use crate::simulator::piracy::escape::EscapeOutcome;
+use crate::simulator::piracy::route as proute;
+use crate::simulator::piracy::{encounter, escape, fencing, reputation as rep, resolution, strength};
 use crate::simulator::route::{self, RouteContext};
 use crate::simulator::types::{
-    Action, Date, SimulationParams, SimulationResult, SimulationStep, WorldRef,
+    Action, ActTier, Date, EncounterOutcome, EncounterType, PreyPassedReason, Prize,
+    SimulationMode, SimulationParams, SimulationResult, SimulationStep, WorldRef,
 };
 use crate::simulator::world_fetch::{FetchError, WorldCache};
+use rand::SeedableRng;
+use rand::rngs::StdRng;
 use crate::systems::world::World;
 use crate::trade::available_goods::{AvailableGoodsTable, Good};
 use crate::trade::available_passengers::AvailablePassengers;
 use crate::trade::ship_manifest::ShipManifest;
 use crate::trade::table::TradeTable;
+
+/// Battle damage (in credits) beyond which a pirate needs a real shipyard
+/// rather than a field patch. Taking this much in a high-law system — where a
+/// wanted ship can't dock — strands the pirate (see the repair-maroon logic
+/// in the piracy turn). First-cut; tune alongside the resolution damage model.
+const SHIPYARD_DAMAGE_THRESHOLD: i64 = 500_000;
+
+/// Reputation at/above which any pirate hunter (System Defence Boat, Naval
+/// Patrol) attacks on sight — no bluffing past; you must outrun them.
+const HUNTER_ATTACK_REPUTATION: f64 = 6.0;
+
+/// Reputation at/above which a convoy's escorts recognize the pirate and turn
+/// hostile, engaging rather than letting you raid.
+const CONVOY_HOSTILE_REPUTATION: f64 = 10.0;
+
+/// Reputation above which patrols actively hunt the pirate — `+1` to the
+/// encounter's security die, so defenders turn up more often.
+const HUNTED_REPUTATION: f64 = 20.0;
+
+/// Reputation at/above which the heat is too much: the pirate breaks off
+/// raiding, runs for the hideout, and lies low. Paired with [`LAY_LOW_EXIT`]
+/// as a hysteresis band so it doesn't flip back to hunting the moment it cools
+/// a single point.
+const LAY_LOW_ENTER: f64 = 40.0;
+
+/// Reputation at/below which a pirate that's been lying low judges the heat to
+/// have died down and resumes hunting. See [`LAY_LOW_ENTER`].
+const LAY_LOW_EXIT: f64 = 35.0;
 
 /// Errors the executor can return before producing a [`SimulationResult`].
 #[derive(Debug, thiserror::Error)]
@@ -80,7 +114,32 @@ pub async fn run_simulation(
     let mut total_parsecs_jumped: u32 = 0;
     let mut marooned: bool = false;
     let mut marooned_state: Option<(WorldRef, Date, Date)> = None;
+    let mut marooned_reason: Option<String> = None;
     let mut incident_eligible: bool = false;
+
+    // Pirate state, threaded through the loop (only used in `Piracy` mode).
+    let mut reputation: f64 = params.starting_reputation;
+    let mut plundered_tons: i32 = 0;
+    let mut plundered_value: i64 = 0;
+    let mut total_loot_fenced: i64 = 0;
+    let mut raids: u32 = 0;
+    let mut ships_destroyed: u32 = 0;
+    // Prizes currently flown alongside us (prize crews committed); dropped at
+    // the hideout into `delivered_prizes`, which frees those crews to take more.
+    let mut prizes: Vec<Prize> = Vec::new();
+    let mut delivered_prizes: Vec<Prize> = Vec::new();
+    // Hysteresis flag: once reputation crosses `LAY_LOW_ENTER` the pirate runs
+    // for the hideout and stops raiding until it cools to `LAY_LOW_EXIT`.
+    let mut lying_low: bool = false;
+    // Reputation cools by 1 for every 28 quiet days. This counts days since the
+    // last act of piracy (reset to 0 on an act), kept separate from the payroll
+    // clock so a fight's lost weeks can't bunch several decays onto consecutive
+    // turns.
+    let mut days_since_act: u32 = 0;
+    let mut pirate_rng: StdRng = match params.rng_seed {
+        Some(s) => StdRng::seed_from_u64(s),
+        None => StdRng::from_os_rng(),
+    };
 
     // Initial Arrive at the home world (distance 0).
     emit(
@@ -94,6 +153,27 @@ pub async fn run_simulation(
             fuel_cost: 0,
         },
     );
+
+    // The world the pirate cruise makes for to *finish*: the destination when
+    // one is set, else the hideout (a round trip). Independent of haven status.
+    let terminal_ref: &WorldRef = params.destination.as_ref().unwrap_or(&params.home_world);
+
+    // The pirate's havens — safe ports where it fences the whole hold at law 0,
+    // banks prizes, and lies low. The home world and/or the destination, per
+    // their haven flags. Usually just the home world (the hideout).
+    let havens: Vec<&WorldRef> = {
+        let mut v: Vec<&WorldRef> = Vec::new();
+        if params.home_is_haven {
+            v.push(&params.home_world);
+        }
+        if params.destination_is_haven
+            && let Some(dest) = params.destination.as_ref()
+        {
+            v.push(dest);
+        }
+        v
+    };
+    let haven_hexes: Vec<(i32, i32)> = havens.iter().map(|w| (w.hex_x, w.hex_y)).collect();
 
     // === main loop =======================================================
     loop {
@@ -135,6 +215,30 @@ pub async fn run_simulation(
             days_since_payment -= PERIOD_DAYS;
         }
 
+        // (1b) Reputation cools by 1 for every 28 quiet days — days since the
+        // last act of piracy. An act zeroes the clock, so this fires only during
+        // genuine lying-low, once per month, never bunched after a fight.
+        if params.mode == SimulationMode::Piracy {
+            while days_since_act >= PERIOD_DAYS {
+                days_since_act -= PERIOD_DAYS;
+                if reputation > 0.0 {
+                    let before = reputation;
+                    reputation = rep::decay_one_period(reputation);
+                    emit(
+                        &mut on_step,
+                        current_date,
+                        &current_ref,
+                        budget,
+                        Action::ReputationChange {
+                            delta: reputation - before,
+                            new_value: reputation,
+                            reason: "lying low".to_string(),
+                        },
+                    );
+                }
+            }
+        }
+
         // (2) Abort check: too far past target.
         let overflow_days = current_date.days_until(params.target_completion_date);
         if overflow_days < -ABORT_OVERFLOW_DAYS {
@@ -159,6 +263,623 @@ pub async fn run_simulation(
         // top* of this in step (3).
         current_date = current_date.add_days(DAYS_IN_PORT);
         days_since_payment += DAYS_IN_PORT;
+        days_since_act += DAYS_IN_PORT;
+
+        // ===== PIRACY TURN ===============================================
+        // In Piracy mode the whole merchant port turn (steps 3–14 below) is
+        // replaced: hunt the current system, fence the hold when full, and
+        // route by encounter expected-value. Shared scaffolding (periodic
+        // costs, abort, port stay above; the final tally below) is unchanged.
+        if params.mode == SimulationMode::Piracy {
+            let leadership = params.ship.leadership_skill;
+            let mut force_maroon = false;
+            // What crippled the ship, if anything — names the cause in the
+            // Marooned log line.
+            let mut maroon_reason: Option<&str> = None;
+
+            // Lay-low hysteresis: at `LAY_LOW_ENTER` the heat is too much —
+            // break off raiding and run for the hideout; stay lying low until
+            // reputation cools back to `LAY_LOW_EXIT`. Re-evaluated each turn,
+            // after the quiet-time decay at the top of the loop.
+            if reputation >= LAY_LOW_ENTER {
+                lying_low = true;
+            } else if reputation <= LAY_LOW_EXIT {
+                lying_low = false;
+            }
+
+            // Are we sitting at one of our havens (a safe port)?
+            let at_haven = havens
+                .iter()
+                .any(|h| worldref_same_hex(&current_ref, h));
+
+            // Put in at a haven after travelling: a drop-off. Fence the hold
+            // (best odds — a haven counts as law 0) and bank any prizes, which
+            // frees the prize crews to take more. The cruise doesn't end here
+            // (unless the haven is also the terminal, handled below); mid-cruise
+            // visits drop off and keep hunting.
+            if jumps_taken > 0 && at_haven {
+                if plundered_value > 0
+                    && let Some(out) = fencing::fence(plundered_value, leadership, 0, &mut pirate_rng)
+                {
+                    budget += out.payout;
+                    total_loot_fenced += out.payout;
+                    if out.reputation_delta > 0.0 {
+                        reputation = rep::clamp(reputation + out.reputation_delta);
+                    }
+                    emit(
+                        &mut on_step,
+                        current_date,
+                        &current_ref,
+                        budget,
+                        Action::FenceAttempt {
+                            law_level: 0,
+                            law_bonus: fencing::law_bonus(0).unwrap_or(0),
+                            roll: out.roll,
+                            leadership,
+                            seized: out.seized,
+                            payout_pct: out.payout_pct,
+                            cargo_value: plundered_value,
+                            payout: out.payout,
+                            tons_disposed: plundered_tons,
+                        },
+                    );
+                    plundered_value = 0;
+                    plundered_tons = 0;
+                }
+                if !prizes.is_empty() {
+                    delivered_prizes.append(&mut prizes);
+                }
+            }
+
+            // Reached the finish line — the destination when one is set, else
+            // the hideout. Once we're in the head-home window, arriving here
+            // ends the cruise. (With no destination, this coincides with the
+            // hideout drop-off above, preserving the round-trip behaviour.)
+            let at_terminal =
+                jumps_taken > 0 && worldref_same_hex(&current_ref, terminal_ref);
+            if at_terminal {
+                let total =
+                    params.start_date.days_until(params.target_completion_date) as f64;
+                let elapsed = params.start_date.days_until(current_date) as f64;
+                let prog = if total > 0.0 { elapsed / total } else { 1.0 };
+                if prog >= route::HEAD_HOME_THRESHOLD {
+                    returned_home = true;
+                    break;
+                }
+            }
+
+            // Lying low at a haven: don't sail back out into the heat. Sit in
+            // port and let the days bleed reputation down (the port stay and
+            // quiet-time decay run at the top of the loop). Resume once
+            // `lying_low` clears — i.e. reputation has cooled to `LAY_LOW_EXIT`.
+            if at_haven && lying_low {
+                continue;
+            }
+
+            // (P1) Encounter at the current system. A pirate never raids at
+            // one of its own havens — a safe port it just lies low in and sails.
+            let mut dms = encounter::encounter_dms(&current_world, current_allegiance.as_deref());
+            // A hunted pirate (reputation 20+) draws active patrols: +1 to the
+            // security die means defenders turn up more often.
+            if reputation > HUNTED_REPUTATION {
+                dms.security += 1;
+            }
+            let (d1, d2, enc) = if at_haven {
+                (0, 0, EncounterType::None)
+            } else {
+                let (d1, d2) = encounter::roll_d66_clamped(&dms, &mut pirate_rng);
+                (d1, d2, encounter::encounter_for(d1, d2, &mut pirate_rng))
+            };
+
+            // A notorious pirate can't sidle up to a convoy: at reputation 10+
+            // the escorts recognize the name and engage, turning a fat prize
+            // into a fight you have to outrun.
+            let convoy_hostile =
+                enc == EncounterType::Convoy && reputation >= CONVOY_HOSTILE_REPUTATION;
+
+            if enc == EncounterType::None {
+                emit(
+                    &mut on_step,
+                    current_date,
+                    &current_ref,
+                    budget,
+                    Action::EncounterNone {
+                        d66_first: d1,
+                        d66_second: d2,
+                        traffic_dm: dms.traffic,
+                        security_dm: dms.security,
+                    },
+                );
+            } else if enc.is_threat() || convoy_hostile {
+                // A defender (or a convoy that's had enough of you). Try to play
+                // it cool — unless your name precedes you, in which case they
+                // attack on sight and you can only run.
+                let q_ship =
+                    enc == EncounterType::SystemDefenceBoat && encounter::is_q_ship(&mut pirate_rng);
+                let (pic_roll, recognized) =
+                    if reputation >= HUNTER_ATTACK_REPUTATION || convoy_hostile {
+                        (0, true)
+                    } else {
+                        escape::play_it_cool(leadership, reputation, &mut pirate_rng)
+                    };
+                // The specific defender class (Patrol Corvette, etc.) and its
+                // maneuver thrust.
+                let threat_ship = strength::roll_prey(enc, 1.0, &mut pirate_rng);
+                let class_name = threat_ship.class_name;
+                if !recognized {
+                    emit(
+                        &mut on_step,
+                        current_date,
+                        &current_ref,
+                        budget,
+                        Action::ThreatEncounter {
+                            threat: enc,
+                            class_name: class_name.to_string(),
+                            q_ship,
+                            play_it_cool_roll: pic_roll,
+                            recognized: false,
+                            escape_margin: 0,
+                            outcome: "slipped past unrecognized".to_string(),
+                            damage_credits: 0,
+                            weeks_lost: 0,
+                        },
+                    );
+                } else {
+                    let enc_thrust = threat_ship.thrust;
+                    let (em, outcome) =
+                        escape::thrust_escape(params.ship.thrust, enc_thrust, &mut pirate_rng);
+                    let (label, dmg, weeks, maroon_flag) = match outcome {
+                        EscapeOutcome::Clean => ("clean escape", 0i64, 0u32, false),
+                        EscapeOutcome::WithDamage { credits, weeks } => {
+                            ("escaped with damage", credits, weeks, false)
+                        }
+                        EscapeOutcome::Caught {
+                            credits,
+                            weeks,
+                            maroon,
+                        } => ("run down and boarded", credits, weeks, maroon),
+                    };
+                    budget -= dmg;
+                    if weeks > 0 {
+                        let added = weeks * DAYS_PER_WEEK;
+                        current_date = current_date.add_days(added);
+                        days_since_payment += added;
+                        // Weeks spent shaking a patrol are quiet days, not piracy.
+                        days_since_act += added;
+                    }
+                    if maroon_flag {
+                        force_maroon = true;
+                        maroon_reason = Some("run down and boarded by a patrol");
+                    }
+                    emit(
+                        &mut on_step,
+                        current_date,
+                        &current_ref,
+                        budget,
+                        Action::ThreatEncounter {
+                            threat: enc,
+                            class_name: class_name.to_string(),
+                            q_ship,
+                            play_it_cool_roll: pic_roll,
+                            recognized: true,
+                            escape_margin: em,
+                            outcome: label.to_string(),
+                            damage_credits: dmg,
+                            weeks_lost: weeks,
+                        },
+                    );
+                }
+            } else if lying_low {
+                // Too hot to raid — break off and run for the hideout. Note the
+                // prey we let slip; the route is already homebound.
+                let prey = strength::roll_prey(enc, 1.0, &mut pirate_rng);
+                emit(
+                    &mut on_step,
+                    current_date,
+                    &current_ref,
+                    budget,
+                    Action::PreyPassed {
+                        encounter: enc,
+                        class_name: prey.class_name.to_string(),
+                        hull_tons: prey.hull_tons,
+                        reason: PreyPassedReason::LyingLow,
+                    },
+                );
+            } else if proute::hold_too_full_to_raid(plundered_tons, params.ship.cargo_capacity) {
+                // Hold all but full — not worth a fight for the scraps of room.
+                // Note the prey we let slip and make for a fence (the route is
+                // already in fence-run mode at this fullness).
+                let prey = strength::roll_prey(enc, 1.0, &mut pirate_rng);
+                emit(
+                    &mut on_step,
+                    current_date,
+                    &current_ref,
+                    budget,
+                    Action::PreyPassed {
+                        encounter: enc,
+                        class_name: prey.class_name.to_string(),
+                        hull_tons: prey.hull_tons,
+                        reason: PreyPassedReason::HoldFull,
+                    },
+                );
+            } else {
+                // Prey: resolve the encounter.
+                let trade_mult = strength::economy_multiplier(&current_world);
+                let prey = strength::roll_prey(enc, trade_mult, &mut pirate_rng);
+                let pirate = resolution::Pirate {
+                    weapons: params.ship.weapons,
+                    attitude: params.attitude,
+                    reputation,
+                    leadership,
+                };
+                let res = resolution::resolve_encounter(&pirate, &prey, &mut pirate_rng);
+                budget -= res.pirate_damage_credits;
+                if res.weeks_lost > 0 {
+                    let added = res.weeks_lost * DAYS_PER_WEEK;
+                    current_date = current_date.add_days(added);
+                    days_since_payment += added;
+                    days_since_act += added;
+                }
+
+                // Serious battle damage needs a shipyard, and a wanted pirate
+                // can only put in to a low-law world. Mauled in high-law space
+                // with no friendly port, the ship hides in the outer system
+                // and sends for help (just like a broke trader).
+                if res.pirate_damage_credits >= SHIPYARD_DAMAGE_THRESHOLD
+                    && fencing::law_bonus(current_world.get_law_level()).is_none()
+                {
+                    force_maroon = true;
+                    maroon_reason = Some("too crippled to dock in patrolled space");
+                }
+
+                // Loot into the hold, capped by remaining capacity.
+                let remaining_hold = (params.ship.cargo_capacity - plundered_tons).max(0);
+                let taken_tons = res.loot_tons.min(remaining_hold);
+                let taken_value = if res.loot_tons > 0 {
+                    res.loot_value * taken_tons as i64 / res.loot_tons as i64
+                } else {
+                    0
+                };
+                plundered_tons += taken_tons;
+                plundered_value += taken_value;
+
+                // Tally the raid.
+                let took = res.act_tier.is_some();
+                if took {
+                    raids += 1;
+                    if res.act_tier == Some(ActTier::DestroyOrMurder) {
+                        ships_destroyed += 1;
+                    }
+                }
+
+                emit(
+                    &mut on_step,
+                    current_date,
+                    &current_ref,
+                    budget,
+                    Action::EncounterResolved {
+                        d66_first: d1,
+                        d66_second: d2,
+                        traffic_dm: dms.traffic,
+                        security_dm: dms.security,
+                        encounter: enc,
+                        class_name: prey.class_name.to_string(),
+                        target_hull_tons: prey.hull_tons,
+                        target_weapons: prey.weapons,
+                        target_thrust: prey.thrust,
+                        mor_roll: res.mor_roll,
+                        mor_total: res.mor_total,
+                        menace: res.menace,
+                        surrender_margin: res.surrender_margin,
+                        resistance: res.resistance,
+                        outcome: res.outcome,
+                        act_tier: res.act_tier,
+                        loot_value: taken_value,
+                        pirate_damage_credits: res.pirate_damage_credits,
+                        weeks_lost: res.weeks_lost,
+                    },
+                );
+
+                // Prize capture, gated by the crew cap (1 per 10 crew; at the
+                // cap, keep the most valuable hulls).
+                let mut kept_prize = false;
+                if let Some(prize) = res.prize {
+                    // One prize per 10 crew (rounding down) — each needs a prize
+                    // crew aboard.
+                    let max_prizes = params.ship.crew_size.max(0) as usize / 10;
+                    let keep = if prizes.len() < max_prizes {
+                        true
+                    } else if let Some(idx) = prizes
+                        .iter()
+                        .enumerate()
+                        .min_by_key(|(_, p)| p.hull_tons)
+                        .map(|(i, _)| i)
+                    {
+                        // At the cap, keep the bigger hull.
+                        if prize.hull_tons > prizes[idx].hull_tons {
+                            prizes.remove(idx);
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+                    if keep {
+                        kept_prize = true;
+                        let condition_pct = (prize.condition * 100.0).round() as i32;
+                        emit(
+                            &mut on_step,
+                            current_date,
+                            &current_ref,
+                            budget,
+                            Action::PrizeTaken {
+                                ship_type: prize.ship_type,
+                                class_name: prize.class_name.clone(),
+                                hull_tons: prize.hull_tons,
+                                condition_pct,
+                            },
+                        );
+                        prizes.push(prize);
+                    } else {
+                        // She was takeable, but every prize crew is already
+                        // committed — left her behind.
+                        emit(
+                            &mut on_step,
+                            current_date,
+                            &current_ref,
+                            budget,
+                            Action::PrizeDeclined {
+                                ship_type: prize.ship_type,
+                                class_name: prize.class_name.clone(),
+                                hull_tons: prize.hull_tons,
+                            },
+                        );
+                    }
+                }
+
+                // Notoriety from this incident — Standing-style stacking
+                // categories (cargo / infamous / atrocity / interference). Only
+                // an actual act of piracy earns a reputation; a prey that jumped
+                // clear or drove us off (no take) is no notoriety at all.
+                if took {
+                    let deeds = rep::IncidentDeeds {
+                        cargo_value: taken_value,
+                        crippled: res.act_tier == Some(ActTier::DamageShip),
+                        destroyed: res.act_tier == Some(ActTier::DestroyOrMurder),
+                        captured_prize: kept_prize,
+                        convoy: enc == EncounterType::Convoy,
+                    };
+                    let gain = rep::rep_gain_for_incident(&deeds, &mut pirate_rng);
+                    if gain > 0.0 {
+                        reputation = rep::clamp(reputation + gain);
+                        emit(
+                            &mut on_step,
+                            current_date,
+                            &current_ref,
+                            budget,
+                            Action::ReputationChange {
+                                delta: gain,
+                                new_value: reputation,
+                                reason: "act of piracy".to_string(),
+                            },
+                        );
+                    }
+                }
+
+                // Any act of piracy (or a fight you started) resets the
+                // lying-low clock — you weren't keeping your head down.
+                if took || kept_prize || res.outcome == EncounterOutcome::DrivenOffMauled {
+                    days_since_act = 0;
+                }
+            }
+
+            // Build the routing context (current_date may have advanced).
+            let base_ctx = RouteContext {
+                home: &params.home_world,
+                current_date,
+                start_date: params.start_date,
+                target_date: params.target_completion_date,
+                jump: params.ship.jump_rating as i32,
+                fuel_cost_per_parsec: params.fuel_cost_per_parsec,
+                history: &history,
+            };
+            let upcoming_upkeep =
+                params.ship.monthly_expenses() + params.ship.crew_life_support_per_jump();
+            // All prize crews committed → head home to drop the prizes off.
+            let max_prizes = params.ship.crew_size.max(0) as usize / 10;
+            let prize_run = max_prizes > 0 && prizes.len() >= max_prizes;
+
+            // (P3) Fence the hold if we're under fence pressure and this is a
+            // low-law world.
+            let pctx_pre = proute::PirateRouteContext {
+                base: &base_ctx,
+                reputation,
+                plundered_tons,
+                cargo_capacity: params.ship.cargo_capacity,
+                budget,
+                upcoming_upkeep,
+                ship_weapons: params.ship.weapons,
+                prize_run,
+                lying_low,
+                terminal_hex: (terminal_ref.hex_x, terminal_ref.hex_y),
+                haven_hexes: haven_hexes.clone(),
+            };
+            if proute::route_mode(&pctx_pre) == proute::RouteMode::FenceRun
+                && plundered_value > 0
+                && fencing::law_bonus(current_world.get_law_level()).is_some()
+                && let Some(out) = fencing::fence(
+                    plundered_value,
+                    leadership,
+                    current_world.get_law_level(),
+                    &mut pirate_rng,
+                )
+            {
+                budget += out.payout;
+                total_loot_fenced += out.payout;
+                if out.reputation_delta > 0.0 {
+                    reputation = rep::clamp(reputation + out.reputation_delta);
+                }
+                emit(
+                    &mut on_step,
+                    current_date,
+                    &current_ref,
+                    budget,
+                    Action::FenceAttempt {
+                        law_level: current_world.get_law_level(),
+                        law_bonus: fencing::law_bonus(current_world.get_law_level()).unwrap_or(0),
+                        roll: out.roll,
+                        leadership,
+                        seized: out.seized,
+                        payout_pct: out.payout_pct,
+                        cargo_value: plundered_value,
+                        payout: out.payout,
+                        tons_disposed: plundered_tons,
+                    },
+                );
+                plundered_value = 0;
+                plundered_tons = 0;
+            }
+
+            // (P4) Crew life support for the jump.
+            let crew_cost = params.ship.crew_life_support_per_jump();
+            budget -= crew_cost;
+            emit(
+                &mut on_step,
+                current_date,
+                &current_ref,
+                budget,
+                Action::PayLifeSupport {
+                    stateroom_cost: 0,
+                    ls_cost: 0,
+                    low_cost: 0,
+                    crew_cost,
+                },
+            );
+
+            // (P5) Marooning check.
+            if force_maroon || budget < 0 {
+                marooned = true;
+                let eta = rescue_eta_days(total_parsecs_jumped);
+                let arrives = current_date.add_days(eta);
+                marooned_state = Some((current_ref.clone(), current_date, arrives));
+                let reason = maroon_reason
+                    .unwrap_or("out of funds — couldn't make payroll")
+                    .to_string();
+                marooned_reason = Some(reason.clone());
+                emit(
+                    &mut on_step,
+                    current_date,
+                    &current_ref,
+                    budget,
+                    Action::Marooned {
+                        reason,
+                        budget,
+                        total_parsecs_jumped,
+                        rescue_eta_days: eta,
+                        rescue_arrives_on: arrives,
+                    },
+                );
+                completed_normally = false;
+                break;
+            }
+
+            // (P6) Route to the next system.
+            let candidates = cache
+                .candidates_within(
+                    &current_ref.sector,
+                    (current_ref.hex_x, current_ref.hex_y),
+                    params.ship.jump_rating as i32,
+                )
+                .await?;
+            if candidates.is_empty() {
+                emit(
+                    &mut on_step,
+                    current_date,
+                    &current_ref,
+                    budget,
+                    Action::NoCandidate {
+                        note: "No reachable worlds within jump range.".to_string(),
+                    },
+                );
+                completed_normally = false;
+                break;
+            }
+            let pctx_route = proute::PirateRouteContext {
+                base: &base_ctx,
+                reputation,
+                plundered_tons,
+                cargo_capacity: params.ship.cargo_capacity,
+                budget,
+                upcoming_upkeep,
+                ship_weapons: params.ship.weapons,
+                prize_run,
+                lying_low,
+                terminal_hex: (terminal_ref.hex_x, terminal_ref.hex_y),
+                haven_hexes: haven_hexes.clone(),
+            };
+            let mode = proute::route_mode(&pctx_route);
+            let next = match proute::pick_next_pirate(&candidates, mode, &pctx_route) {
+                Some(n) => n,
+                None => {
+                    emit(
+                        &mut on_step,
+                        current_date,
+                        &current_ref,
+                        budget,
+                        Action::NoCandidate {
+                            note: "Route planner returned no destination.".to_string(),
+                        },
+                    );
+                    completed_normally = false;
+                    break;
+                }
+            };
+            let next_ref = world_ref_for(&next.world, &current_ref.sector);
+
+            // (P7) Pay fuel and jump.
+            let fuel_for_jump = (next.distance as i64) * params.fuel_cost_per_parsec;
+            budget -= fuel_for_jump;
+            let from_ref = current_ref.clone();
+            emit(
+                &mut on_step,
+                current_date,
+                &current_ref,
+                budget,
+                Action::Jump {
+                    to: next_ref.clone(),
+                    distance: next.distance,
+                    fuel_cost: fuel_for_jump,
+                },
+            );
+
+            // (P8) Advance state.
+            history.insert(0, current_ref.clone());
+            if history.len() > 8 {
+                history.truncate(8);
+            }
+            current_world = next.world.clone();
+            current_ref = next_ref.clone();
+            current_allegiance = next.allegiance.clone();
+            current_date = current_date.add_days(DAYS_PER_JUMP);
+            days_since_payment += DAYS_PER_JUMP;
+            days_since_act += DAYS_PER_JUMP;
+            jumps_taken += 1;
+            total_parsecs_jumped += next.distance.max(0) as u32;
+            emit(
+                &mut on_step,
+                current_date,
+                &current_ref,
+                budget,
+                Action::Arrive {
+                    from: from_ref,
+                    distance: next.distance,
+                    fuel_cost: fuel_for_jump,
+                },
+            );
+            incident_eligible = true;
+            continue;
+        }
 
         // (3) Incident roll. Skipped on the very first iteration so the
         // initial Arrive at the home world doesn't trigger one. Any "weeks
@@ -483,12 +1204,14 @@ pub async fn run_simulation(
             let eta = rescue_eta_days(total_parsecs_jumped);
             let arrives = current_date.add_days(eta);
             marooned_state = Some((current_ref.clone(), current_date, arrives));
+            marooned_reason = Some("out of funds — couldn't make payroll".to_string());
             emit(
                 &mut on_step,
                 current_date,
                 &current_ref,
                 budget,
                 Action::Marooned {
+                    reason: "out of funds — couldn't make payroll".to_string(),
                     budget,
                     total_parsecs_jumped,
                     rescue_eta_days: eta,
@@ -597,7 +1320,15 @@ pub async fn run_simulation(
         marooned,
         marooned_at: marooned_state.as_ref().map(|(w, _, _)| w.clone()),
         marooned_on: marooned_state.as_ref().map(|(_, d, _)| *d),
+        marooned_reason,
         rescue_arrives_on: marooned_state.as_ref().map(|(_, _, eta)| *eta),
+        final_reputation: reputation,
+        total_loot_fenced,
+        raids,
+        ships_destroyed,
+        // Only prizes actually delivered to the hideout count; any still flown
+        // alongside us when the cruise ended elsewhere are lost.
+        prizes: delivered_prizes,
     })
 }
 
@@ -982,6 +1713,7 @@ fn pick_passengers(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::simulator::types::Attitude;
     use crate::trade::Ship;
     use crate::trade::ZoneClassification;
 
@@ -1012,10 +1744,12 @@ mod tests {
         let params = SimulationParams {
             ship: Ship {
                 name: "Test".into(),
+                captain_name: String::new(),
                 broker_skill: 0,
                 steward_skill: 0,
                 leadership_skill: 0,
                 weapons: 0,
+                thrust: 0,
                 cargo_capacity: 100,
                 crew_staterooms: 4,
                 passenger_staterooms: 6,
@@ -1030,10 +1764,17 @@ mod tests {
             crew_profit_share: 0.0,
             starting_budget: 0,
             home_world: dummy_home(),
+            destination: None,
+            home_is_haven: true,
+            destination_is_haven: false,
             start_date: crate::simulator::types::Date::new(0, 1105),
             target_completion_date: crate::simulator::types::Date::new(100, 1105),
             illegal_goods: false,
             planetary_broker_skill: 2,
+            mode: SimulationMode::Trade,
+            attitude: Attitude::Hungry,
+            starting_reputation: 0.0,
+            rng_seed: None,
         };
         assert!(pax_reserve_estimate(&params) > 0);
     }
@@ -1094,10 +1835,12 @@ mod tests {
         let params = SimulationParams {
             ship: Ship {
                 name: "Test".into(),
+                captain_name: String::new(),
                 broker_skill: 2,
                 steward_skill: 1,
                 leadership_skill: 1,
                 weapons: 2,
+                thrust: 0,
                 cargo_capacity: 80,
                 crew_staterooms: 4,
                 passenger_staterooms: 6,
@@ -1119,10 +1862,17 @@ mod tests {
                 hex_y: 10,
                 zone: ZoneClassification::Green,
             },
+            destination: None,
+            home_is_haven: true,
+            destination_is_haven: false,
             start_date: crate::simulator::types::Date::new(1, 1105),
             target_completion_date: crate::simulator::types::Date::new(180, 1105),
             illegal_goods: false,
             planetary_broker_skill: 2,
+            mode: SimulationMode::Trade,
+            attitude: Attitude::Hungry,
+            starting_reputation: 0.0,
+            rng_seed: None,
         };
         let mut cache = WorldCache::new();
         let mut step_count = 0;
@@ -1154,10 +1904,12 @@ mod tests {
         let params = SimulationParams {
             ship: Ship {
                 name: "Test".into(),
+                captain_name: String::new(),
                 broker_skill: 0,
                 steward_skill: 0,
                 leadership_skill: 0,
                 weapons: 0,
+                thrust: 0,
                 cargo_capacity: 20,
                 crew_staterooms: 1,
                 passenger_staterooms: 1,
@@ -1179,10 +1931,17 @@ mod tests {
                 hex_y: 10,
                 zone: ZoneClassification::Green,
             },
+            destination: None,
+            home_is_haven: true,
+            destination_is_haven: false,
             start_date: crate::simulator::types::Date::new(1, 1105),
             target_completion_date: crate::simulator::types::Date::new(31, 1105),
             illegal_goods: false,
             planetary_broker_skill: 2,
+            mode: SimulationMode::Trade,
+            attitude: Attitude::Hungry,
+            starting_reputation: 0.0,
+            rng_seed: None,
         };
         let mut cache = WorldCache::new();
         let result = run_simulation(params, &mut cache, |s| {
@@ -1206,5 +1965,76 @@ mod tests {
             !result.completed_normally,
             "marooning should not be a normal completion"
         );
+    }
+
+    /// Pirate-mode smoke: a deterministic raiding voyage out of Regina.
+    /// Ignored because it requires network. `rng_seed` makes the piracy
+    /// rolls reproducible. Run with
+    /// `cargo test --features backend -- --ignored pirate_smoke --nocapture`.
+    #[tokio::test]
+    #[ignore]
+    async fn pirate_smoke_regina() {
+        let _ = env_logger::Builder::from_default_env()
+            .is_test(true)
+            .try_init();
+        let params = SimulationParams {
+            mode: SimulationMode::Piracy,
+            attitude: Attitude::Aggressive,
+            starting_reputation: 0.0,
+            rng_seed: Some(42),
+            ship: Ship {
+                name: "Black Kite".into(),
+                captain_name: String::new(),
+                broker_skill: 0,
+                steward_skill: 0,
+                leadership_skill: 2,
+                weapons: 6,
+                thrust: 4,
+                cargo_capacity: 40,
+                crew_staterooms: 2,
+                passenger_staterooms: 0,
+                low_berths: 0,
+                crew_size: 12,
+                jump_rating: 2,
+                mortgage_per_period: 0,
+                maintenance_per_period: 30_000,
+                salary_per_period: 12_000,
+            },
+            fuel_cost_per_parsec: 5_000,
+            crew_profit_share: 0.2,
+            starting_budget: 500_000,
+            home_world: WorldRef {
+                name: "Regina".to_string(),
+                uwp: "A788899-A".to_string(),
+                sector: "Spinward Marches".to_string(),
+                hex_x: 19,
+                hex_y: 10,
+                zone: ZoneClassification::Green,
+            },
+            destination: None,
+            home_is_haven: true,
+            destination_is_haven: false,
+            start_date: crate::simulator::types::Date::new(1, 1105),
+            target_completion_date: crate::simulator::types::Date::new(180, 1105),
+            illegal_goods: false,
+            planetary_broker_skill: 2,
+        };
+        let mut cache = WorldCache::new();
+        let mut step_count = 0;
+        let result = run_simulation(params, &mut cache, |s| {
+            step_count += 1;
+            eprintln!(
+                "[{}] {} budget={} {:?}",
+                s.date.format(),
+                s.location.name,
+                s.budget_after,
+                s.action
+            );
+        })
+        .await
+        .expect("pirate simulation should complete");
+        eprintln!("Steps: {step_count}");
+        eprintln!("Result: {result:#?}");
+        assert!(result.jumps > 0, "should have made at least one jump");
     }
 }

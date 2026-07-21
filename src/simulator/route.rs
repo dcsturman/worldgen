@@ -27,6 +27,11 @@ pub struct Candidate {
     /// `"Zh"`). `None` when the data wasn't available. Used by the route
     /// planner to apply a heavy penalty for foreign-empire space.
     pub allegiance: Option<String>,
+    /// Number of gas giants in the system (TravellerMap `PBG` third digit).
+    /// Used by the pirate planner's wilderness-refuel filter — a pirate
+    /// avoids systems where it can't skim fuel. The merchant planner ignores
+    /// this. Defaults to `0` for worlds fetched before this was plumbed.
+    pub gas_giants: u8,
 }
 
 /// Read-only context for scoring.
@@ -396,11 +401,13 @@ mod tests {
             world: mk_world("Great", "A999999-F", 1, 1),
             distance: 1,
             allegiance: None,
+            gas_giants: 0,
         };
         let home = Candidate {
             world: mk_world("Home", "A788899-A", 5, 5),
             distance: 4,
             allegiance: None,
+            gas_giants: 0,
         };
 
         let market = AvailableGoodsTable::default();
@@ -421,11 +428,13 @@ mod tests {
             world: mk_world("Near", "C555555-7", 1, 0),
             distance: 1,
             allegiance: None,
+            gas_giants: 0,
         };
         let far = Candidate {
             world: mk_world("Far", "C555555-7", 3, 0),
             distance: 3,
             allegiance: None,
+            gas_giants: 0,
         };
         let market = AvailableGoodsTable::default();
         let c = ctx(&home_ref, &[]);
@@ -443,11 +452,13 @@ mod tests {
             world: mk_world("PortA", "A555555-7", 1, 0),
             distance: 1,
             allegiance: None,
+            gas_giants: 0,
         };
         let porte = Candidate {
             world: mk_world("PortE", "E555555-7", 0, 1),
             distance: 1,
             allegiance: None,
+            gas_giants: 0,
         };
         let market = AvailableGoodsTable::default();
         let c = ctx(&home_ref, &[]);
@@ -467,11 +478,13 @@ mod tests {
             world: mk_world("Visited", "C555555-7", 1, 0),
             distance: 1,
             allegiance: None,
+            gas_giants: 0,
         };
         let fresh_cand = Candidate {
             world: mk_world("Fresh", "C555555-7", 0, 1),
             distance: 1,
             allegiance: None,
+            gas_giants: 0,
         };
 
         let market = AvailableGoodsTable::default();
@@ -501,11 +514,13 @@ mod tests {
             world: mk_world("Near", "C555555-7", 1, 0),
             distance: 1,
             allegiance: None,
+            gas_giants: 0,
         };
         let far_with_a = Candidate {
             world: mk_world("FarA", "A555555-7", 8, 0),
             distance: 1, // distance from current location, not from home
             allegiance: None,
+            gas_giants: 0,
         };
 
         let market = AvailableGoodsTable::default();
@@ -518,11 +533,13 @@ mod tests {
                 world: near_home.world.clone(),
                 distance: 1,
                 allegiance: None,
+                gas_giants: 0,
             },
             Candidate {
                 world: far_with_a.world.clone(),
                 distance: 1,
                 allegiance: None,
+                gas_giants: 0,
             },
         ];
         let early = pick_next(&cands_early, &market, &c_early).unwrap();
@@ -540,11 +557,13 @@ mod tests {
                 world: near_home.world.clone(),
                 distance: 1,
                 allegiance: None,
+                gas_giants: 0,
             },
             Candidate {
                 world: far_with_a.world.clone(),
                 distance: 1,
                 allegiance: None,
+                gas_giants: 0,
             },
         ];
         let late = pick_next(&cands_late, &market, &c_late).unwrap();
@@ -616,11 +635,13 @@ mod tests {
             world: non_ag_world,
             distance: 1,
             allegiance: None,
+            gas_giants: 0,
         };
         let neutral = Candidate {
             world: neutral_world,
             distance: 1,
             allegiance: None,
+            gas_giants: 0,
         };
 
         let c = ctx(&home_ref, &[]);
@@ -651,11 +672,13 @@ mod tests {
             world: mk_world("Home", "A999999-F", 5, 5),
             distance: 1,
             allegiance: None,
+            gas_giants: 0,
         };
         let other = Candidate {
             world: mk_world("Other", "C555555-7", 6, 5),
             distance: 1,
             allegiance: None,
+            gas_giants: 0,
         };
         let market = AvailableGoodsTable::default();
         let mut c = ctx(&home_ref, &[]);
@@ -675,11 +698,13 @@ mod tests {
             world: mk_world("Home", "A999999-F", 5, 5),
             distance: 1,
             allegiance: None,
+            gas_giants: 0,
         };
         let other = Candidate {
             world: mk_world("Other", "C555555-7", 6, 5),
             distance: 1,
             allegiance: None,
+            gas_giants: 0,
         };
         let market = AvailableGoodsTable::default();
         let mut c = ctx(&home_ref, &[]);
@@ -701,11 +726,13 @@ mod tests {
             world: mk_world("Great", "A999999-F", 5, 0),
             distance: 2,
             allegiance: None,
+            gas_giants: 0,
         };
         let mediocre_near = Candidate {
             world: mk_world("Near", "E555555-5", 1, 0),
             distance: 2,
             allegiance: None,
+            gas_giants: 0,
         };
         let market = AvailableGoodsTable::default();
         let mut c = ctx(&home_ref, &[]);
@@ -753,11 +780,13 @@ mod tests {
             world: mk_world("AslanA", "A999999-F", 1, 0),
             distance: 1,
             allegiance: Some("AsT4".to_string()),
+            gas_giants: 0,
         };
         let imperial_meh = Candidate {
             world: mk_world("ImpC", "C555555-7", 2, 0),
             distance: 2,
             allegiance: Some("Im".to_string()),
+            gas_giants: 0,
         };
         let market = AvailableGoodsTable::default();
         let c = ctx(&home_ref, &[]);
@@ -780,6 +809,7 @@ mod tests {
             world: mk_world("Zhodane", "C555555-7", 1, 0),
             distance: 1,
             allegiance: Some("Zh".to_string()),
+            gas_giants: 0,
         };
         let market = AvailableGoodsTable::default();
         let c = ctx(&home_ref, &[]);

@@ -21,8 +21,8 @@ pub const INSTRUCTIONS: &str = r#"You are writing a Traveller RPG ship-captain's
 - Refer to yourself in the first person ("I", "we"). The crew is a "we", the ship is "she" or by name.
 - Imperial dating is "DDD-YYYY" (day-of-year / Imperial year). Stamp every world visit with arrival and departure dates.
 
-== INVENT YOUR CAPTAIN ONCE ==
-At the very start of the log, decide your captain's name and use it consistently throughout. Roll once on this distribution and KEEP THE SAME NAME for the whole entry; do not rename mid-log.
+== YOUR CAPTAIN ==
+If the voyage data line "Captain:" gives a name, that is YOUR captain — use exactly that name, spelled that way, consistently throughout, and do NOT roll on the distribution below. Only if that line reads "(unnamed ...)" do you invent one: decide your captain's name at the very start of the log by rolling once on this distribution, and KEEP THE SAME NAME for the whole entry; do not rename mid-log.
 
 - 40% Vilani (human, Imperial-core culture). Examples of style: Sumarrgha Lugaadiin, Khimkhi Naashar, Lugaadiin Kashagga. Tend to long, sibilant, doubled-consonant names.
 - 40% Solomani (human, Earth-derived). Real Earth-style names from any culture: Sarah Chen, Marcus Beaumont, Aleksei Volkov, Adaeze Okonkwo, Yuki Tanaka, Diego Marquez, Fatima al-Rashid.

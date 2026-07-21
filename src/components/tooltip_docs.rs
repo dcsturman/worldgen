@@ -17,6 +17,10 @@ pub const PASSENGER_STATEROOMS: &str = "Total number of standard staterooms avai
 pub const LOW_BERTHS: &str = "Total number of low berths available for low passengers, used both for availability when \
                               soliticting low passengers and for monthly support costs.";
 pub const JUMP_RATING: &str = "Max jump of this ship. Jump rating is used when looking at available destinations for the next jump.";
+pub const THRUST: &str = "Maneuver-drive thrust rating (in Gs). A faster ship is more likely to outrun a System Defence Boat, \
+                          Naval Patrol, or q-ship when a raid turns dangerous.";
+pub const ATTITUDE: &str = "Voyage-wide piracy doctrine. More aggressive crews erode a target's morale faster and take larger \
+                            hauls, but escalate the act of piracy and so build reputation (and heat) faster.";
 pub const FUEL_COST_PER_PARSEC: &str = "Cost of fuel used per jump by the ship.  If the ship has no fuel processors enter Cr 1000/ton for refined fule. \
                                         If the ship has fuel processors, then enter Cr 500/ton for unrefined fuel. \
                                         If the ship also has fuel scoops, then wilderness refueling is possible so enter 0.";

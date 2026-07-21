@@ -23,11 +23,13 @@ use crate::trade::{TradeClass, ZoneClassification, uwp_to_trade_classes};
 
 /// Build the full prompt string from a completed simulation.
 ///
-/// `ship_name` is taken from the simulator's `Ship::name` field. If
-/// blank, the data line tells the model to invent one in keeping with
-/// Traveller free-trader naming.
+/// `ship_name` and `captain_name` are taken from the simulator's
+/// `Ship::name` / `Ship::captain_name` fields. When either is blank the data
+/// line tells the model to invent one in keeping with Traveller free-trader
+/// naming.
 pub fn build_prompt(
     ship_name: &str,
+    captain_name: &str,
     params: &SimulationParams,
     steps: &[SimulationStep],
     result: &SimulationResult,
@@ -38,7 +40,7 @@ pub fn build_prompt(
 
     out.push_str(INSTRUCTIONS);
     out.push_str("\n== VOYAGE DATA ==\n\n");
-    write_voyage_header(&mut out, ship_name, params, result);
+    write_voyage_header(&mut out, ship_name, captain_name, params, result);
     write_ship_config(&mut out, params);
 
     let visits = coalesce_visits(steps);
@@ -70,6 +72,7 @@ pub fn build_prompt(
 fn write_voyage_header(
     out: &mut String,
     ship_name: &str,
+    captain_name: &str,
     params: &SimulationParams,
     result: &SimulationResult,
 ) {
@@ -80,6 +83,15 @@ fn write_voyage_header(
         );
     } else {
         let _ = writeln!(out, "Ship: {trimmed}");
+    }
+
+    let captain = captain_name.trim();
+    if captain.is_empty() {
+        out.push_str(
+            "Captain: (unnamed — invent a name per the distribution in the instructions and use it consistently throughout)\n",
+        );
+    } else {
+        let _ = writeln!(out, "Captain: {captain}");
     }
 
     let home = &params.home_world;
@@ -472,6 +484,17 @@ fn coalesce_visits(steps: &[SimulationStep]) -> Vec<Visit<'_>> {
             Action::Marooned { .. } => {
                 v.marooned_here = true;
             }
+            // Piracy-only variants never appear in a merchant trade run,
+            // which is the only flow this builder serves. Explicit no-op
+            // arms (rather than a wildcard) keep future variants honest.
+            Action::EncounterResolved { .. } => {}
+            Action::EncounterNone { .. } => {}
+            Action::PreyPassed { .. } => {}
+            Action::ThreatEncounter { .. } => {}
+            Action::FenceAttempt { .. } => {}
+            Action::PrizeTaken { .. } => {}
+            Action::PrizeDeclined { .. } => {}
+            Action::ReputationChange { .. } => {}
         }
     }
 
@@ -838,10 +861,17 @@ mod tests {
             crew_profit_share: 0.10,
             starting_budget: 500_000,
             home_world: regina.clone(),
+            destination: None,
+            home_is_haven: true,
+            destination_is_haven: false,
             start_date: Date::new(91, 1108),
             target_completion_date: Date::new(180, 1108),
             illegal_goods: false,
             planetary_broker_skill: 2,
+            mode: crate::simulator::types::SimulationMode::Trade,
+            attitude: crate::simulator::types::Attitude::Hungry,
+            starting_reputation: 0.0,
+            rng_seed: None,
         };
         let result = SimulationResult {
             final_budget: 612_400,
@@ -856,10 +886,17 @@ mod tests {
             marooned: false,
             marooned_at: None,
             marooned_on: None,
+            marooned_reason: None,
             rescue_arrives_on: None,
+            final_reputation: 0.0,
+            total_loot_fenced: 0,
+            raids: 0,
+            ships_destroyed: 0,
+            prizes: Vec::new(),
         };
-        let s = build_prompt("Free Trader Beowulf", &params, &[], &result);
+        let s = build_prompt("Free Trader Beowulf", "Alois Kadmon", &params, &[], &result);
         assert!(s.contains("Free Trader Beowulf"));
+        assert!(s.contains("Captain: Alois Kadmon"));
         assert!(s.contains("091-1108"));
         assert!(s.contains("267-1108"));
         assert!(s.contains("Now write the captain's log."));
@@ -874,10 +911,17 @@ mod tests {
             crew_profit_share: 0.10,
             starting_budget: 500_000,
             home_world: regina.clone(),
+            destination: None,
+            home_is_haven: true,
+            destination_is_haven: false,
             start_date: Date::new(91, 1108),
             target_completion_date: Date::new(180, 1108),
             illegal_goods: false,
             planetary_broker_skill: 2,
+            mode: crate::simulator::types::SimulationMode::Trade,
+            attitude: crate::simulator::types::Attitude::Hungry,
+            starting_reputation: 0.0,
+            rng_seed: None,
         };
         let result = SimulationResult {
             final_budget: 0,
@@ -892,9 +936,16 @@ mod tests {
             marooned: false,
             marooned_at: None,
             marooned_on: None,
+            marooned_reason: None,
             rescue_arrives_on: None,
+            final_reputation: 0.0,
+            total_loot_fenced: 0,
+            raids: 0,
+            ships_destroyed: 0,
+            prizes: Vec::new(),
         };
-        let s = build_prompt("", &params, &[], &result);
+        let s = build_prompt("", "", &params, &[], &result);
         assert!(s.contains("(unregistered"));
+        assert!(s.contains("Captain: (unnamed"));
     }
 }

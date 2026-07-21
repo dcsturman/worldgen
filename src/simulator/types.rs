@@ -78,6 +78,219 @@ pub struct WorldRef {
     pub zone: ZoneClassification,
 }
 
+/// Which activity the simulation runs: the merchant trade loop or the
+/// pirate-raiding loop. Defaults to `Trade` so older clients and persisted
+/// params deserialize to the existing behaviour.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum SimulationMode {
+    /// The merchant trade loop (buy/sell/freight/passengers).
+    #[default]
+    Trade,
+    /// The pirate raiding loop (hunt prey, fence loot, build reputation).
+    Piracy,
+}
+
+/// Voyage-wide piracy doctrine — how hard the captain and crew press an
+/// encounter. More aggressive doctrines erode a target's morale faster and
+/// take larger hauls, but escalate the act of piracy and so raise
+/// reputation (and heat) faster.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
+pub enum Attitude {
+    /// Extort only what's freely offered; never escalate.
+    Chill,
+    /// Push for the full hold.
+    #[default]
+    Hungry,
+    /// Will fire to force compliance.
+    Aggressive,
+    /// Will destroy ships and murder crews.
+    Bloodthirsty,
+}
+
+impl Attitude {
+    /// Menace bonus contributed to the morale check (0/1/2/3).
+    pub fn bonus(self) -> i32 {
+        match self {
+            Attitude::Chill => 0,
+            Attitude::Hungry => 1,
+            Attitude::Aggressive => 2,
+            Attitude::Bloodthirsty => 3,
+        }
+    }
+
+    /// The most severe act of piracy this doctrine will commit. The actual
+    /// act tier is `min(max_tier, what the matchup allows)`.
+    pub fn max_tier(self) -> ActTier {
+        match self {
+            Attitude::Chill => ActTier::ExtortLittle,
+            Attitude::Hungry => ActTier::ExtortLot,
+            Attitude::Aggressive => ActTier::DamageShip,
+            Attitude::Bloodthirsty => ActTier::DestroyOrMurder,
+        }
+    }
+
+    /// Lower-case label for prompts/logs.
+    pub fn label(self) -> &'static str {
+        match self {
+            Attitude::Chill => "chill",
+            Attitude::Hungry => "hungry",
+            Attitude::Aggressive => "aggressive",
+            Attitude::Bloodthirsty => "bloodthirsty",
+        }
+    }
+}
+
+/// The four severities of an act of piracy, in ascending order. Each raid
+/// commits one tier, which drives the reputation gain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum ActTier {
+    /// Extort a small amount of cargo.
+    ExtortLittle,
+    /// Extort a large haul (more than ~1 MCr).
+    ExtortLot,
+    /// Significantly damage a ship to force compliance.
+    DamageShip,
+    /// Destroy a ship or murder its crew/passengers.
+    DestroyOrMurder,
+}
+
+impl ActTier {
+    /// 1-based tier number.
+    pub fn number(self) -> u8 {
+        match self {
+            ActTier::ExtortLittle => 1,
+            ActTier::ExtortLot => 2,
+            ActTier::DamageShip => 3,
+            ActTier::DestroyOrMurder => 4,
+        }
+    }
+
+    /// Short human-readable label for prompts/logs.
+    pub fn label(self) -> &'static str {
+        match self {
+            ActTier::ExtortLittle => "extorted a little cargo",
+            ActTier::ExtortLot => "took a large haul",
+            ActTier::DamageShip => "crippled the ship",
+            ActTier::DestroyOrMurder => "destroyed the ship",
+        }
+    }
+}
+
+/// Why a sighted prey was waved by instead of raided.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PreyPassedReason {
+    /// The hold was all but full — not worth a fight for the scraps of room.
+    HoldFull,
+    /// Reputation is too hot — breaking off and running for the hideout to lie low.
+    LyingLow,
+}
+
+impl PreyPassedReason {
+    /// Short clause for prompts/logs.
+    pub fn label(self) -> &'static str {
+        match self {
+            PreyPassedReason::HoldFull => "the hold was full",
+            PreyPassedReason::LyingLow => "the heat was too high",
+        }
+    }
+}
+
+/// What a Prey Encounter roll produced. `None` covers the table's empty
+/// cells plus the "Traveller" and (for now) "Unusual Vessel" results, all of
+/// which the pirate simulator treats as no encounter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EncounterType {
+    /// No prey (empty cell, Traveller, or Unusual Vessel).
+    None,
+    /// 100–300 t trader: ideal prey.
+    SmallFreighter,
+    /// 400–1000 t trader.
+    MediumFreighter,
+    /// 1000 t+ freighter, often escorted.
+    HeavyFreighter,
+    /// Carrying an especially valuable cargo (double loot).
+    RichFreighter,
+    /// Passenger/colony/troop vessel.
+    Liner,
+    /// 2–12 ships with armed escorts.
+    Convoy,
+    /// A defender: heavily armed, fast; a q-ship on a 1d6 of 6.
+    SystemDefenceBoat,
+    /// A defender: a navy warship or pirate-hunter.
+    NavalPatrol,
+}
+
+/// How a prey encounter ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EncounterOutcome {
+    /// The target folded (full or partial surrender) without a real fight;
+    /// loot was taken by extortion.
+    Surrendered,
+    /// The pirate pressed a firefight and won; loot taken (the act tier shows
+    /// whether the ship was crippled or destroyed).
+    FoughtAndWon,
+    /// The pirate judged the fight unfavourable and disengaged; no take.
+    BrokeOffOutgunned,
+    /// The target had the legs and jumped clear before it could be looted.
+    PreyJumpedClear,
+    /// The pirate engaged but was beaten back, taking damage for nothing.
+    DrivenOffMauled,
+}
+
+impl EncounterOutcome {
+    /// Short human-readable label for prompts/logs.
+    pub fn label(self) -> &'static str {
+        match self {
+            EncounterOutcome::Surrendered => "surrendered",
+            EncounterOutcome::FoughtAndWon => "fought and won",
+            EncounterOutcome::BrokeOffOutgunned => "broke off — outgunned",
+            EncounterOutcome::PreyJumpedClear => "prey jumped clear",
+            EncounterOutcome::DrivenOffMauled => "driven off — mauled",
+        }
+    }
+}
+
+impl EncounterType {
+    /// True for the defender types a pirate flees rather than loots.
+    pub fn is_threat(self) -> bool {
+        matches!(
+            self,
+            EncounterType::SystemDefenceBoat | EncounterType::NavalPatrol
+        )
+    }
+
+    /// Human-readable label for prompts/logs.
+    pub fn label(self) -> &'static str {
+        match self {
+            EncounterType::None => "no encounter",
+            EncounterType::SmallFreighter => "Small Freighter",
+            EncounterType::MediumFreighter => "Medium Freighter",
+            EncounterType::HeavyFreighter => "Heavy Freighter",
+            EncounterType::RichFreighter => "Rich Freighter",
+            EncounterType::Liner => "Liner",
+            EncounterType::Convoy => "Convoy",
+            EncounterType::SystemDefenceBoat => "System Defence Boat",
+            EncounterType::NavalPatrol => "Naval Patrol",
+        }
+    }
+}
+
+/// A captured enemy vessel taken whole as a prize and flown home by a prize
+/// crew. Recorded as a trophy — type, size, and how shot up she is — with no
+/// cash value modelled (yet).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Prize {
+    /// What kind of ship it is.
+    pub ship_type: EncounterType,
+    /// Specific ship class (e.g. "Far Trader").
+    pub class_name: String,
+    /// Hull tonnage.
+    pub hull_tons: i32,
+    /// Hull condition, `0.0..=1.0` (1.0 pristine — surrendered intact; lower
+    /// if crippled in the fight).
+    pub condition: f64,
+}
+
 /// Inputs to the simulation, supplied by the client.
 ///
 /// Ship-shaped configuration (capacity, crew, hardware, periodic costs) is
@@ -86,6 +299,22 @@ pub struct WorldRef {
 /// fuel-per-parsec, etc.) lives directly on this struct.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimulationParams {
+    /// Which activity to run. Defaults to `Trade`; the pirate simulator
+    /// sends `Piracy`.
+    #[serde(default)]
+    pub mode: SimulationMode,
+    /// Voyage-wide piracy doctrine (only consulted in `Piracy` mode).
+    #[serde(default)]
+    pub attitude: Attitude,
+    /// Starting reputation (design starts pirates at 0; seedable for tests
+    /// and scenarios).
+    #[serde(default)]
+    pub starting_reputation: f64,
+    /// Optional RNG seed. When set, the pirate path is fully deterministic
+    /// (used by tests and reproducible scenarios). `None` → OS entropy.
+    #[serde(default)]
+    pub rng_seed: Option<u64>,
+
     /// The ship configuration: capacity, crew skills, hardware, and
     /// periodic costs. Mortgage from this `Ship` is paid alongside
     /// maintenance and salary but excluded from the crew profit-share
@@ -103,6 +332,26 @@ pub struct SimulationParams {
 
     /// World the simulation starts at and tries to return to.
     pub home_world: WorldRef,
+    /// Whether the home world is a **haven** (Piracy mode) — a safe port
+    /// where the pirate fences the whole hold at best odds (law 0), banks
+    /// captured prizes, and lies low to let the heat cool. Defaults to `true`
+    /// (the hideout). Turn it off and the home world is only a start point,
+    /// with no safe fencing / prize bank / lie-low there.
+    #[serde(default = "default_true")]
+    pub home_is_haven: bool,
+    /// Optional cruise destination (Piracy mode only). When set, the pirate
+    /// cruise makes for this world to finish instead of looping back to the
+    /// hideout; the hideout (`home_world`) still serves as the mid-cruise
+    /// fence, prize bank, and lie-low sanctuary. `None` → round trip back to
+    /// `home_world` (the original behaviour). Ignored in Trade mode.
+    #[serde(default)]
+    pub destination: Option<WorldRef>,
+    /// Whether the destination is also a **haven** (see `home_is_haven`).
+    /// Defaults to `false` — the destination is just where the cruise is
+    /// headed, not necessarily a safe port. Ignored when `destination` is
+    /// `None`.
+    #[serde(default)]
+    pub destination_is_haven: bool,
     /// Date the simulation begins.
     pub start_date: Date,
     /// Target completion date — the executor pushes the planner to head
@@ -125,6 +374,10 @@ pub struct SimulationParams {
 
 fn default_planetary_broker_skill() -> i16 {
     2
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Per-step record. Streamed to the UI as the simulation runs.
@@ -347,9 +600,133 @@ pub enum Action {
         weeks_lost: u32,
     },
 
-    /// Terminal: the end-of-port-stay budget check failed. The run ends
-    /// here; a help message will reach the home port after `rescue_eta_days`.
+    // ---- Piracy variants ---------------------------------------------------
+    /// A prey encounter was generated and resolved (a take, a break-off, or
+    /// the prey escaping).
+    EncounterResolved {
+        /// Clamped D66 dice (first = tens, second = units).
+        d66_first: u8,
+        d66_second: u8,
+        /// Per-die modifiers applied to the roll.
+        traffic_dm: i32,
+        security_dm: i32,
+        /// What was met.
+        encounter: EncounterType,
+        /// Specific ship class (e.g. "Far Trader").
+        class_name: String,
+        /// Rolled hull tonnage of the target.
+        target_hull_tons: i32,
+        /// Target's derived weapon count.
+        target_weapons: i16,
+        /// Target's thrust (drives the "one that got away" roll).
+        target_thrust: i16,
+        /// Morale roll (1d6) and total (+ class base).
+        mor_roll: i32,
+        mor_total: i32,
+        /// Pirate's menace score and the resulting surrender margin.
+        menace: i32,
+        surrender_margin: i32,
+        /// Morale shortfall that set the battle intensity (`max(0, -margin)`).
+        resistance: i32,
+        /// How the encounter ended.
+        outcome: EncounterOutcome,
+        /// Act tier committed, if a take was made.
+        act_tier: Option<ActTier>,
+        /// Gross value of cargo plundered into the hold.
+        loot_value: i64,
+        /// Credits of battle damage the pirate must repair.
+        pirate_damage_credits: i64,
+        /// Weeks lost to a protracted battle.
+        weeks_lost: u32,
+    },
+    /// A system was scouted but produced no prey (empty cell, Traveller, or
+    /// Unusual Vessel). Carried for analytics; the renderer may skip it.
+    EncounterNone {
+        d66_first: u8,
+        d66_second: u8,
+        traffic_dm: i32,
+        security_dm: i32,
+    },
+    /// Prey was met but the hold was too full to bother — waved it by and made
+    /// for a fence.
+    PreyPassed {
+        encounter: EncounterType,
+        class_name: String,
+        hull_tons: i32,
+        reason: PreyPassedReason,
+    },
+    /// A defender — System Defence Boat, Naval Patrol, or q-ship — was met.
+    ThreatEncounter {
+        /// Which defender.
+        threat: EncounterType,
+        /// Specific ship class (e.g. "Patrol Corvette").
+        class_name: String,
+        /// True if it's a disguised q-ship honey trap.
+        q_ship: bool,
+        /// Play-it-cool roll and whether the pirate was recognized.
+        play_it_cool_roll: i32,
+        recognized: bool,
+        /// Escape margin when fleeing (thrust differential + luck).
+        escape_margin: i32,
+        /// Outcome label: "ignored", "clean escape", "escaped with damage",
+        /// or "caught".
+        outcome: String,
+        /// Credits of damage taken.
+        damage_credits: i64,
+        /// Weeks lost to the encounter.
+        weeks_lost: u32,
+    },
+    /// Tried to fence the accumulated hold at a low-law world.
+    FenceAttempt {
+        law_level: i32,
+        law_bonus: i32,
+        /// 2d6 + leadership + law_bonus.
+        roll: i32,
+        leadership: i16,
+        /// True if the deal was a sting and the goods were seized (0%).
+        seized: bool,
+        /// Fence rate as a percentage (0/10/20/30/40/50).
+        payout_pct: i32,
+        /// Gross value of cargo fenced.
+        cargo_value: i64,
+        /// Credits actually realized.
+        payout: i64,
+        /// Tons cleared from the hold.
+        tons_disposed: i32,
+    },
+    /// Seized an enemy vessel whole as a prize, to fly home and realize at
+    /// the end of the cruise.
+    PrizeTaken {
+        ship_type: EncounterType,
+        class_name: String,
+        hull_tons: i32,
+        /// Hull condition as a percentage (100 = pristine).
+        condition_pct: i32,
+    },
+    /// Could have taken a ship as a prize but had no spare crew to put aboard
+    /// her (already at the 1-per-10-crew cap), so she was left behind.
+    PrizeDeclined {
+        ship_type: EncounterType,
+        class_name: String,
+        hull_tons: i32,
+    },
+    /// Reputation changed — a raid gain, a botched-fence heat bump, or
+    /// quiet-time decay.
+    ReputationChange {
+        /// Signed change.
+        delta: f64,
+        /// New reputation value.
+        new_value: f64,
+        /// Why ("raid", "botched fence", "lying low").
+        reason: String,
+    },
+
+    /// Terminal: the run ends here — the ship is too damaged to go on, or out
+    /// of funds. A help message reaches the home port after `rescue_eta_days`.
     Marooned {
+        /// What ended the cruise (e.g. "run down and boarded by a patrol",
+        /// "out of funds").
+        reason: String,
         budget: i64,
         total_parsecs_jumped: u32,
         rescue_eta_days: u32,
@@ -385,9 +762,28 @@ pub struct SimulationResult {
     pub marooned_at: Option<WorldRef>,
     /// Date the ship was marooned.
     pub marooned_on: Option<Date>,
+    /// Why the cruise ended (damage, out of funds, …).
+    pub marooned_reason: Option<String>,
     /// Date a rescue is expected to arrive (one week per 4 parsecs of the
     /// path actually travelled, rounded up).
     pub rescue_arrives_on: Option<Date>,
+
+    // ---- Piracy summary (zero/default in Trade mode) -----------------------
+    /// Final reputation at the end of the voyage.
+    #[serde(default)]
+    pub final_reputation: f64,
+    /// Total credits actually realized at fences over the voyage.
+    #[serde(default)]
+    pub total_loot_fenced: i64,
+    /// Number of encounters that yielded a take.
+    #[serde(default)]
+    pub raids: u32,
+    /// Number of ships destroyed (act tier 4).
+    #[serde(default)]
+    pub ships_destroyed: u32,
+    /// Vessels captured whole and brought home as prizes (trophy list).
+    #[serde(default)]
+    pub prizes: Vec<Prize>,
 }
 
 #[cfg(test)]

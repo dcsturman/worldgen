@@ -56,6 +56,11 @@ pub struct Ship {
     /// when this `Ship` is persisted server-side, so it must be unique
     /// per session.
     pub name: String,
+    /// Optional name of the captain. Purely narrative — like `name`, it has
+    /// no mechanical effect; the simulator's captain's-log generator uses it
+    /// (when non-empty) so the log names the right captain instead of
+    /// inventing one.
+    pub captain_name: String,
 
     // -- Capacity --------------------------------------------------------
     /// Cargo hold capacity in tons.
@@ -94,6 +99,11 @@ pub struct Ship {
     /// Number of weapon turrets. Used by the simulator's piracy
     /// resolution; not surfaced in the trade-computer UI.
     pub weapons: i16,
+    /// Maneuver-drive thrust rating (in Gs). Consumed only by the pirate
+    /// simulator's threat-escape resolution — a higher thrust improves the
+    /// chance of escaping a System Defence Boat / Naval Patrol / q-ship when
+    /// an encounter turns dangerous. Not surfaced in the trade-computer UI.
+    pub thrust: i16,
 
     // -- Periodic costs (per 28-day period) ------------------------------
     /// Mortgage payment per 28-day period. Paid alongside maintenance
@@ -172,6 +182,7 @@ mod tests {
     fn ship_default_is_zeroed() {
         let ship = Ship::default();
         assert_eq!(ship.name, "");
+        assert_eq!(ship.captain_name, "");
         assert_eq!(ship.cargo_capacity, 0);
         assert_eq!(ship.jump_rating, 0);
         assert_eq!(ship.monthly_expenses(), 0);
@@ -181,6 +192,7 @@ mod tests {
     fn ship_round_trips_through_serde() {
         let ship = Ship {
             name: "Beowulf".to_string(),
+            captain_name: "Alois Kadmon".to_string(),
             cargo_capacity: 82,
             passenger_staterooms: 6,
             low_berths: 4,
@@ -191,6 +203,7 @@ mod tests {
             leadership_skill: 1,
             jump_rating: 1,
             weapons: 1,
+            thrust: 2,
             mortgage_per_period: 187_654,
             maintenance_per_period: 5_433,
             salary_per_period: 12_000,
