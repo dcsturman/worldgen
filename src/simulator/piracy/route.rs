@@ -280,6 +280,7 @@ mod tests {
             jump: 2,
             fuel_cost_per_parsec: 10_000,
             history,
+            direct_run: false,
         }
     }
 

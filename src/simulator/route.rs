@@ -61,6 +61,14 @@ pub struct RouteContext<'a> {
     pub fuel_cost_per_parsec: i64,
     /// Recently visited worlds, **most recent first**.
     pub history: &'a [WorldRef],
+    /// When `true`, the `terminal` is a distinct destination (a one-way run),
+    /// not the home world of a round trip. The planner then steers toward the
+    /// terminal from the very first hop: no first-half exclusion (arriving
+    /// early is fine) and a steady directional pull (`ROUTE_W_TERMINAL_DIRECT`)
+    /// so every stop makes net progress toward the destination. `false` → the
+    /// classic round trip: explore first, then lean home after the halfway
+    /// point via `ROUTE_W_HOME_BIAS`.
+    pub direct_run: bool,
 }
 
 // === Scoring weights ============================================================
@@ -97,6 +105,16 @@ pub const ROUTE_W_FOREIGN_EMPIRE: f64 = 10_000_000.0;
 /// the 50–75% window. Past `HEAD_HOME_THRESHOLD` the planner switches to
 /// a hard "minimize distance to home" mode (see `pick_next`).
 pub const ROUTE_W_HOME_BIAS: f64 = 50_000.0;
+
+/// Directional pull toward the terminal on a **direct run** (a one-way trip
+/// to a distinct destination — see `RouteContext::direct_run`). Applied per
+/// hex of remaining distance to the terminal, from the very first hop, so
+/// every stop makes net progress toward the destination. Sized to reliably
+/// out-steer port/population bonuses (a few hexes of progress ≈ a port-A
+/// bonus) while still yielding to a genuinely outsized on-the-way trade — the
+/// ship trades opportunistically but always advances, arriving early rather
+/// than backtracking. Round trips use `ROUTE_W_HOME_BIAS` instead.
+pub const ROUTE_W_TERMINAL_DIRECT: f64 = 200_000.0;
 
 /// Trip-progress fraction at which the planner abandons trade-value
 /// optimization and starts spiralling home. Past this threshold,
@@ -152,22 +170,30 @@ pub fn score_candidate(
         score -= ROUTE_W_HISTORY / recency;
     }
 
-    // 6) Terminal bias. Past 50% of the trip, push toward the finish world
-    //    (the destination when set, else home).
-    let total = ctx.start_date.days_until(ctx.target_date) as f64;
-    let elapsed = ctx.start_date.days_until(ctx.current_date) as f64;
-    if total > 0.0 {
-        let progress = elapsed / total;
-        if progress > 0.5
-            && let (Some(cand_coords), Some(term_coords)) =
-                (candidate.world.coordinates, sector_hex_of(ctx.terminal))
-        {
-            let dist_term =
-                calculate_hex_distance(cand_coords.0, cand_coords.1, term_coords.0, term_coords.1)
-                    as f64;
-            // Linear ramp: 0 at progress=0.5, full at progress>=1.0.
-            let ramp = ((progress - 0.5) / 0.5).clamp(0.0, 1.0);
-            score -= dist_term * ROUTE_W_HOME_BIAS * ramp;
+    // 6) Terminal bias — pull toward the finish world (the destination when
+    //    set, else home). On a direct run to a distinct destination we steer
+    //    from the very first hop with a steady, stronger pull so every stop
+    //    makes net progress; on a round trip we explore first and lean home
+    //    only after the halfway point.
+    if let (Some(cand_coords), Some(term_coords)) =
+        (candidate.world.coordinates, sector_hex_of(ctx.terminal))
+    {
+        let dist_term =
+            calculate_hex_distance(cand_coords.0, cand_coords.1, term_coords.0, term_coords.1)
+                as f64;
+        if ctx.direct_run {
+            score -= dist_term * ROUTE_W_TERMINAL_DIRECT;
+        } else {
+            let total = ctx.start_date.days_until(ctx.target_date) as f64;
+            let elapsed = ctx.start_date.days_until(ctx.current_date) as f64;
+            if total > 0.0 {
+                let progress = elapsed / total;
+                if progress > 0.5 {
+                    // Linear ramp: 0 at progress=0.5, full at progress>=1.0.
+                    let ramp = ((progress - 0.5) / 0.5).clamp(0.0, 1.0);
+                    score -= dist_term * ROUTE_W_HOME_BIAS * ramp;
+                }
+            }
         }
     }
 
@@ -225,10 +251,12 @@ pub fn pick_next<'a>(
     let elapsed = ctx.start_date.days_until(ctx.current_date) as f64;
     let progress = if total > 0.0 { elapsed / total } else { 0.0 };
 
-    // Exclude the terminal from the candidate pool while we're still in the
-    // first half of the trip — otherwise the planner heads for the finish
-    // immediately on the first or second hop (home/destination worlds are
-    // typically high-pop A-port and score very well), ending the trip early.
+    // On a round trip, exclude the terminal (home) from the candidate pool
+    // while we're still in the first half — otherwise the planner heads home
+    // immediately on the first or second hop (home is typically high-pop
+    // A-port and scores very well), ending the trip early. On a direct run to
+    // a distinct destination we skip this: arriving early is fine, and the
+    // directional pull in `score_candidate` steers us there steadily.
     // Falls back to all candidates if the terminal is somehow the only option.
     let is_terminal = |c: &&Candidate| -> bool {
         matches!(
@@ -236,7 +264,7 @@ pub fn pick_next<'a>(
             Some((_, hx, hy)) if hx == ctx.terminal.hex_x && hy == ctx.terminal.hex_y
         )
     };
-    let candidates_for_search: Vec<&Candidate> = if progress < 0.5 {
+    let candidates_for_search: Vec<&Candidate> = if progress < 0.5 && !ctx.direct_run {
         let filtered: Vec<&Candidate> = candidates.iter().filter(|c| !is_terminal(c)).collect();
         if filtered.is_empty() {
             candidates.iter().collect()
@@ -389,6 +417,7 @@ mod tests {
             jump: 2,
             fuel_cost_per_parsec: 10_000,
             history,
+            direct_run: false,
         }
     }
 
@@ -781,9 +810,37 @@ mod tests {
     }
 
     #[test]
-    fn destination_excluded_in_first_half() {
-        // A one-way run to a destination must not end early by arriving at the
-        // destination in the first half — even if the destination scores best.
+    fn terminal_excluded_in_first_half_on_round_trip() {
+        // On a round trip (no destination), the planner must not end early by
+        // arriving home in the first half — even if home scores best. Home is
+        // excluded from the first-half candidate pool.
+        let home_ref = mk_world_ref("Home", "A999999-F", 5, 5);
+        let home = Candidate {
+            world: mk_world("Home", "A999999-F", 5, 5),
+            distance: 1,
+            allegiance: None,
+            gas_giants: 0,
+        };
+        let other = Candidate {
+            world: mk_world("Other", "C555555-7", 6, 5),
+            distance: 1,
+            allegiance: None,
+            gas_giants: 0,
+        };
+        let market = AvailableGoodsTable::default();
+        let mut c = ctx(&home_ref, &[]); // direct_run = false (round trip)
+        c.current_date = Date::new(10, 1105); // ~10% progress
+
+        let cands = [home, other];
+        let chosen = pick_next(&cands, &market, &c).unwrap();
+        assert_eq!(chosen.world.name, "Other");
+    }
+
+    #[test]
+    fn direct_run_does_not_exclude_terminal_early() {
+        // On a direct run to a distinct destination, arriving early is fine:
+        // the destination is NOT excluded in the first half, and when it's the
+        // best-scoring option it wins (contrast the round-trip test above).
         let dest_ref = mk_world_ref("Dest", "A999999-F", 5, 5);
         let dest = Candidate {
             world: mk_world("Dest", "A999999-F", 5, 5),
@@ -800,10 +857,55 @@ mod tests {
         let market = AvailableGoodsTable::default();
         let mut c = ctx(&dest_ref, &[]);
         c.current_date = Date::new(10, 1105); // ~10% progress
+        c.direct_run = true;
 
         let cands = [dest, other];
         let chosen = pick_next(&cands, &market, &c).unwrap();
-        assert_eq!(chosen.world.name, "Other");
+        assert_eq!(chosen.world.name, "Dest");
+    }
+
+    #[test]
+    fn direct_run_steers_toward_the_destination_from_the_start() {
+        // Early in the trip, a direct run steers toward the destination: of two
+        // equal-jump forward options (neither the destination itself), the one
+        // closer to the destination wins on the directional pull — even against
+        // a port-A advantage on the farther one. A round trip at the same early
+        // point has no such pull, so the port-A world wins there instead.
+        let dest_ref = mk_world_ref("Dest", "A788899-A", 6, 0);
+        let mk_cands = || {
+            [
+                // Farther from the destination (4 hexes) but a nicer port.
+                Candidate {
+                    world: mk_world("Away", "A555555-5", 2, 0),
+                    distance: 1,
+                    allegiance: None,
+                    gas_giants: 0,
+                },
+                // Closer to the destination (1 hex), plainer port.
+                Candidate {
+                    world: mk_world("Toward", "E555555-5", 5, 0),
+                    distance: 1,
+                    allegiance: None,
+                    gas_giants: 0,
+                },
+            ]
+        };
+        let market = AvailableGoodsTable::default();
+
+        // Direct run, 10% in: the directional pull picks the closer world.
+        let mut c_direct = ctx(&dest_ref, &[]);
+        c_direct.current_date = Date::new(10, 1105);
+        c_direct.direct_run = true;
+        let direct_cands = mk_cands();
+        let direct = pick_next(&direct_cands, &market, &c_direct).unwrap();
+        assert_eq!(direct.world.name, "Toward");
+
+        // Round trip, same early point: no directional pull yet → port-A wins.
+        let mut c_round = ctx(&dest_ref, &[]);
+        c_round.current_date = Date::new(10, 1105);
+        let round_cands = mk_cands();
+        let round = pick_next(&round_cands, &market, &c_round).unwrap();
+        assert_eq!(round.world.name, "Away");
     }
 
     #[test]

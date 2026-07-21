@@ -154,9 +154,14 @@ pub async fn run_simulation(
         },
     );
 
-    // The world the pirate cruise makes for to *finish*: the destination when
-    // one is set, else the hideout (a round trip). Independent of haven status.
+    // The world the trip makes for to *finish*: the destination when one is
+    // set, else home/the hideout (a round trip). Independent of haven status.
     let terminal_ref: &WorldRef = params.destination.as_ref().unwrap_or(&params.home_world);
+    // A distinct destination makes this a one-way "direct run": the trade
+    // planner steers for the terminal from the start instead of exploring then
+    // looping home. Only consumed by the merchant planner (`route::pick_next`);
+    // the pirate planner has its own terminal handling.
+    let direct_run = params.destination.is_some();
 
     // The pirate's havens — safe ports where it fences the whole hold at law 0,
     // banks prizes, and lies low. The home world and/or the destination, per
@@ -683,6 +688,7 @@ pub async fn run_simulation(
                 jump: params.ship.jump_rating as i32,
                 fuel_cost_per_parsec: params.fuel_cost_per_parsec,
                 history: &history,
+                direct_run,
             };
             let upcoming_upkeep =
                 params.ship.monthly_expenses() + params.ship.crew_life_support_per_jump();
@@ -1041,6 +1047,7 @@ pub async fn run_simulation(
             jump: params.ship.jump_rating as i32,
             fuel_cost_per_parsec: params.fuel_cost_per_parsec,
             history: &history,
+            direct_run,
         };
         let next = match route::pick_next(&candidates, &market, &ctx) {
             Some(n) => n,
