@@ -39,8 +39,13 @@ pub struct Candidate {
 /// `history` is interpreted as **most-recent first** — index `0` is the
 /// last world we visited, index `1` is the one before that, etc.
 pub struct RouteContext<'a> {
-    /// Home world (for the "head home" bias and forced-home override).
-    pub home: &'a WorldRef,
+    /// The world the trip makes for to *finish*: the destination when one is
+    /// set, else the home world (a round trip). Drives the terminal bias, the
+    /// forced-terminal override, the head-for-finish spiral, and the
+    /// first-half exclusion (so the trip doesn't end early by arriving at the
+    /// finish world). Once the ship has left, routing only ever cares about
+    /// where it's headed — this world — not where it started.
+    pub terminal: &'a WorldRef,
     /// Current in-game date.
     pub current_date: Date,
     /// Date the run started — used to compute trip progress.
@@ -147,21 +152,22 @@ pub fn score_candidate(
         score -= ROUTE_W_HISTORY / recency;
     }
 
-    // 6) Home bias. Past 50% of the trip, push toward home.
+    // 6) Terminal bias. Past 50% of the trip, push toward the finish world
+    //    (the destination when set, else home).
     let total = ctx.start_date.days_until(ctx.target_date) as f64;
     let elapsed = ctx.start_date.days_until(ctx.current_date) as f64;
     if total > 0.0 {
         let progress = elapsed / total;
         if progress > 0.5
-            && let (Some(cand_coords), Some(home_coords)) =
-                (candidate.world.coordinates, sector_hex_of(ctx.home))
+            && let (Some(cand_coords), Some(term_coords)) =
+                (candidate.world.coordinates, sector_hex_of(ctx.terminal))
         {
-            let dist_home =
-                calculate_hex_distance(cand_coords.0, cand_coords.1, home_coords.0, home_coords.1)
+            let dist_term =
+                calculate_hex_distance(cand_coords.0, cand_coords.1, term_coords.0, term_coords.1)
                     as f64;
             // Linear ramp: 0 at progress=0.5, full at progress>=1.0.
             let ramp = ((progress - 0.5) / 0.5).clamp(0.0, 1.0);
-            score -= dist_home * ROUTE_W_HOME_BIAS * ramp;
+            score -= dist_term * ROUTE_W_HOME_BIAS * ramp;
         }
     }
 
@@ -202,9 +208,10 @@ pub fn is_allegiance_friendly(allegiance: Option<&str>) -> bool {
 /// Pick the best destination from `candidates`. Returns `None` only if
 /// the list is empty.
 ///
-/// Forced-home override: if we're at or past the target date and any
-/// candidate is the home world (matched by `sector + hex_x + hex_y`),
-/// that candidate wins immediately regardless of score.
+/// Forced-terminal override: if we're at or past the target date and any
+/// candidate is the terminal world — the destination when set, else home
+/// (matched by `sector + hex_x + hex_y`) — that candidate wins immediately
+/// regardless of score.
 pub fn pick_next<'a>(
     candidates: &'a [Candidate],
     market: &AvailableGoodsTable,
@@ -218,19 +225,19 @@ pub fn pick_next<'a>(
     let elapsed = ctx.start_date.days_until(ctx.current_date) as f64;
     let progress = if total > 0.0 { elapsed / total } else { 0.0 };
 
-    // Exclude home from the candidate pool while we're still in the first
-    // half of the trip — otherwise the planner returns home immediately on
-    // the first or second hop because home worlds are typically high-pop
-    // A-port and score very well. Falls back to all candidates if home is
-    // somehow the only option.
-    let is_home = |c: &&Candidate| -> bool {
+    // Exclude the terminal from the candidate pool while we're still in the
+    // first half of the trip — otherwise the planner heads for the finish
+    // immediately on the first or second hop (home/destination worlds are
+    // typically high-pop A-port and score very well), ending the trip early.
+    // Falls back to all candidates if the terminal is somehow the only option.
+    let is_terminal = |c: &&Candidate| -> bool {
         matches!(
             home_sector_of(c),
-            Some((_, hx, hy)) if hx == ctx.home.hex_x && hy == ctx.home.hex_y
+            Some((_, hx, hy)) if hx == ctx.terminal.hex_x && hy == ctx.terminal.hex_y
         )
     };
     let candidates_for_search: Vec<&Candidate> = if progress < 0.5 {
-        let filtered: Vec<&Candidate> = candidates.iter().filter(|c| !is_home(c)).collect();
+        let filtered: Vec<&Candidate> = candidates.iter().filter(|c| !is_terminal(c)).collect();
         if filtered.is_empty() {
             candidates.iter().collect()
         } else {
@@ -240,32 +247,34 @@ pub fn pick_next<'a>(
         candidates.iter().collect()
     };
 
-    // Forced-home override. At or past target, if home itself is reachable,
-    // take it regardless of score. v1 is in-sector, so we match purely on
-    // hex coordinates.
+    // Forced-terminal override. At or past target, if the finish world
+    // (destination, or home when none is set) is reachable, take it
+    // regardless of score. v1 is in-sector, so we match purely on hex
+    // coordinates.
     if progress >= 1.0 {
         for c in candidates {
             if let Some((_, hx, hy)) = home_sector_of(c)
-                && hx == ctx.home.hex_x
-                && hy == ctx.home.hex_y
+                && hx == ctx.terminal.hex_x
+                && hy == ctx.terminal.hex_y
             {
                 return Some(c);
             }
         }
     }
 
-    // Head-home mode. Past `HEAD_HOME_THRESHOLD` of trip progress, the
+    // Head-for-finish mode. Past `HEAD_HOME_THRESHOLD` of trip progress, the
     // trade-value score (which can be in the tens of millions) drowns out
-    // the home-bias penalty, so we override it entirely: pick the candidate
-    // with the smallest hex distance to home, breaking ties by score.
+    // the terminal-bias penalty, so we override it entirely: pick the
+    // candidate with the smallest hex distance to the terminal, breaking ties
+    // by score.
     if progress >= HEAD_HOME_THRESHOLD
-        && let Some(home_coords) = sector_hex_of(ctx.home)
+        && let Some(term_coords) = sector_hex_of(ctx.terminal)
     {
         return candidates
             .iter()
             .filter_map(|c| {
                 c.world.coordinates.map(|(x, y)| {
-                    let dh = calculate_hex_distance(x, y, home_coords.0, home_coords.1);
+                    let dh = calculate_hex_distance(x, y, term_coords.0, term_coords.1);
                     (c, dh)
                 })
             })
@@ -279,8 +288,8 @@ pub fn pick_next<'a>(
             .map(|(c, _)| c);
     }
 
-    // Normal mode: pick highest score among non-home candidates (in the
-    // first half of the trip) or all candidates (in the second half).
+    // Normal mode: pick highest score among candidates excluding the terminal
+    // (in the first half of the trip) or all candidates (in the second half).
     candidates_for_search.into_iter().max_by(|a, b| {
         let sa = score_candidate(a, market, ctx);
         let sb = score_candidate(b, market, ctx);
@@ -371,9 +380,9 @@ mod tests {
         }
     }
 
-    fn ctx<'a>(home: &'a WorldRef, history: &'a [WorldRef]) -> RouteContext<'a> {
+    fn ctx<'a>(terminal: &'a WorldRef, history: &'a [WorldRef]) -> RouteContext<'a> {
         RouteContext {
-            home,
+            terminal,
             current_date: Date::new(0, 1105),
             start_date: Date::new(0, 1105),
             target_date: Date::new(100, 1105),
@@ -741,6 +750,60 @@ mod tests {
         let cands = [great_far, mediocre_near];
         let chosen = pick_next(&cands, &market, &c).unwrap();
         assert_eq!(chosen.world.name, "Near");
+    }
+
+    #[test]
+    fn head_for_finish_spirals_to_destination_not_home() {
+        // With a destination set (terminal at (5,0), distinct from the (0,0)
+        // start), past the head-home threshold the planner must spiral toward
+        // the *destination*, not back toward the origin. A great trade world
+        // sitting at the origin must lose to a mediocre one at the destination.
+        let dest_ref = mk_world_ref("Dest", "A788899-A", 5, 0);
+        let great_at_origin = Candidate {
+            world: mk_world("Great", "A999999-F", 0, 0),
+            distance: 2,
+            allegiance: None,
+            gas_giants: 0,
+        };
+        let mediocre_at_dest = Candidate {
+            world: mk_world("AtDest", "E555555-5", 5, 0),
+            distance: 2,
+            allegiance: None,
+            gas_giants: 0,
+        };
+        let market = AvailableGoodsTable::default();
+        let mut c = ctx(&dest_ref, &[]); // terminal = destination (5,0)
+        c.current_date = Date::new(80, 1105); // 80% progress, past 0.75
+
+        let cands = [great_at_origin, mediocre_at_dest];
+        let chosen = pick_next(&cands, &market, &c).unwrap();
+        assert_eq!(chosen.world.name, "AtDest");
+    }
+
+    #[test]
+    fn destination_excluded_in_first_half() {
+        // A one-way run to a destination must not end early by arriving at the
+        // destination in the first half — even if the destination scores best.
+        let dest_ref = mk_world_ref("Dest", "A999999-F", 5, 5);
+        let dest = Candidate {
+            world: mk_world("Dest", "A999999-F", 5, 5),
+            distance: 1,
+            allegiance: None,
+            gas_giants: 0,
+        };
+        let other = Candidate {
+            world: mk_world("Other", "C555555-7", 6, 5),
+            distance: 1,
+            allegiance: None,
+            gas_giants: 0,
+        };
+        let market = AvailableGoodsTable::default();
+        let mut c = ctx(&dest_ref, &[]);
+        c.current_date = Date::new(10, 1105); // ~10% progress
+
+        let cands = [dest, other];
+        let chosen = pick_next(&cands, &market, &c).unwrap();
+        assert_eq!(chosen.world.name, "Other");
     }
 
     #[test]

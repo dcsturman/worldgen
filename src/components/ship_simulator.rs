@@ -491,9 +491,9 @@ pub fn ShipSimulator(
     let home_uwp = RwSignal::new("A788899-A".to_string());
     let home_zone = RwSignal::new(ZoneClassification::Green);
 
-    // Optional cruise destination (Piracy only). Blank by default → the ship
-    // returns to the hideout as before; set a world and the cruise makes for
-    // it to finish instead.
+    // Optional destination (both modes). Blank by default → the ship makes a
+    // round trip back home (the trade run) or to the hideout (the cruise); set
+    // a world and it makes for that world to finish instead.
     let dest_name = RwSignal::new(String::new());
     let dest_sector = RwSignal::new(String::new());
     let dest_coords = RwSignal::new(None::<(i32, i32)>);
@@ -1205,18 +1205,18 @@ fn SimForm(
                 </div>
             </fieldset>
 
-            {move || is_piracy().then(|| view! {
-                <fieldset class="sim-fieldset">
-                    <legend>"Destination (optional)"</legend>
-                    <WorldSearch
-                        label="Destination".to_string()
-                        name=dest_name
-                        uwp=dest_uwp
-                        coords=dest_coords
-                        zone=dest_zone
-                        sector=dest_sector
-                        show_uwp=false
-                    />
+            <fieldset class="sim-fieldset">
+                <legend>"Destination (optional)"</legend>
+                <WorldSearch
+                    label="Destination".to_string()
+                    name=dest_name
+                    uwp=dest_uwp
+                    coords=dest_coords
+                    zone=dest_zone
+                    sector=dest_sector
+                    show_uwp=false
+                />
+                {move || is_piracy().then(|| view! {
                     <label class="sim-haven-toggle">
                         <input
                             type="checkbox"
@@ -1225,54 +1225,58 @@ fn SimForm(
                         />
                         <span>"Haven — safe port to fence, bank prizes & lie low"</span>
                     </label>
-                    <div class="sim-home-summary">
-                        {move || {
-                            let coords = dest_coords.get();
-                            let sector = dest_sector.get();
-                            let uwp = dest_uwp.get();
-                            let zone = dest_zone.get();
-                            if let Some((hx, hy)) = coords && !sector.is_empty() && uwp.len() == 9 {
-                                view! {
-                                    <div class="sim-home-detail">
-                                        <div>
-                                            <strong>{sector}</strong>
-                                            " · hex "
-                                            <code>{format!("{:02}{:02}", hx, hy)}</code>
-                                            " · UWP "
-                                            <code>{uwp}</code>
-                                        </div>
-                                        <div>
-                                            <span class={format!("sim-zone-{}", zone.to_string().to_lowercase())}>
-                                                {zone.to_string()}
-                                            </span>
-                                            " zone"
-                                            <button
-                                                type="button"
-                                                class="sim-dest-clear"
-                                                on:click=move |_| {
-                                                    dest_name.set(String::new());
-                                                    dest_sector.set(String::new());
-                                                    dest_coords.set(None);
-                                                    dest_uwp.set(String::new());
-                                                    dest_zone.set(ZoneClassification::Green);
-                                                }
-                                            >
-                                                "Clear"
-                                            </button>
-                                        </div>
+                })}
+                <div class="sim-home-summary">
+                    {move || {
+                        let coords = dest_coords.get();
+                        let sector = dest_sector.get();
+                        let uwp = dest_uwp.get();
+                        let zone = dest_zone.get();
+                        if let Some((hx, hy)) = coords && !sector.is_empty() && uwp.len() == 9 {
+                            view! {
+                                <div class="sim-home-detail">
+                                    <div>
+                                        <strong>{sector}</strong>
+                                        " · hex "
+                                        <code>{format!("{:02}{:02}", hx, hy)}</code>
+                                        " · UWP "
+                                        <code>{uwp}</code>
                                     </div>
-                                }.into_any()
-                            } else {
-                                view! {
-                                    <div class="sim-home-detail sim-home-empty">
+                                    <div>
+                                        <span class={format!("sim-zone-{}", zone.to_string().to_lowercase())}>
+                                            {zone.to_string()}
+                                        </span>
+                                        " zone"
+                                        <button
+                                            type="button"
+                                            class="sim-dest-clear"
+                                            on:click=move |_| {
+                                                dest_name.set(String::new());
+                                                dest_sector.set(String::new());
+                                                dest_coords.set(None);
+                                                dest_uwp.set(String::new());
+                                                dest_zone.set(ZoneClassification::Green);
+                                            }
+                                        >
+                                            "Clear"
+                                        </button>
+                                    </div>
+                                </div>
+                            }.into_any()
+                        } else {
+                            view! {
+                                <div class="sim-home-detail sim-home-empty">
+                                    {if is_piracy() {
                                         "Leave blank to return to the hideout, or search for a world to make for."
-                                    </div>
-                                }.into_any()
-                            }
-                        }}
-                    </div>
-                </fieldset>
-            })}
+                                    } else {
+                                        "Leave blank for a round trip home, or search for a world to make for."
+                                    }}
+                                </div>
+                            }.into_any()
+                        }
+                    }}
+                </div>
+            </fieldset>
 
             <fieldset class="sim-fieldset">
                 <legend>"Voyage"</legend>
@@ -1982,20 +1986,26 @@ fn SimSummary(
                                     </span>
                                 </div>
                             })}
-                            {(!is_piracy && !marooned).then(|| view! {
-                                <div class="sim-summary-row">
-                                    <span class="sim-summary-label">"Returned home?"</span>
-                                    <span class="sim-summary-value">
-                                        {if r.returned_home { "Yes" } else { "No" }}
-                                    </span>
-                                </div>
-                            })}
-                            {(is_piracy && !marooned)
+                            // With a destination set (either mode), the trip makes for it and
+                            // `returned_home` reports whether it reached that destination.
+                            {(!marooned)
                                 .then(|| last_params.get().and_then(|p| p.destination))
                                 .flatten()
                                 .map(|dest| view! {
                                     <div class="sim-summary-row">
                                         <span class="sim-summary-label">{format!("Reached {}?", dest.name)}</span>
+                                        <span class="sim-summary-value">
+                                            {if r.returned_home { "Yes" } else { "No" }}
+                                        </span>
+                                    </div>
+                                })}
+                            // No destination: a trade round trip reports whether it made it home.
+                            {(!is_piracy
+                                && !marooned
+                                && last_params.get().and_then(|p| p.destination).is_none())
+                                .then(|| view! {
+                                    <div class="sim-summary-row">
+                                        <span class="sim-summary-label">"Returned home?"</span>
                                         <span class="sim-summary-value">
                                             {if r.returned_home { "Yes" } else { "No" }}
                                         </span>

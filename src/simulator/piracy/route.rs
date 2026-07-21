@@ -271,9 +271,9 @@ mod tests {
         }
     }
 
-    fn base<'a>(home: &'a WorldRef, history: &'a [WorldRef]) -> RouteContext<'a> {
+    fn base<'a>(terminal: &'a WorldRef, history: &'a [WorldRef]) -> RouteContext<'a> {
         RouteContext {
-            home,
+            terminal,
             current_date: Date::new(10, 1105),
             start_date: Date::new(0, 1105),
             target_date: Date::new(100, 1105),

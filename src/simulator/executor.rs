@@ -676,7 +676,7 @@ pub async fn run_simulation(
 
             // Build the routing context (current_date may have advanced).
             let base_ctx = RouteContext {
-                home: &params.home_world,
+                terminal: terminal_ref,
                 current_date,
                 start_date: params.start_date,
                 target_date: params.target_completion_date,
@@ -916,12 +916,14 @@ pub async fn run_simulation(
             }
         }
 
-        // (4) End-of-trip detection. We're home and have actually travelled.
-        // Price and sell whatever's still in the hold (anything we bought on
-        // the last leg expecting to sell at home), then break out of the
-        // loop. Without this, profitable cargo bought for the home leg sits
-        // unrealized and the trip P&L is skewed by hundreds of kCr.
-        let at_home = jumps_taken > 0 && worldref_same_hex(&current_ref, &params.home_world);
+        // (4) End-of-trip detection. We've reached the terminal — the
+        // destination when one is set, else home — and have actually
+        // travelled. Price and sell whatever's still in the hold (anything we
+        // bought on the last leg expecting to sell at the finish), then break
+        // out of the loop. Without this, profitable cargo bought for the final
+        // leg sits unrealized and the trip P&L is skewed by hundreds of kCr.
+        // The planner's first-half exclusion keeps us from arriving here early.
+        let at_terminal = jumps_taken > 0 && worldref_same_hex(&current_ref, terminal_ref);
 
         // (5) Generate this port's market and price to buy locally.
         let trade_table = TradeTable::global();
@@ -996,11 +998,11 @@ pub async fn run_simulation(
             }
         }
 
-        // (5b) End-of-trip settlement. If we're back home, realize the sale
-        // revenue from the cargo we just priced and break. We pass empty
-        // `buy_goods` and `None` passengers because the next-jump prep
-        // (steps 7-10) is skipped when at home.
-        if at_home {
+        // (5b) End-of-trip settlement. If we've reached the terminal, realize
+        // the sale revenue from the cargo we just priced and break. We pass
+        // empty `buy_goods` and `None` passengers because the next-jump prep
+        // (steps 7-10) is skipped at the finish.
+        if at_terminal {
             // Sale proceeds were already applied to `budget` per-good in
             // step (5); we just need to flush the manifest mutations
             // (clear sold cargo) without double-counting revenue.
@@ -1032,7 +1034,7 @@ pub async fn run_simulation(
         }
 
         let ctx = RouteContext {
-            home: &params.home_world,
+            terminal: terminal_ref,
             current_date,
             start_date: params.start_date,
             target_date: params.target_completion_date,

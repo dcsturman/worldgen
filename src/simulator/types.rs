@@ -339,11 +339,12 @@ pub struct SimulationParams {
     /// with no safe fencing / prize bank / lie-low there.
     #[serde(default = "default_true")]
     pub home_is_haven: bool,
-    /// Optional cruise destination (Piracy mode only). When set, the pirate
-    /// cruise makes for this world to finish instead of looping back to the
-    /// hideout; the hideout (`home_world`) still serves as the mid-cruise
-    /// fence, prize bank, and lie-low sanctuary. `None` → round trip back to
-    /// `home_world` (the original behaviour). Ignored in Trade mode.
+    /// Optional destination (both modes). When set, the trip makes for this
+    /// world to finish instead of looping back home: the trade run sells out
+    /// its hold and settles there, and the pirate cruise ends there (the
+    /// hideout still serves as the mid-cruise fence, prize bank, and lie-low
+    /// sanctuary). `None` → round trip back to `home_world` (the original
+    /// behaviour).
     #[serde(default)]
     pub destination: Option<WorldRef>,
     /// Whether the destination is also a **haven** (see `home_is_haven`).
