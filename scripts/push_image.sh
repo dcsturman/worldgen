@@ -1,5 +1,13 @@
 #!/bin/zsh
 
+# Abort on the first failure — most importantly a failed `docker buildx
+# build`. Without this, a build error (e.g. the buildx builder container
+# dying after a laptop sleep) fell through to `gcloud run deploy`, which
+# re-deployed the previous :latest image as a brand-new revision: stale
+# code wearing a successful-deploy costume. Seen in the wild 2026-07-21.
+set -e
+set -o pipefail
+
 # GCS_BUCKET controls the /world endpoint's planet-PNG cache. Without
 # it (or set to "debug"), every /world request regenerates the planet
 # from scratch (~25 s); with it, subsequent calls are served from the
