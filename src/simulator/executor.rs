@@ -61,6 +61,19 @@ const LAY_LOW_ENTER: f64 = 40.0;
 /// have died down and resumes hunting. See [`LAY_LOW_ENTER`].
 const LAY_LOW_EXIT: f64 = 35.0;
 
+/// Direct-run stall detector: consecutive jumps without setting a new
+/// best (minimum) distance to the destination before the run is declared
+/// unreachable. On a direct run the strict-progress filter improves the
+/// distance on every non-fallback jump, so the counter only climbs while
+/// the ship is boxed in — shuffling at the edge of a rift wider than its
+/// jump rating (e.g. Jump-2 against the Outrim Void). Six jumps is
+/// enough head-room for a genuine multi-hop detour around a small void
+/// bump, but ends a truly blocked run in ~3 game-months instead of
+/// letting it shuttle between the same two worlds until the overflow
+/// abort fires a year later. Trade mode only — a pirate cruise spends
+/// most of its time hunting, where zero progress is normal.
+const DIRECT_RUN_STALL_JUMPS: u32 = 6;
+
 /// Errors the executor can return before producing a [`SimulationResult`].
 #[derive(Debug, thiserror::Error)]
 pub enum ExecutorError {
@@ -180,6 +193,18 @@ pub async fn run_simulation(
     // looping home. Only consumed by the merchant planner (`route::pick_next`);
     // the pirate planner has its own terminal handling.
     let direct_run = params.destination.is_some();
+
+    // Direct-run stall detector state (see [`DIRECT_RUN_STALL_JUMPS`]):
+    // the best (minimum) distance to the destination achieved so far,
+    // seeded with the starting distance, and the count of consecutive
+    // jumps that failed to improve on it.
+    let mut best_terminal_dist = crate::util::calculate_hex_distance(
+        home_abs.0,
+        home_abs.1,
+        terminal_abs.0,
+        terminal_abs.1,
+    );
+    let mut stall_jumps: u32 = 0;
 
     // The pirate's havens — safe ports where it fences the whole hold at law 0,
     // banks prizes, and lies low. The home world and/or the destination, per
@@ -1314,6 +1339,51 @@ pub async fn run_simulation(
             },
         );
 
+        // (15) Direct-run stall detection. If the last
+        // `DIRECT_RUN_STALL_JUMPS` jumps never set a new best distance to
+        // the destination, the route is blocked at this jump rating (a
+        // rift wider than the ship can jump) — say so and end the run
+        // instead of shuffling until the overflow abort.
+        if direct_run {
+            let d = crate::util::calculate_hex_distance(
+                current_abs.0,
+                current_abs.1,
+                terminal_abs.0,
+                terminal_abs.1,
+            );
+            if d < best_terminal_dist {
+                best_terminal_dist = d;
+                stall_jumps = 0;
+            } else {
+                stall_jumps += 1;
+                if stall_jumps >= DIRECT_RUN_STALL_JUMPS {
+                    let dest_name = params
+                        .destination
+                        .as_ref()
+                        .map_or("the destination", |d| d.name.as_str());
+                    emit(
+                        &mut on_step,
+                        current_date,
+                        &current_ref,
+                        budget,
+                        Action::NoCandidate {
+                            note: format!(
+                                "No route forward: {} jumps without progress toward {} \
+                                 ({} pc still to go). The route is blocked at Jump-{} — \
+                                 a wider rift than this ship can cross.",
+                                stall_jumps,
+                                dest_name,
+                                best_terminal_dist,
+                                params.ship.jump_rating
+                            ),
+                        },
+                    );
+                    completed_normally = false;
+                    break;
+                }
+            }
+        }
+
         // After the first arrival a future port stay can roll an
         // incident.
         incident_eligible = true;
@@ -1989,6 +2059,97 @@ mod tests {
             result.returned_home,
             "ship should reach Regina (marooned={} reason={:?})",
             result.marooned, result.marooned_reason
+        );
+    }
+
+    /// Unreachable-destination smoke: Drinax to Regina at **Jump-2** is
+    /// blocked by the Outrim Void (the J-2 main dead-ends around
+    /// Thalassa, ~45 pc short). The stall detector must end the run with
+    /// a clear "No route forward" message within a handful of boxed-in
+    /// jumps — not shuffle between the same two worlds until the
+    /// overflow abort a game-year later. Ignored: requires network.
+    #[tokio::test]
+    #[ignore]
+    async fn simulator_smoke_unreachable_at_j2() {
+        let _ = env_logger::Builder::from_default_env()
+            .is_test(true)
+            .try_init();
+        let params = SimulationParams {
+            ship: Ship {
+                name: "Harrier".into(),
+                captain_name: String::new(),
+                broker_skill: 2,
+                steward_skill: 1,
+                leadership_skill: 1,
+                weapons: 2,
+                thrust: 0,
+                cargo_capacity: 80,
+                crew_staterooms: 4,
+                passenger_staterooms: 6,
+                low_berths: 4,
+                jump_rating: 2,
+                crew_size: 4,
+                mortgage_per_period: 0,
+                maintenance_per_period: 30_000,
+                salary_per_period: 12_000,
+            },
+            fuel_cost_per_parsec: 5_000,
+            crew_profit_share: 0.1,
+            starting_budget: 2_000_000,
+            home_world: WorldRef {
+                name: "Drinax".to_string(),
+                uwp: "A43645A-E".to_string(),
+                sector: "Trojan Reach".to_string(),
+                hex_x: 22,
+                hex_y: 23,
+                zone: ZoneClassification::Green,
+            },
+            destination: Some(WorldRef {
+                name: "Regina".to_string(),
+                uwp: "A788899-A".to_string(),
+                sector: "Spinward Marches".to_string(),
+                hex_x: 19,
+                hex_y: 10,
+                zone: ZoneClassification::Green,
+            }),
+            home_is_haven: true,
+            destination_is_haven: false,
+            // Generous target so the stall detector — not the
+            // overflow-abort guard — is what ends the run.
+            start_date: crate::simulator::types::Date::new(1, 1105),
+            target_completion_date: crate::simulator::types::Date::new(300, 1106),
+            illegal_goods: false,
+            planetary_broker_skill: 2,
+            mode: SimulationMode::Trade,
+            attitude: Attitude::Hungry,
+            starting_reputation: 0.0,
+            rng_seed: None,
+        };
+        let mut cache = WorldCache::new();
+        let mut stall_note: Option<String> = None;
+        let result = run_simulation(params, &mut cache, |s| {
+            if let Action::NoCandidate { note } = &s.action
+                && note.contains("No route forward")
+            {
+                stall_note = Some(note.clone());
+            }
+        })
+        .await
+        .expect("simulation should complete");
+        eprintln!(
+            "Result: jumps={} returned_home={} note={:?}",
+            result.jumps, result.returned_home, stall_note
+        );
+        assert!(!result.returned_home, "Regina must be unreachable at J-2");
+        let note = stall_note.expect("stall detector should have fired with a No-route-forward note");
+        assert!(note.contains("Jump-2"), "note should name the jump rating: {note}");
+        // The J-2 main from Drinax dead-ends within ~15 hops; with the
+        // 6-jump stall budget the whole run must stay far below the
+        // shuffle-for-a-year jump counts (~45+) seen before the detector.
+        assert!(
+            result.jumps <= 30,
+            "stall detector should end the run promptly; took {} jumps",
+            result.jumps
         );
     }
 
