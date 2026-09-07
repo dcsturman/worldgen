@@ -34,6 +34,8 @@ use super::climate;
 use super::colormap;
 use super::features::{CityTier, Feature};
 use super::grid::{SHEET_HEIGHT, SHEET_WIDTH, xy_to_sphere};
+use super::noise::DetailField;
+use super::orbital;
 
 /// Default equirectangular texture width (longitude). 2:1 with the height.
 /// 1024×512 is plenty of detail for globes up to ~600 px and keeps the
@@ -139,6 +141,20 @@ pub struct GlobeTextureJob {
     width: u32,
     height: u32,
     elev: Vec<f32>,
+    /// Per-texel tectonic rain-shadow, computed in [`Self::step_elevation`]
+    /// and consumed by [`Self::step_color`].
+    ///
+    /// It lives here rather than being sampled where it's used because both
+    /// it and the elevation need the same expensive thing: the tectonic
+    /// domain warp, which evaluates two fBm bands three times over (once per
+    /// axis) and was previously computed twice per texel — once inside
+    /// `elevation_offset`, then again inside `rain_shadow_at`. Warping once
+    /// and carrying the f32 result forward costs 2 MB at 1024×512 and removes
+    /// the single largest term in the sampling path.
+    ///
+    /// Zero when the map has no tectonic field, which makes
+    /// `rain_shadow_adjustment` a no-op — so `step_color` needs no branch.
+    rain_shadow: Vec<f32>,
     color: Vec<(u8, u8, u8)>,
     emissive: Vec<u8>,
     beacon: Vec<u8>,
@@ -151,33 +167,50 @@ impl GlobeTextureJob {
             width,
             height,
             elev: vec![0f32; n],
+            rain_shadow: vec![0f32; n],
             color: vec![(0u8, 0u8, 0u8); n],
             emissive: vec![0u8; n],
             beacon: vec![0u8; n],
         }
     }
 
-    /// Step 1: above-sea elevation per texel. Steps 2 and 3 read this grid for
-    /// continentality and hillshade.
+    /// Step 1: above-sea elevation per texel, plus the tectonic rain-shadow
+    /// that step 2 needs. Steps 2 and 3 read this grid for continentality and
+    /// hillshade.
+    ///
+    /// Both outputs come from one [`ElevationField::warp`] call — see
+    /// [`Self::rain_shadow`] for why they're computed together.
     pub fn step_elevation(&mut self, map: &WorldMap) {
         let w = self.width as usize;
+        let tectonics = map.elev_field.tectonics();
         for ty in 0..self.height as usize {
             let sy = (ty as f64 + 0.5) / self.height as f64 * SHEET_HEIGHT;
             for tx in 0..w {
                 let sx = (tx as f64 + 0.5) / self.width as f64 * SHEET_WIDTH;
                 let sphere = xy_to_sphere(sx, sy);
-                let e = map.elev_field.sample(&sphere);
+                let warped = map.elev_field.warp(&sphere);
+                let e = map.elev_field.sample_prewarped(&sphere, &warped);
                 let above = climate::amplify_elevation(e - map.sea_level, map.uwp.hydrographics());
-                self.elev[ty * w + tx] = above as f32;
+                let i = ty * w + tx;
+                self.elev[i] = above as f32;
+                if let Some(tec) = tectonics {
+                    self.rain_shadow[i] = tec.rain_shadow_at_warped(&warped) as f32;
+                }
             }
         }
     }
 
     /// Step 2: fold elevation + climate into a base biome colour per texel.
+    ///
+    /// Unlike the flat map's [`super::raster::RasterJob::step_color`], which
+    /// paints legend swatches via [`colormap::elevation_color`], this uses the
+    /// continuous [`orbital`] path: the same climate inputs and the same
+    /// palette, but blended, mottled by a detail field and tone-curved. The
+    /// flat map stays a precision instrument; the globe gets to be a photo.
     pub fn step_color(&mut self, map: &WorldMap) {
         let w = self.width as usize;
         let h = self.height as usize;
-        let tectonics = map.elev_field.tectonics();
+        let detail = DetailField::from_uwp(&map.uwp, map.seed);
         for ty in 0..h {
             let sy = (ty as f64 + 0.5) / self.height as f64 * SHEET_HEIGHT;
             for tx in 0..w {
@@ -192,16 +225,17 @@ impl GlobeTextureJob {
                     &map.uwp,
                 );
 
+                // Rain shadow was computed in step_elevation, which already
+                // had the warped point in hand.
                 let mut hu = map.humidity_field.sample(&sphere, &map.uwp);
-                if let Some(tec) = tectonics {
-                    hu = colormap::rain_shadow_adjustment(hu, tec.rain_shadow_at(&sphere));
-                }
+                hu = colormap::rain_shadow_adjustment(hu, self.rain_shadow[ty * w + tx] as f64);
                 hu = climate::apply_altitude_drying(hu, above);
                 if above > 0.0 {
                     let cont = continentality_wrapped(&self.elev, w, h, tx, ty);
                     hu = super::raster::apply_continentality(hu, cont);
                 }
-                self.color[ty * w + tx] = colormap::elevation_color(above, t, hu);
+                let (mottle, grain) = detail.sample(&sphere);
+                self.color[ty * w + tx] = orbital::surface_color(above, t, hu, mottle, grain);
             }
         }
     }
@@ -268,34 +302,38 @@ impl GlobeTextureJob {
                 let id = if ty + 1 < h { i + w } else { i };
 
                 if elev[i] > 0.0 {
-                    const SHADE_GAIN: f64 = 30.0;
+                    // Ungated, and at a far higher gain than the flat map's
+                    // equivalent in `raster::step_postprocess`. Both choices
+                    // are deliberate, and they're the difference between
+                    // terrain you can see and terrain you can't.
+                    //
+                    // The flat map gates shading below a slope threshold so
+                    // level ground paints its legend swatch unmodified — the
+                    // key has to mean something. The globe has no key, and
+                    // that gate was silently discarding all the fine relief:
+                    // typical per-texel deltas here are ~0.002, which at the
+                    // old gain of 30 gives a slope of ~0.06, well under the
+                    // old 0.20 floor. Every subtle slope on the planet
+                    // rounded to "perfectly flat", which is most of why the
+                    // surface read as moulded clay rather than landscape.
+                    //
+                    // The gain is set so an ordinary hillside lands in the
+                    // meat of the Lambert response instead of pinned at its
+                    // flat-ground value. `colormap::apply_hillshade` clamps
+                    // shade to [0.40, 1.20], so steep ground self-limits and
+                    // no amount of gain can blow it out.
+                    const SHADE_GAIN: f64 = 140.0;
                     let dx = (elev[ir] - elev[il]) as f64 * SHADE_GAIN;
                     let dy = (elev[id] - elev[iu]) as f64 * SHADE_GAIN;
-                    const FLAT_LIMIT: f64 = 0.20;
-                    const FULL_LIMIT: f64 = 0.50;
-                    let slope = (dx * dx + dy * dy).sqrt();
-                    let tt = ((slope - FLAT_LIMIT) / (FULL_LIMIT - FLAT_LIMIT)).clamp(0.0, 1.0);
-                    let strength = tt * tt * (3.0 - 2.0 * tt);
-                    if strength > 0.0 {
-                        let lit = colormap::apply_hillshade(c, dx, dy);
-                        c = (
-                            lerp_byte(c.0, lit.0, strength),
-                            lerp_byte(c.1, lit.1, strength),
-                            lerp_byte(c.2, lit.2, strength),
-                        );
-                    }
-                } else {
-                    let any_land =
-                        elev[il] > 0.0 || elev[ir] > 0.0 || elev[iu] > 0.0 || elev[id] > 0.0;
-                    if any_land {
-                        const TIDE: (u8, u8, u8) = (180, 198, 220);
-                        c = (
-                            lerp_byte(c.0, TIDE.0, 0.45),
-                            lerp_byte(c.1, TIDE.1, 0.45),
-                            lerp_byte(c.2, TIDE.2, 0.45),
-                        );
-                    }
+                    c = colormap::apply_hillshade(c, dx, dy);
                 }
+                // No tide band on the globe. The flat map lightens the texel
+                // ring next to land so a coastline is legible at a glance;
+                // here that fixed 45% lerp to a pale blue was drawing a hard
+                // one-texel fringe *on top of* the continuous shelf ramp —
+                // the staircased cyan outline around every island.
+                // `orbital::ocean_color` already brightens shallow water, and
+                // does it as a gradient over real depth.
 
                 rgb[i * 3] = c.0;
                 rgb[i * 3 + 1] = c.1;
@@ -556,11 +594,6 @@ fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
 fn smoothstep(e0: f64, e1: f64, x: f64) -> f64 {
     let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
-}
-
-#[inline]
-fn lerp_byte(a: u8, b: u8, t: f64) -> u8 {
-    (a as f64 + (b as f64 - a as f64) * t).clamp(0.0, 255.0) as u8
 }
 
 /// Render a single static globe frame for `map` as a PNG, viewed at sub-viewer
@@ -883,6 +916,37 @@ mod tests {
     }
 
     /// Visual dump: write a static globe PNG and a spinning APNG to /tmp for
+    /// Visual dump: write the raw equirectangular surface texture to /tmp,
+    /// opaque, for judging detail at 1:1. Ignored by default.
+    ///
+    /// The globe dumps below are the wrong tool for that: a 512-px disc shows
+    /// the 1024-wide texture at roughly one texel per pixel *at the sub-viewer
+    /// point* and far worse toward the limb, so fine relief reads as mush
+    /// there whether or not it's present. Look at the texture to decide
+    /// whether detail exists; look at the globe to decide whether it reads.
+    ///
+    /// Note this is the surface RGB only — the emissive (city-light) channel
+    /// `render_globe_texture` puts in alpha is dropped, because an image
+    /// viewer composites that as transparency and shows a near-blank sheet.
+    ///
+    /// `cargo test --lib --release worldmap::globe::tests::dump_globe_texture -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn dump_globe_texture() {
+        for (name, uwp) in [("garden", "A788899-A"), ("earth", "C886977-8")] {
+            let map = super::super::generate(uwp, 1, None).unwrap();
+            let tex = build_equirect_texture(&map, TEX_W, TEX_H);
+            let mut rgba = Vec::with_capacity(tex.rgb.len() / 3 * 4);
+            for px in tex.rgb.as_chunks::<3>().0 {
+                rgba.extend_from_slice(&[px[0], px[1], px[2], 255]);
+            }
+            let png = encode_png_rgba(&rgba, TEX_W, TEX_H).unwrap();
+            let path = format!("/tmp/globe_tex_{name}.png");
+            std::fs::write(&path, &png).unwrap();
+            eprintln!("wrote {path} ({} B)", png.len());
+        }
+    }
+
     /// eyeballing. Ignored by default.
     /// `cargo test --lib worldmap::globe::tests::dump_globe -- --ignored --nocapture`
     #[test]

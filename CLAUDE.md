@@ -143,7 +143,7 @@ Server env vars (see `src/bin/server.rs`):
   - `apng` (default) — a spinning APNG. Smooth but heavy; **prefer `texture` for web clients** (the APNG's discrete frames look jerky vs. a live warp).
   - `png` — a single static globe frame.
   - `texture` — the raw equirectangular surface texture as a 1024×512 RGBA PNG (RGB = day surface, **alpha = night-side city-light emissive**), for client-side (e.g. WebGL) globe rendering. The starport's `(lon, lat)` in radians is returned in an **`X-Starport`** response header (and embedded as a `Starport` tEXt chunk so it survives a cache hit); absent for class X/Y / unpopulated worlds. CORS exposes `X-Cache, X-Starport` so cross-origin JS can read them. The reference warp is `worldmap::globe::GlobeTexture::warp_into`.
-  Each variant caches under its own path (`world/v1/`, `world/v1/globe/`, `world/v1/globe-anim/`, `world/v1/globe-tex/`) so they never collide.
+  Each variant caches under its own path (`world/v2/`, `world/v2/globe/`, `world/v2/globe-anim/`, `world/v2/globe-tex/`) so they never collide. The version segment is bumped whenever a worldgen change alters what a world looks like — the cache key is `(seed, uwp, name)` with nothing about the generator in it, so without a bump previously-viewed worlds keep serving their old terrain forever while unviewed ones render with the new.
 - `WS_PORT` (default 8081), `WS_HOST` (default `0.0.0.0`)
 - `RUST_LOG`
 

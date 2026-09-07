@@ -22,6 +22,7 @@ pub mod features;
 pub mod globe;
 pub mod grid;
 pub mod noise;
+pub mod orbital;
 pub mod raster;
 pub mod render;
 pub mod rivers;

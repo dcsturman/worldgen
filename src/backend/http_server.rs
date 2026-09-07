@@ -57,9 +57,22 @@ use crate::systems::constraint::SystemConstraints;
 const PLANET_CANONICAL_SCALE: f32 = 2.0;
 
 /// GCS object-path prefix for cached planet PNGs. The version segment
-/// (`v1`) lets us bust the cache on a worldgen version bump by
+/// (`v2`) lets us bust the cache on a worldgen version bump by
 /// changing the prefix instead of deleting objects.
-const PLANET_CACHE_PREFIX: &str = "world/v1";
+///
+/// The cache key is `(seed, uwp, name)` — pure world *identity*, with nothing
+/// about the generator that produced the image — so a change to worldgen does
+/// not invalidate anything on its own. Without a bump, a world someone had
+/// already viewed would keep serving its old terrain indefinitely while a
+/// world nobody had opened yet would render with the new: the same world
+/// showing up as two different planets depending on view history.
+///
+/// Bumped to `v2` for the terrain changes of 2026-09-06 — continuous globe
+/// colormap, high-frequency relief, fractal coastlines via a fine domain-warp
+/// band, and the plate-bias fix that removed the straight channels along
+/// continental plate boundaries. Old `world/v1/` objects are orphaned rather
+/// than deleted, so this is reversible by putting the prefix back.
+const PLANET_CACHE_PREFIX: &str = "world/v2";
 
 /// Globe (orthographic projection) render parameters for `?projection=globe`.
 /// Fixed server-side so the cache key stays `(seed, uwp, name)` per variant
@@ -540,7 +553,7 @@ async fn handle_world(
 /// Renders the planet as an orthographic globe — either a static PNG
 /// (`format=png`/`static`) or a spinning animated PNG (default, or
 /// `format=apng`). Both are cached in GCS under a projection-specific path
-/// (`world/v1/globe[-anim]/…`) so they never collide with the flat map's
+/// (`world/v2/globe[-anim]/…`) so they never collide with the flat map's
 /// cache. The render size and frame count are fixed server-side
 /// ([`GLOBE_PNG_SIZE`] etc.) so the cache key stays `(seed, uwp, name)` per
 /// variant.
@@ -598,7 +611,7 @@ async fn handle_world_globe(
 /// in one bad request becomes a clean 500 instead of aborting the process.
 /// Globe texture sub-handler for `…&projection=globe&format=texture`. Serves
 /// the equirectangular surface texture (RGB surface + alpha emissive) for
-/// client-side rendering, cached under `world/v1/globe-tex/`, with the
+/// client-side rendering, cached under `world/v2/globe-tex/`, with the
 /// starport's `(lon, lat)` echoed back in an `X-Starport` header (read from the
 /// PNG's `Starport` tEXt chunk so it survives a cache hit).
 async fn handle_world_globe_texture(

@@ -111,15 +111,98 @@ pub struct TectonicField {
     /// output. Breaks up smoothstep level-sets so coastlines look fractal,
     /// not just "warped circles".
     wobble: Fbm<Simplex>,
+    /// Fine domain-warp band, applied on top of `warp` in [`Self::warp_sphere`].
+    ///
+    /// A coastline here is a level set of a function of the *warped* position,
+    /// so the shore is the preimage of a fixed contour under the warp. That
+    /// makes lateral displacement the only lever that can bend it — raising
+    /// the elevation field's amplitude does essentially nothing, for a reason
+    /// worth writing down:
+    ///
+    /// Plate interiors sit on a flat ±0.35 plateau and `boundary_fade`
+    /// compresses the whole continental margin into a gap band about 5 texels
+    /// wide, so `|∇elevation| ≈ 23` per radian across the shore. A vertical
+    /// nudge of `WOBBLE_AMPLITUDE` (0.06) therefore moves the waterline by
+    /// `0.06 / 23 ≈ 0.003` rad — under half a texel. The coast physically
+    /// cannot wiggle in response to vertical noise; it can only be carried
+    /// sideways by the warp.
+    ///
+    /// Scale bookkeeping, since it is easy to get wrong: this noise has a
+    /// feature size of `1/frequency` *radians*, and a 1024-wide
+    /// equirectangular texture carries `1024 / 2π ≈ 163` texels per radian —
+    /// so a wavelength in texels is `163 / frequency`, and staying at or above
+    /// the 2-texel Nyquist limit means keeping every octave under `f ≈ 80`.
+    ///
+    /// The octave ladder (10 → 20 → 40 → 80, i.e. wavelengths of 16, 8, 4 and
+    /// 2 texels) is chosen so the amplitude-to-wavelength ratio stays roughly
+    /// constant across scales — which is what "fractal" means operationally,
+    /// and what makes a coast look equally intricate however far you zoom.
+    /// Persistence slightly above `1 / lacunarity` tilts it a little rougher
+    /// at fine scales, matching real coastlines' fractal dimension of ~1.25.
+    ///
+    /// Separate from `warp` rather than extra octaves on it, for the same
+    /// reason [`super::noise::ElevationField::relief`] is separate: `Fbm`
+    /// renormalizes by `1 / Σ persistence^k` when the octave count changes,
+    /// so extending `warp` in place would rescale its low frequencies too and
+    /// walk every existing world's continents across the sphere.
+    fine_warp: Fbm<Simplex>,
+    /// Along-boundary modulation of continental rift depth. See
+    /// [`RIFT_MIN`] for why a rift can't be a constant.
+    rift: Fbm<Simplex>,
 }
 
 /// Domain-warp amplitude (sphere units). Boundaries visibly bend on the
 /// scale of a few hexes; continents stay recognizable.
-const WARP_AMPLITUDE: f64 = 0.10;
+///
+/// Raised from 0.10, where it was too small to matter at the scale it acts
+/// on: plates span roughly a radian, so a 0.10 warp bent a boundary by about
+/// 10% of its own length and the underlying Voronoi edge still read as a
+/// straight line. Measured over a sweep on the earth-UWP test world, coast
+/// perimeter / √area goes 28.0 → 28.6 → 29.9 → 30.8 for 0.10 / 0.14 / 0.18 /
+/// 0.22, with land fraction steady at 44.6–45.1% throughout, so this bends
+/// boundaries without redistributing land. 0.22 still holds together; 0.18 is
+/// the conservative pick, since `warp_sphere` will eventually fold the
+/// mapping (become non-injective) and tear plate identity apart if pushed.
+const WARP_AMPLITUDE: f64 = 0.18;
 /// Amplitude of the high-freq wobble added on top of the smoothstepped
 /// interior bias. Small — just enough to fractal up coastlines without
 /// drowning the plate-driven structure.
 const WOBBLE_AMPLITUDE: f64 = 0.06;
+/// Amplitude of the fine domain-warp band, in sphere units (≈ radians).
+/// At 0.06 the coarsest octave displaces the shore by about 3 texels against
+/// its 16-texel wavelength, and each finer octave holds roughly that same
+/// ratio — intricate at every scale, while the continent it belongs to stays
+/// where it was (land fraction moves by well under a percentage point).
+const FINE_WARP_AMPLITUDE: f64 = 0.06;
+
+/// Continental rift depth is multiplied by a noise band along the boundary,
+/// ranging over `[RIFT_MIN, RIFT_MAX]`.
+///
+/// Without it, every divergent continental boundary got a *uniform* rift down
+/// its whole length, which sat just below sea level and flooded into a
+/// dead-straight canal slicing the landmass in two — the most artificial
+/// feature on the globe, and one no amount of domain warping fixes, because
+/// the straightness is in the boundary's depth profile rather than its path.
+///
+/// Modulated, the rift floor rises above and drops below sea level along its
+/// run, so it floods intermittently: a chain of long lakes and narrow seas
+/// strung out along the fault. Which is what real rift valleys look like —
+/// the East African Rift is Tanganyika, Kivu, Albert and Turkana in a line,
+/// not a canal.
+///
+/// The range is deliberately asymmetric about 1.0: most of a rift ends up
+/// shallower than the old constant (so it stays dry land and merely dents the
+/// terrain) while the occasional segment goes deeper than it used to (so the
+/// lakes that do form are convincing).
+/// Elevation offset of a plate's interior: continental plates ride this far
+/// above the datum, oceanic plates the same distance below. The boundary
+/// between two plates blends between their two values — see
+/// `elevation_offset_warped`.
+const PLATE_BIAS: f64 = 0.35;
+
+const RIFT_MIN: f64 = 0.10;
+/// Upper end of the rift-depth modulation. See [`RIFT_MIN`].
+const RIFT_MAX: f64 = 1.40;
 /// Aspect-ratio range for anisotropic Voronoi: each plate gets a random
 /// `aspect ∈ [STRETCH_MIN, STRETCH_MAX]` and a random tangent stretch
 /// axis. `1.0` = isotropic (round); higher values produce long-skinny
@@ -217,11 +300,29 @@ impl TectonicField {
             .set_frequency(6.0)
             .set_lacunarity(2.1)
             .set_persistence(0.5);
+        let fine_warp_seed: u32 = rng.random();
+        let fine_warp = Fbm::<Simplex>::new(fine_warp_seed)
+            .set_octaves(4)
+            .set_frequency(10.0)
+            .set_lacunarity(2.0)
+            .set_persistence(0.55);
+        let rift_seed: u32 = rng.random();
+        // Low frequency on purpose: segments want to be lake-sized runs along
+        // the fault (~30 texels at the coarsest octave), not per-texel speckle,
+        // which would just make the canal's edges ragged instead of breaking
+        // it into separate basins.
+        let rift = Fbm::<Simplex>::new(rift_seed)
+            .set_octaves(3)
+            .set_frequency(5.0)
+            .set_lacunarity(2.1)
+            .set_persistence(0.5);
 
         Self {
             plates,
             warp,
             wobble,
+            fine_warp,
+            rift,
         }
     }
 
@@ -233,10 +334,15 @@ impl TectonicField {
         let nx = self.warp.get([p[0], p[1], p[2]]);
         let ny = self.warp.get([p[0] + 17.3, p[1] - 4.1, p[2] + 9.7]);
         let nz = self.warp.get([p[0] - 31.5, p[1] + 22.6, p[2] - 13.2]);
+        // Fine band, offset-sampled the same way so the three components are
+        // independent rather than a scaled copy of one another.
+        let fx = self.fine_warp.get([p[0] + 5.1, p[1] + 11.9, p[2] - 7.3]);
+        let fy = self.fine_warp.get([p[0] - 23.7, p[1] + 2.4, p[2] + 19.8]);
+        let fz = self.fine_warp.get([p[0] + 41.2, p[1] - 15.6, p[2] + 3.9]);
         let q = [
-            p[0] + WARP_AMPLITUDE * nx,
-            p[1] + WARP_AMPLITUDE * ny,
-            p[2] + WARP_AMPLITUDE * nz,
+            p[0] + WARP_AMPLITUDE * nx + FINE_WARP_AMPLITUDE * fx,
+            p[1] + WARP_AMPLITUDE * ny + FINE_WARP_AMPLITUDE * fy,
+            p[2] + WARP_AMPLITUDE * nz + FINE_WARP_AMPLITUDE * fz,
         ];
         let m = (q[0] * q[0] + q[1] * q[1] + q[2] * q[2]).sqrt().max(1e-9);
         [q[0] / m, q[1] / m, q[2] / m]
@@ -270,9 +376,22 @@ impl TectonicField {
         self.elevation_offset_warped(&warped)
     }
 
+    /// The domain warp on its own, for callers that need more than one
+    /// plate-derived quantity at the same point.
+    ///
+    /// `warp_sphere` evaluates two fBm bands three times each (once per axis),
+    /// which makes it the most expensive thing in the sampling path — and a
+    /// per-pixel consumer that wants both `elevation_offset` and
+    /// `rain_shadow_at` would otherwise pay for it twice. Warp once, then call
+    /// [`Self::elevation_offset_warped`] and [`Self::rain_shadow_at_warped`].
+    pub fn warp(&self, sphere_pos: &[f64; 3]) -> [f64; 3] {
+        self.warp_sphere(sphere_pos)
+    }
+
     /// Body of `elevation_offset` operating on an already-warped point.
-    /// Used by `rain_shadow_at` so we don't double-warp.
-    fn elevation_offset_warped(&self, sphere_pos: &[f64; 3]) -> f64 {
+    /// Used by `rain_shadow_at`, and by callers that warped once via
+    /// [`Self::warp`], so we don't double-warp.
+    pub fn elevation_offset_warped(&self, sphere_pos: &[f64; 3]) -> f64 {
         let Some((a, b, da, db)) = self.two_nearest(sphere_pos) else {
             return 0.0;
         };
@@ -289,10 +408,30 @@ impl TectonicField {
         let boundary_fade = 0.04;
         let t = (gap / boundary_fade).clamp(0.0, 1.0);
         let smooth = t * t * (3.0 - 2.0 * t);
-        let interior_bias = match plate_a.kind {
-            PlateKind::Continental => 0.35,
-            PlateKind::Oceanic => -0.35,
-        } * smooth;
+
+        // Blend between the two plates' interior biases across the boundary,
+        // rather than fading the nearest plate's bias toward zero.
+        //
+        // Fading to zero put a trough along *every* plate edge, because zero
+        // sits between the continental and oceanic biases and below sea level
+        // on most worlds. Two continental plates meeting therefore got a
+        // 0.35-deep canyon between them that flooded into a dead-straight
+        // channel splitting the landmass — the most conspicuous artificial
+        // feature on the globe, and one that survived every amount of domain
+        // warping because it comes from the bias function, not the path.
+        //
+        // Blending to the midpoint gives each pairing the right behaviour for
+        // free: continental|continental holds at +0.35 (an unbroken landmass,
+        // with any mountains coming from `boundary_term`), oceanic|oceanic
+        // holds at -0.35, and only continental|oceanic passes through zero —
+        // which is exactly where a coastline belongs.
+        let bias_of = |kind| match kind {
+            PlateKind::Continental => PLATE_BIAS,
+            PlateKind::Oceanic => -PLATE_BIAS,
+        };
+        let bias_a = bias_of(plate_a.kind);
+        let midpoint = 0.5 * (bias_a + bias_of(plate_b.kind));
+        let interior_bias = midpoint + (bias_a - midpoint) * smooth;
 
         // Boundary contribution: examine relative motion at the boundary
         // midpoint. We approximate the midpoint as the sample point itself —
@@ -328,7 +467,16 @@ impl TectonicField {
         } else if conv < -0.05 {
             // Divergent — small rift on land, mid-ocean ridge in ocean.
             let peak = match plate_a.kind {
-                PlateKind::Continental => -0.15,
+                PlateKind::Continental => {
+                    // Vary the depth along the fault so the rift floods in
+                    // stretches rather than end to end. See `RIFT_MIN`.
+                    let r = self.rift.get(*sphere_pos);
+                    let m = RIFT_MIN + (RIFT_MAX - RIFT_MIN) * (0.5 + 0.5 * r);
+                    -0.15 * m
+                }
+                // Mid-ocean ridges are left uniform: they genuinely do run
+                // unbroken for thousands of kilometres, and being underwater
+                // they never read as a line drawn across the map anyway.
                 PlateKind::Oceanic => 0.15,
             };
             peak * decay * (-conv).min(1.0)
@@ -364,9 +512,12 @@ impl TectonicField {
 
     pub fn rain_shadow_at(&self, sphere_pos: &[f64; 3]) -> f64 {
         // Warp keeps rain-shadow stripes aligned with the (now wiggly) ridge.
-        let warped = self.warp_sphere(sphere_pos);
-        let sphere_pos = &warped;
+        self.rain_shadow_at_warped(&self.warp_sphere(sphere_pos))
+    }
 
+    /// Body of [`Self::rain_shadow_at`] on an already-warped point, for
+    /// callers that got one from [`Self::warp`].
+    pub fn rain_shadow_at_warped(&self, sphere_pos: &[f64; 3]) -> f64 {
         let Some((a, b, da, db)) = self.two_nearest(sphere_pos) else {
             return 0.0;
         };
