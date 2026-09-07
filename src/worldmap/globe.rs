@@ -131,6 +131,27 @@ const TERM_WIDTH: f64 = 0.18;
 /// Limb-darkening floor: edge pixels keep this fraction of their brightness.
 const LIMB_FLOOR: f64 = 0.74;
 
+/// Clamp on the relief term — the ratio of perturbed to flat sun cosine.
+/// Unbounded it runs away at grazing incidence, which is physically a long
+/// shadow but numerically a divide by nearly zero.
+const RELIEF_MIN: f64 = 0.42;
+const RELIEF_MAX: f64 = 1.60;
+/// How far toward the sun to look when sampling the deck for its shadow, in
+/// sphere radii. Stands in for cloud altitude: larger throws the shadow
+/// further from the cloud that casts it.
+const CLOUD_HEIGHT: f64 = 0.035;
+/// How much of the light a full-opacity deck takes out of the ground beneath.
+const CLOUD_SHADOW: f64 = 0.55;
+
+/// Cloud colour for a given opacity: thin cover greys, thick cover brightens.
+fn cloud_tint(a: f64) -> (f64, f64, f64) {
+    (
+        CLOUD_THIN.0 + (CLOUD_BRIGHT.0 - CLOUD_THIN.0) * a,
+        CLOUD_THIN.1 + (CLOUD_BRIGHT.1 - CLOUD_THIN.1) * a,
+        CLOUD_THIN.2 + (CLOUD_BRIGHT.2 - CLOUD_THIN.2) * a,
+    )
+}
+
 /// Cloud colour at full opacity, and the greyer tone thin cloud takes.
 /// Real cloud from orbit is not paper-white, and letting thin cover read
 /// grey while thick cover reads bright is the only depth cue available to a
@@ -167,13 +188,37 @@ const BEACON_RADIUS_FRAC: f64 = 0.011;
 /// loops seamlessly (the pulse phase returns to its start after 2π of spin).
 const BEACON_PULSES: f64 = 8.0;
 
+/// One bilinear sample of a [`GlobeTexture`]: everything the warp needs at a
+/// point, gathered in a single lookup.
+struct Sample {
+    /// Surface colour with no directional light applied.
+    albedo: (f64, f64, f64),
+    emissive: f64,
+    beacon: f64,
+    /// Tangent-space normal's `(east, north)` components; `up` is implied.
+    normal_en: (f64, f64),
+    /// Cloud opacity, 0–1.
+    cloud: f64,
+}
+
 /// A gap-free equirectangular texture of a world's surface, suitable for
 /// projecting onto a sphere. Row-major, `width × height`.
 pub struct GlobeTexture {
     pub width: u32,
     pub height: u32,
-    /// `width * height * 3` bytes, RGB row-major — the daylight surface.
+    /// `width * height * 3` bytes, RGB row-major — the surface **albedo**,
+    /// with no directional light of any kind baked in. See
+    /// [`GlobeTextureJob::into_texture`] for why, and [`Self::baked_rgb`] for
+    /// the flattened form single-image consumers want.
     pub rgb: Vec<u8>,
+    /// `width * height` tangent-space surface normals as `[x, y]` in
+    /// `(east, north)`, each `i8` scaled by 127; the `up` component is
+    /// recovered as `sqrt(1 - x² - y²)`. Zero over water, which is flat.
+    pub normal_xy: Vec<[i8; 2]>,
+    /// `width * height` bytes of cloud opacity, 0–255. Kept out of `rgb` so
+    /// the warp can light the deck, shadow the ground beneath it, and dim the
+    /// city lights under it — none of which is possible once it's composited.
+    pub clouds: Vec<u8>,
     /// `width * height` bytes — a "Black Marble" emissive channel: the
     /// intensity of artificial light (city glow) at each texel, scaled by
     /// settlement size. Sampled and shown only on the night side during the
@@ -385,94 +430,68 @@ impl GlobeTextureJob {
     /// Step 3 (terminal): hillshade land + faint tide on shallow water, baking
     /// the RGB texture. Longitude wraps; latitude clamps at the poles. The
     /// emissive channel (if [`Self::populate_city_lights`] ran) passes through.
+    /// Step 3 (terminal): bake the texture.
+    ///
+    /// What this deliberately does *not* do is apply any directional light.
+    /// It used to: a Lambert hillshade with the sun fixed in texture space.
+    /// That is wrong for a globe for a reason that has nothing to do with who
+    /// picks the sun — the texture is in *planet frame* and the sun lives in
+    /// *camera frame*, so anything sun-dependent baked here rotates with the
+    /// terrain. A mountain would carry its highlight around the disc as the
+    /// planet turned, while the terminator stayed put, and the two would agree
+    /// at exactly one spin angle.
+    ///
+    /// So the texture carries only view-independent data — albedo, surface
+    /// normals, cloud opacity, emissive — and every directional effect is
+    /// computed per pixel in [`GlobeTexture::warp_into`], where the light
+    /// direction is known. Consumers that can only take a single flat image
+    /// get [`GlobeTexture::baked_rgb`], which applies the old bake on the way
+    /// out.
     pub fn into_texture(self) -> GlobeTexture {
         let w = self.width as usize;
         let h = self.height as usize;
         let elev = &self.elev;
-        let color = &self.color;
-        let mut emissive = self.emissive;
         let mut rgb = vec![0u8; w * h * 3];
+        let mut normal_xy = vec![[0i8; 2]; w * h];
         for ty in 0..h {
             for tx in 0..w {
                 let i = ty * w + tx;
-                let mut c = color[i];
+                let c = self.color[i];
+                rgb[i * 3] = c.0;
+                rgb[i * 3 + 1] = c.1;
+                rgb[i * 3 + 2] = c.2;
 
+                if elev[i] <= 0.0 {
+                    continue; // water stays flat; its normal is the sphere's
+                }
                 let il = i - tx + ((tx + w - 1) % w); // wrap left
                 let ir = i - tx + ((tx + 1) % w); // wrap right
                 let iu = if ty > 0 { i - w } else { i };
                 let id = if ty + 1 < h { i + w } else { i };
 
-                if elev[i] > 0.0 {
-                    // Ungated, and at a far higher gain than the flat map's
-                    // equivalent in `raster::step_postprocess`. Both choices
-                    // are deliberate, and they're the difference between
-                    // terrain you can see and terrain you can't.
-                    //
-                    // The flat map gates shading below a slope threshold so
-                    // level ground paints its legend swatch unmodified — the
-                    // key has to mean something. The globe has no key, and
-                    // that gate was silently discarding all the fine relief:
-                    // typical per-texel deltas here are ~0.002, which at the
-                    // old gain of 30 gives a slope of ~0.06, well under the
-                    // old 0.20 floor. Every subtle slope on the planet
-                    // rounded to "perfectly flat", which is most of why the
-                    // surface read as moulded clay rather than landscape.
-                    //
-                    // The gain is set so an ordinary hillside lands in the
-                    // meat of the Lambert response instead of pinned at its
-                    // flat-ground value. `colormap::apply_hillshade` clamps
-                    // shade to [0.40, 1.20], so steep ground self-limits and
-                    // no amount of gain can blow it out.
-                    const SHADE_GAIN: f64 = 140.0;
-                    let dx = (elev[ir] - elev[il]) as f64 * SHADE_GAIN;
-                    let dy = (elev[id] - elev[iu]) as f64 * SHADE_GAIN;
-                    c = colormap::apply_hillshade(c, dx, dy);
-                }
-                // No tide band on the globe. The flat map lightens the texel
-                // ring next to land so a coastline is legible at a glance;
-                // here that fixed 45% lerp to a pale blue was drawing a hard
-                // one-texel fringe *on top of* the continuous shelf ramp —
-                // the staircased cyan outline around every island.
-                // `orbital::ocean_color` already brightens shallow water, and
-                // does it as a gradient over real depth.
-
-                // Clouds composite last: they sit above the terrain, so they
-                // go over the hillshade rather than under it.
-                let cloud = self.clouds[i];
-                if cloud > 0 {
-                    let a = cloud as f64 / 255.0;
-                    let shaded = 1.0 - CLOUD_OCCLUSION * a;
-                    let ground = (
-                        c.0 as f64 * shaded,
-                        c.1 as f64 * shaded,
-                        c.2 as f64 * shaded,
-                    );
-                    // Thin cloud greys, thick cloud brightens.
-                    let tint = (
-                        CLOUD_THIN.0 + (CLOUD_BRIGHT.0 - CLOUD_THIN.0) * a,
-                        CLOUD_THIN.1 + (CLOUD_BRIGHT.1 - CLOUD_THIN.1) * a,
-                        CLOUD_THIN.2 + (CLOUD_BRIGHT.2 - CLOUD_THIN.2) * a,
-                    );
-                    c = (
-                        (ground.0 + (tint.0 - ground.0) * a).round() as u8,
-                        (ground.1 + (tint.1 - ground.1) * a).round() as u8,
-                        (ground.2 + (tint.2 - ground.2) * a).round() as u8,
-                    );
-                    // The deck is above the cities too.
-                    let e = &mut emissive[i];
-                    *e = (*e as f64 * (1.0 - CLOUD_LIGHT_DIMMING * a)).round() as u8;
-                }
-
-                rgb[i * 3] = c.0;
-                rgb[i * 3 + 1] = c.1;
-                rgb[i * 3 + 2] = c.2;
+                // Gain is what makes ordinary terrain visible rather than
+                // pinned flat: typical per-texel deltas are ~0.002, so a
+                // slope only registers once it's scaled up by this much.
+                const SLOPE_GAIN: f64 = 140.0;
+                let dx = (elev[ir] - elev[il]) as f64 * SLOPE_GAIN;
+                let dy = (elev[id] - elev[iu]) as f64 * SLOPE_GAIN;
+                // Tangent-space normal, in (east, north, up). Texture y runs
+                // south, so the north component takes `dy` unnegated.
+                let (nx, ny, nz) = (-dx, dy, 1.0);
+                let len = (nx * nx + ny * ny + nz * nz).sqrt();
+                normal_xy[i] = [
+                    ((nx / len) * 127.0).round().clamp(-127.0, 127.0) as i8,
+                    ((ny / len) * 127.0).round().clamp(-127.0, 127.0) as i8,
+                ];
             }
         }
         GlobeTexture {
             width: self.width,
             height: self.height,
             rgb,
-            emissive,
+            normal_xy,
+            clouds: self.clouds,
+            emissive: self.emissive,
             beacon: self.beacon,
         }
     }
@@ -530,12 +549,83 @@ fn continentality_wrapped(elev: &[f32], w: usize, h: usize, tx: usize, ty: usize
 }
 
 impl GlobeTexture {
+    /// Flatten to a single lit RGB image, for consumers that can only take
+    /// one texture and do no lighting of their own.
+    ///
+    /// This applies the compromises [`GlobeTextureJob::into_texture`] exists
+    /// to avoid — a hillshade lit from a fixed direction in texture space, and
+    /// clouds composited into the surface — because a consumer holding one
+    /// flat image has no way to do better. It is what
+    /// `/api/world?…&format=texture` ships, so that endpoint's output is
+    /// unchanged by moving the real lighting into the warp.
+    ///
+    /// Anything that warps this itself (our own renders, or a client that
+    /// takes the normal and cloud channels) should use the raw fields instead
+    /// and light them per frame.
+    pub fn baked_rgb(&self) -> Vec<u8> {
+        let n = (self.width as usize) * (self.height as usize);
+        let mut out = self.rgb.clone();
+        for i in 0..n {
+            let mut c = (out[i * 3], out[i * 3 + 1], out[i * 3 + 2]);
+
+            let [nx, ny] = self.normal_xy[i];
+            if nx != 0 || ny != 0 {
+                // Recover the gradient the normal came from.
+                //
+                // Mind the axis: the stored normal is in (east, north, up),
+                // while `apply_hillshade` works in texture space where y runs
+                // *down*. Storing put `north = +dy`, so coming back out the
+                // second argument is `+y/z`, not `-y/z` — get that backwards
+                // and the flattened image is lit from the wrong side of the
+                // hill, with nothing else to give it away.
+                let (x, y) = (nx as f64 / 127.0, ny as f64 / 127.0);
+                let z = (1.0 - x * x - y * y).max(1e-6).sqrt();
+                c = colormap::apply_hillshade(c, -x / z, y / z);
+            }
+
+            let cloud = self.clouds[i];
+            if cloud > 0 {
+                let a = cloud as f64 / 255.0;
+                let shaded = 1.0 - CLOUD_OCCLUSION * a;
+                let ground = (
+                    c.0 as f64 * shaded,
+                    c.1 as f64 * shaded,
+                    c.2 as f64 * shaded,
+                );
+                let tint = cloud_tint(a);
+                c = (
+                    (ground.0 + (tint.0 - ground.0) * a).round() as u8,
+                    (ground.1 + (tint.1 - ground.1) * a).round() as u8,
+                    (ground.2 + (tint.2 - ground.2) * a).round() as u8,
+                );
+            }
+
+            out[i * 3] = c.0;
+            out[i * 3 + 1] = c.1;
+            out[i * 3 + 2] = c.2;
+        }
+        out
+    }
+
+    /// City-light emissive with the cloud deck's dimming already applied, for
+    /// the flattened path where the consumer can't do it per pixel.
+    pub fn baked_emissive(&self) -> Vec<u8> {
+        self.emissive
+            .iter()
+            .zip(&self.clouds)
+            .map(|(&e, &cloud)| {
+                let a = cloud as f64 / 255.0;
+                (e as f64 * (1.0 - CLOUD_LIGHT_DIMMING * a)).round() as u8
+            })
+            .collect()
+    }
+
     /// Bilinearly sample the texture at a 3D unit-sphere position (in the
     /// `xy_to_sphere` convention: `z` is the pole axis). Returns the surface
     /// RGB, the emissive (city-light) intensity, and the starport-beacon
     /// intensity at that point. Longitude wraps, latitude clamps.
     #[inline]
-    fn sample(&self, p: [f64; 3]) -> ((f64, f64, f64), f64, f64) {
+    fn sample(&self, p: [f64; 3]) -> Sample {
         let lat = p[2].clamp(-1.0, 1.0).asin();
         let lon = p[1].atan2(p[0]).rem_euclid(2.0 * PI);
         // Match xy_to_sphere: x∈[0,W)→lon∈[0,2π); y∈[0,H)→lat from +π/2 to -π/2.
@@ -549,18 +639,22 @@ impl GlobeTexture {
         let tx = fx - x0 as f64;
         let tyf = fy - y0 as f64;
 
-        // Sample one texel as (r, g, b, emissive, beacon), all f64.
-        let px = |x: i32, y: i32| -> [f64; 5] {
+        // Sample one texel as (r, g, b, emissive, beacon, n.x, n.y, cloud).
+        let px = |x: i32, y: i32| -> [f64; 8] {
             let xi = x.rem_euclid(w) as usize;
             let yi = y.clamp(0, h - 1) as usize;
             let flat = yi * self.width as usize + xi;
             let i = flat * 3;
+            let [nx, ny] = self.normal_xy[flat];
             [
                 self.rgb[i] as f64,
                 self.rgb[i + 1] as f64,
                 self.rgb[i + 2] as f64,
                 self.emissive[flat] as f64,
                 self.beacon[flat] as f64,
+                nx as f64 / 127.0,
+                ny as f64 / 127.0,
+                self.clouds[flat] as f64 / 255.0,
             ]
         };
         let c00 = px(x0, y0);
@@ -568,13 +662,41 @@ impl GlobeTexture {
         let c01 = px(x0, y0 + 1);
         let c11 = px(x0 + 1, y0 + 1);
         let lerp = |a: f64, b: f64, t: f64| a + (b - a) * t;
-        let mut out = [0.0f64; 5];
-        for k in 0..5 {
+        let mut out = [0.0f64; 8];
+        for k in 0..8 {
             let top = lerp(c00[k], c10[k], tx);
             let bot = lerp(c01[k], c11[k], tx);
             out[k] = lerp(top, bot, tyf);
         }
-        ((out[0], out[1], out[2]), out[3], out[4])
+        Sample {
+            albedo: (out[0], out[1], out[2]),
+            emissive: out[3],
+            beacon: out[4],
+            normal_en: (out[5], out[6]),
+            cloud: out[7],
+        }
+    }
+
+    /// Cloud opacity alone at a sphere position, bilinear. Used for the
+    /// shadow lookup, which needs a second sample per pixel at an offset
+    /// point and has no use for the other channels.
+    #[inline]
+    fn sample_cloud(&self, p: [f64; 3]) -> f64 {
+        let lat = p[2].clamp(-1.0, 1.0).asin();
+        let lon = p[1].atan2(p[0]).rem_euclid(2.0 * PI);
+        let fx = lon / (2.0 * PI) * self.width as f64 - 0.5;
+        let fy = (FRAC_PI_2 - lat) / PI * self.height as f64 - 0.5;
+        let (w, h) = (self.width as i32, self.height as i32);
+        let (x0, y0) = (fx.floor() as i32, fy.floor() as i32);
+        let (tx, ty) = (fx - x0 as f64, fy - y0 as f64);
+        let at = |x: i32, y: i32| -> f64 {
+            let xi = x.rem_euclid(w) as usize;
+            let yi = y.clamp(0, h - 1) as usize;
+            self.clouds[yi * self.width as usize + xi] as f64 / 255.0
+        };
+        let top = at(x0, y0) + (at(x0 + 1, y0) - at(x0, y0)) * tx;
+        let bot = at(x0, y0 + 1) + (at(x0 + 1, y0 + 1) - at(x0, y0 + 1)) * tx;
+        top + (bot - top) * ty
     }
 
     /// Orthographically project the texture onto a sphere into a fresh
@@ -656,30 +778,116 @@ impl GlobeTexture {
                 let cl = lat.cos();
                 let sphere = [cl * lon.cos(), cl * lon.sin(), lat.sin()];
 
-                let ((cr, cg, cb), emissive, beacon) = self.sample(sphere);
-                let (mut r, mut g, mut b) = (cr, cg, cb);
+                let sample = self.sample(sphere);
+                let (mut r, mut g, mut b) = sample.albedo;
 
-                // Day/night: `lambert` is the sun cosine at this point; a
-                // smoothstep across the terminator gives `day` ∈ [0,1] (1 =
-                // full daylight, 0 = night). The night side keeps NIGHT_LEVEL
-                // of its brightness so it stays readable. Then limb-darken.
+                // Day/night: `lambert` is the sun cosine for the *sphere* at
+                // this point, so the terminator stays a smooth global sweep
+                // rather than being chewed up by every hillside. A smoothstep
+                // across it gives `day` ∈ [0,1] (1 = full daylight, 0 =
+                // night). The night side keeps NIGHT_LEVEL of its brightness
+                // so it stays readable.
                 let lambert = dot(p_cam, light);
                 let day = smoothstep(-TERM_WIDTH, TERM_WIDTH, lambert);
+
+                // Terrain relief, lit here rather than baked into the texture.
+                //
+                // Build the surface normal in camera space from the stored
+                // tangent-space one: `up` is the sphere normal, `east` is the
+                // direction of increasing longitude, `north` completes it.
+                // The relief term is the *ratio* of the perturbed sun cosine
+                // to the flat one, which isolates the hillside's contribution
+                // from the global illumination already carried by `day` —
+                // otherwise slopes near the terminator would darken twice.
+                // The ratio runs away at grazing incidence (which is what a
+                // long shadow is), hence the clamp, and it fades out with
+                // `day` because unlit ground has no relief to show.
+                let relief = {
+                    let (tn_e, tn_n) = sample.normal_en;
+                    let tn_up = (1.0 - tn_e * tn_e - tn_n * tn_n).max(0.0).sqrt();
+                    let east_hat = normalize(cross(north, p_cam));
+                    let north_hat = cross(p_cam, east_hat);
+                    let n_cam = normalize([
+                        east_hat[0] * tn_e + north_hat[0] * tn_n + p_cam[0] * tn_up,
+                        east_hat[1] * tn_e + north_hat[1] * tn_n + p_cam[1] * tn_up,
+                        east_hat[2] * tn_e + north_hat[2] * tn_n + p_cam[2] * tn_up,
+                    ]);
+                    let lit = dot(n_cam, light).max(0.0);
+                    let flat = lambert.max(0.0);
+                    let ratio = if flat > 0.05 {
+                        (lit / flat).clamp(RELIEF_MIN, RELIEF_MAX)
+                    } else {
+                        1.0
+                    };
+                    1.0 + (ratio - 1.0) * day
+                };
+
+                // Cloud shadow: look the deck up again a little way toward the
+                // sun, so the shadow falls on the far side of the cloud from
+                // the light and sweeps across the ground as the planet turns.
+                // Baking this was never an option — the offset direction lives
+                // in camera space, so it would have been right at one spin
+                // angle and wrong at the rest.
+                let shadow = if sample.cloud > 0.0 || CLOUD_SHADOW > 0.0 {
+                    let along = [
+                        light[0] - p_cam[0] * lambert,
+                        light[1] - p_cam[1] * lambert,
+                        light[2] - p_cam[2] * lambert,
+                    ];
+                    let m = (along[0] * along[0] + along[1] * along[1] + along[2] * along[2])
+                        .sqrt()
+                        .max(1e-9);
+                    let off = [
+                        p_cam[0] + along[0] / m * CLOUD_HEIGHT,
+                        p_cam[1] + along[1] / m * CLOUD_HEIGHT,
+                        p_cam[2] + along[2] / m * CLOUD_HEIGHT,
+                    ];
+                    let off = normalize(off);
+                    let (de2, dn2, df2) = (dot(off, east), dot(off, north), dot(off, front));
+                    let lat2 = dn2.clamp(-1.0, 1.0).asin();
+                    let lon2 = de2.atan2(df2) + spin;
+                    let cl2 = lat2.cos();
+                    self.sample_cloud([cl2 * lon2.cos(), cl2 * lon2.sin(), lat2.sin()])
+                } else {
+                    0.0
+                };
+
+                // Ground: albedo, relief-shaded, then darkened where the deck
+                // stands between it and the sun.
+                let ground_shadow = 1.0 - CLOUD_SHADOW * shadow * day;
+                r *= relief * ground_shadow;
+                g *= relief * ground_shadow;
+                b *= relief * ground_shadow;
+
+                // City lights ("Black Marble"): warm sodium glow, additive and
+                // only on the night side, fading out through the terminator.
+                // Cloud over a city dims it — the deck is above the lights.
+                let night = 1.0 - day;
+                if night > 0.0 && sample.emissive > 0.0 {
+                    let through = 1.0 - CLOUD_LIGHT_DIMMING * sample.cloud;
+                    let lit = (sample.emissive / 255.0) * night * CITY_LIGHT_GAIN * through;
+                    r += CITY_LIGHT.0 * lit;
+                    g += CITY_LIGHT.1 * lit;
+                    b += CITY_LIGHT.2 * lit;
+                }
+
+                // Cloud deck over the top, lit by the same sun as everything
+                // else and so darkening naturally through the terminator.
+                if sample.cloud > 0.0 {
+                    let a = sample.cloud;
+                    let tint = cloud_tint(a);
+                    r += (tint.0 - r) * a;
+                    g += (tint.1 - g) * a;
+                    b += (tint.2 - b) * a;
+                }
+
+                // Global day/night and limb darkening, applied to ground and
+                // cloud alike since both are lit by the same star.
                 let mut shade = NIGHT_LEVEL + (1.0 - NIGHT_LEVEL) * day;
                 shade *= LIMB_FLOOR + (1.0 - LIMB_FLOOR) * nz;
                 r *= shade;
                 g *= shade;
                 b *= shade;
-
-                // City lights ("Black Marble"): warm sodium glow, additive and
-                // only on the night side, fading out through the terminator.
-                let night = 1.0 - day;
-                if night > 0.0 && emissive > 0.0 {
-                    let lit = (emissive / 255.0) * night * CITY_LIGHT_GAIN;
-                    r += CITY_LIGHT.0 * lit;
-                    g += CITY_LIGHT.1 * lit;
-                    b += CITY_LIGHT.2 * lit;
-                }
 
                 // Soft bright atmosphere rim on the lit limb (inner edge).
                 let edge = (dist / radius).clamp(0.0, 1.0);
@@ -692,8 +900,8 @@ impl GlobeTexture {
 
                 // Starport beacon: blended toward red (so the hot core overrides
                 // terrain), shown in daylight as well as night, pulsing gently.
-                if beacon > 0.0 {
-                    let bo = (beacon / 255.0) * beacon_pulse;
+                if sample.beacon > 0.0 {
+                    let bo = (sample.beacon / 255.0) * beacon_pulse;
                     r += (BEACON_COLOR.0 - r) * bo;
                     g += (BEACON_COLOR.1 - g) * bo;
                     b += (BEACON_COLOR.2 - b) * bo;
@@ -713,6 +921,23 @@ impl GlobeTexture {
 }
 
 #[inline]
+fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+
+fn normalize(v: [f64; 3]) -> [f64; 3] {
+    let m = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    if m < 1e-12 {
+        [0.0, 0.0, 1.0]
+    } else {
+        [v[0] / m, v[1] / m, v[2] / m]
+    }
+}
+
 fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
@@ -794,13 +1019,19 @@ pub fn render_globe_texture(
         job.populate_city_lights(map);
         job.into_texture()
     };
+    // Flattened: this variant is a single image, so the consumer can't light
+    // it. `baked_rgb` applies the fixed-direction hillshade and composites the
+    // clouds, keeping this endpoint's output what it has always been even
+    // though the real lighting now happens in the warp.
+    let rgb = tex.baked_rgb();
+    let emissive = tex.baked_emissive();
     let n = (tex_w as usize) * (tex_h as usize);
     let mut rgba = vec![0u8; n * 4];
     for i in 0..n {
-        rgba[i * 4] = tex.rgb[i * 3];
-        rgba[i * 4 + 1] = tex.rgb[i * 3 + 1];
-        rgba[i * 4 + 2] = tex.rgb[i * 3 + 2];
-        rgba[i * 4 + 3] = tex.emissive[i];
+        rgba[i * 4] = rgb[i * 3];
+        rgba[i * 4 + 1] = rgb[i * 3 + 1];
+        rgba[i * 4 + 2] = rgb[i * 3 + 2];
+        rgba[i * 4 + 3] = emissive[i];
     }
 
     let mut out = Vec::new();
@@ -994,6 +1225,40 @@ mod tests {
         let a = t.warp_frame(96, 0.0);
         let b = t.warp_frame(96, std::f64::consts::PI);
         assert_ne!(a, b, "opposite hemispheres should differ");
+    }
+
+    /// The normal map is a lossy round trip — gradient to unit normal to two
+    /// quantized bytes and back — and it sits between the terrain and every
+    /// lit pixel, in both the warp and the flattened bake. A sign error here
+    /// silently lights hills from the wrong side and nothing else catches it,
+    /// so check the axis convention explicitly.
+    #[test]
+    fn normal_map_round_trips_the_gradient() {
+        for (dx, dy) in [
+            (0.0, 0.0),
+            (0.4, 0.0),
+            (-0.4, 0.0),
+            (0.0, 0.4),
+            (0.0, -0.4),
+            (0.3, -0.5),
+            (-0.7, 0.2),
+        ] {
+            // Encode exactly as into_texture does: (east, north, up).
+            let (nx, ny, nz) = (-dx, dy, 1.0f64);
+            let len: f64 = (nx * nx + ny * ny + nz * nz).sqrt();
+            let sx = ((nx / len) * 127.0).round().clamp(-127.0, 127.0) as i8;
+            let sy = ((ny / len) * 127.0).round().clamp(-127.0, 127.0) as i8;
+
+            // Decode exactly as baked_rgb does.
+            let (x, y) = (sx as f64 / 127.0, sy as f64 / 127.0);
+            let z = (1.0 - x * x - y * y).max(1e-6).sqrt();
+            let (got_dx, got_dy) = (-x / z, y / z);
+
+            assert!(
+                (got_dx - dx).abs() < 0.02 && (got_dy - dy).abs() < 0.02,
+                "gradient ({dx}, {dy}) round-tripped to ({got_dx:.4}, {got_dy:.4})"
+            );
+        }
     }
 
     #[test]
