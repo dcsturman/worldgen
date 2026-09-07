@@ -72,10 +72,12 @@ const NOISE_GAIN: f64 = 2.2;
 /// Small values give hard-edged blobs; too large and the deck turns to haze.
 const EDGE: f64 = 0.13;
 
-/// Peak opacity of fully-covered sky. Deliberately under 1.0 — even heavy
-/// cloud lets some ground colour through at this scale, and leaving a little
-/// keeps the terrain we spent so long on from vanishing entirely.
-const MAX_OPACITY: f64 = 0.86;
+/// Peak opacity of fully-covered sky. Well under 1.0 — even a heavy deck
+/// lets ground colour through at this scale, and reference photography shows
+/// cloud sitting at much lower contrast against the surface than a naive
+/// white-over-terrain composite gives you. At 0.86 the thickest cloud read as
+/// paint.
+const MAX_OPACITY: f64 = 0.70;
 
 /// Noise units above the coverage threshold at which cloud reaches
 /// [`MAX_OPACITY`].
@@ -91,7 +93,7 @@ const THICK_SPAN: f64 = 0.17;
 
 /// Opacity of the thinnest cloud that still counts as cloud, as a fraction of
 /// [`MAX_OPACITY`]. Above zero so a wisp is visible rather than a hole.
-const THIN_FLOOR: f64 = 0.34;
+const THIN_FLOOR: f64 = 0.26;
 
 /// Amplitude of the fine band folded into the shape noise before
 /// thresholding.
@@ -101,11 +103,13 @@ const THIN_FLOOR: f64 = 0.34;
 /// filaments, and it punches thin patches through the middle of a thick deck.
 /// Modulating afterwards would only have done the second, and would have left
 /// the outline as smooth as the coarse noise that drew it.
-const DETAIL_AMP: f64 = 0.20;
+const DETAIL_AMP: f64 = 0.24;
 
 /// Domain-warp amplitude for the cloud field, in sphere units. This is what
 /// turns fBm blobs into something with the sheared, banded look of weather.
-const WARP: f64 = 0.18;
+/// Raised alongside the drop in shape frequency: large masses need more shear
+/// before they stop reading as blobs, where small ones needed almost none.
+const WARP: f64 = 0.26;
 
 /// A world's cloud deck, sampled on the unit sphere.
 pub struct CloudField {
@@ -130,16 +134,29 @@ impl CloudField {
 
         let base = seed ^ 0xC10D_5EED_A1B2_C3D4;
         let shape_seed = (base ^ (base >> 32)) as u32;
-        // Frequency sets the size of a weather system. At 2.4 the coarsest
-        // octave spanned ~136 texels of a 2048-wide texture and the deck read
-        // as lumps of cotton; 5.5 puts the largest features nearer the
-        // thousand-kilometre scale real storm systems occupy, with the finest
-        // octave landing around 3 texels.
+        // Frequency sets the size of a weather system, and persistence sets
+        // whether the field is a few big masses or a lot of small ones.
+        //
+        // This went 2.4 → 5.5 once, because at 2.4 the deck read as lumps of
+        // cotton. That was the right reading of the wrong cause: what made
+        // them lumps was the binary threshold, which gave a large feature a
+        // hard edge and a uniform interior and so no internal structure at
+        // any size. With thickness continuous and a fine band fraying the
+        // outline, a large feature now has somewhere to put detail, and the
+        // small-and-everywhere field that 5.5 produced is the thing that
+        // looks wrong — real weather is a handful of systems with clear sky
+        // between them, not an even peppering.
+        //
+        // So: back down to a coarse base, and persistence *below* the usual
+        // 0.5 so amplitude falls off fast and the first octave dominates.
+        // That is what clumps it. High-frequency structure comes from
+        // `detail` instead, where it can be tuned without also breaking the
+        // field into confetti.
         let shape = Fbm::<Simplex>::new(shape_seed)
-            .set_octaves(5)
-            .set_frequency(5.5)
+            .set_octaves(4)
+            .set_frequency(2.6)
             .set_lacunarity(2.1)
-            .set_persistence(0.55);
+            .set_persistence(0.45);
         // Picks up where `shape` runs out (5.5 → ~53 across five octaves at
         // lacunarity 2.1), carrying the deck down to the scale of individual
         // cloud streets. Three octaves: this is one extra fBm evaluation on
