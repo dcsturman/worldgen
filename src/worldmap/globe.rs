@@ -156,8 +156,8 @@ fn cloud_tint(a: f64) -> (f64, f64, f64) {
 /// Real cloud from orbit is not paper-white, and letting thin cover read
 /// grey while thick cover reads bright is the only depth cue available to a
 /// layer that can't cast a directional shadow.
-const CLOUD_BRIGHT: (f64, f64, f64) = (243.0, 246.0, 250.0);
-const CLOUD_THIN: (f64, f64, f64) = (186.0, 194.0, 205.0);
+const CLOUD_BRIGHT: (f64, f64, f64) = (222.0, 229.0, 238.0);
+const CLOUD_THIN: (f64, f64, f64) = (166.0, 176.0, 189.0);
 /// How much cloud darkens the ground beneath it before it's composited over.
 ///
 /// This is the honest half of a cloud shadow. A directional drop-shadow would

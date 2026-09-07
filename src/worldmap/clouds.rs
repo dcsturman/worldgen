@@ -38,8 +38,8 @@ fn coverage_for_atmosphere(atmo: u8) -> f64 {
     match atmo {
         2..=3 => 0.10,   // very thin / thin — wisps
         4..=5 => 0.20,   // thin, breathable
-        6..=7 => 0.30,   // standard
-        8..=9 => 0.38,   // dense
+        6..=7 => 0.36,   // standard
+        8..=9 => 0.46,   // dense
         10..=11 => 0.72, // exotic / corrosive — heavy, permanent deck
         _ => 0.85,       // insidious and beyond — effectively overcast
     }
@@ -77,7 +77,7 @@ const EDGE: f64 = 0.13;
 /// cloud sitting at much lower contrast against the surface than a naive
 /// white-over-terrain composite gives you. At 0.86 the thickest cloud read as
 /// paint.
-const MAX_OPACITY: f64 = 0.70;
+const MAX_OPACITY: f64 = 0.82;
 
 /// Noise units above the coverage threshold at which cloud reaches
 /// [`MAX_OPACITY`].
@@ -89,11 +89,39 @@ const MAX_OPACITY: f64 = 0.70;
 /// opacity with how far the noise clears the cut makes thickness continuous:
 /// the fringe of a system is a veil you can see ground through, the core is
 /// solid, and everything between is between.
-const THICK_SPAN: f64 = 0.17;
+const THICK_SPAN: f64 = 0.30;
+
+/// Exponent on the thickness ramp.
+///
+/// This is the constant that decides what a cloud deck *looks* like, and it
+/// took three passes to find. A linear ramp spreads optical depth evenly
+/// across the covered sky, so the typical cloud is a mid-grey that halves the
+/// contrast of everything under it — the deck reads as a solid object even
+/// when its peak opacity is low, and lowering that peak just fogs the whole
+/// planet instead of thinning individual clouds.
+///
+/// Reference photography has a very different distribution: most cloud is a
+/// veil you can read coastlines and mountains straight through, and a small
+/// fraction is bright enough to hide the surface completely. An exponent
+/// above 1 produces exactly that — it pushes the bulk of the covered sky down
+/// toward transparent while leaving the top of the noise distribution free to
+/// reach full opacity.
+///
+/// So this and [`MAX_OPACITY`] pull in opposite directions on purpose: the
+/// peak is high so cores can be genuinely bright, and the exponent is what
+/// keeps almost nothing near that peak.
+const THICK_GAMMA: f64 = 2.0;
 
 /// Opacity of the thinnest cloud that still counts as cloud, as a fraction of
-/// [`MAX_OPACITY`]. Above zero so a wisp is visible rather than a hole.
-const THIN_FLOOR: f64 = 0.26;
+/// [`MAX_OPACITY`].
+///
+/// [`THICK_GAMMA`] on its own drives the fringe of every system to zero, and
+/// since it multiplies the presence ramp — which is *also* falling there —
+/// the two together erase the veil entirely and leave only the cores: a sky
+/// with a few bright clouds and nothing else in it. This floor puts the thin
+/// end back at a wash you can read terrain straight through, which is most of
+/// what the reference imagery actually shows.
+const THIN_FLOOR: f64 = 0.20;
 
 /// Amplitude of the fine band folded into the shape noise before
 /// thresholding.
@@ -206,7 +234,7 @@ impl CloudField {
         // light it stops. Multiplying them means a cloud fades in at its rim
         // *and* thins toward it, which is what gives the deck depth.
         let presence = smoothstep(cut - EDGE, cut + EDGE, n);
-        let thickness = ((n - cut) / THICK_SPAN).clamp(0.0, 1.0);
+        let thickness = ((n - cut) / THICK_SPAN).clamp(0.0, 1.0).powf(THICK_GAMMA);
         MAX_OPACITY * presence * (THIN_FLOOR + (1.0 - THIN_FLOOR) * thickness)
     }
 }
