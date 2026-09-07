@@ -134,8 +134,25 @@ const LIMB_FLOOR: f64 = 0.74;
 /// Clamp on the relief term — the ratio of perturbed to flat sun cosine.
 /// Unbounded it runs away at grazing incidence, which is physically a long
 /// shadow but numerically a divide by nearly zero.
-const RELIEF_MIN: f64 = 0.42;
-const RELIEF_MAX: f64 = 1.60;
+/// Kept fairly tight for the same reason as the gain above: a wide range
+/// only shows up as a wide range if the terrain rarely reaches it, and ours
+/// reaches it constantly.
+const RELIEF_MIN: f64 = 0.58;
+const RELIEF_MAX: f64 = 1.35;
+
+/// Sun cosine at which slope *brightening* reaches full strength; below this
+/// it tapers to nothing by the terminator.
+///
+/// Only the brightening is tapered. Both halves of the relief ratio come from
+/// the same division, but they are not equally true near the terminator: a
+/// slope turned away from a low sun really is in deep shadow, so the darkening
+/// stays, while a slope turned toward it cannot scatter more light than
+/// arrives — and with the ratio clamped at RELIEF_MAX and `day` still near 1
+/// just inside the terminator, that is exactly what it was doing. Sunward
+/// slopes came out at ~1.35x the brightness of the subsolar point, saturating
+/// against the clamp in flat blown-out patches, which is what turned
+/// vegetation greens into fluorescent lime along the day/night edge.
+const RELIEF_FULL_LIGHT: f64 = 0.35;
 /// How far toward the sun to look when sampling the deck for its shadow, in
 /// sphere radii. Stands in for cloud altitude: larger throws the shadow
 /// further from the cloud that casts it.
@@ -511,7 +528,16 @@ impl GlobeTextureJob {
                 // Gain is what makes ordinary terrain visible rather than
                 // pinned flat: typical per-texel deltas are ~0.002, so a
                 // slope only registers once it's scaled up by this much.
-                const SLOPE_GAIN: f64 = 140.0;
+                //
+                // It is a compromise across a wide range of slopes, and 140
+                // was set for the gentle end. Rough ground has per-texel
+                // deltas an order of magnitude larger, and at 140 those tilt
+                // the normal past 70 degrees — far enough that the lighting
+                // ratio pins against its clamps on almost every texel, which
+                // turns hill country into two-tone striping instead of
+                // shading. That is what put fluorescent lime bands across
+                // vegetated highlands.
+                const SLOPE_GAIN: f64 = 85.0;
                 let dx = (elev[ir] - elev[il]) as f64 * SLOPE_GAIN;
                 let dy = (elev[id] - elev[iu]) as f64 * SLOPE_GAIN;
                 // Tangent-space normal, in (east, north, up). Texture y runs
@@ -858,7 +884,23 @@ impl GlobeTexture {
                     } else {
                         1.0
                     };
-                    1.0 + (ratio - 1.0) * day
+                    // The two halves of the ratio are treated differently,
+                    // because near the terminator only one of them is true.
+                    //
+                    // Brightening fades with the light that causes it (see
+                    // RELIEF_FULL_LIGHT) and with `day`, since a slope cannot
+                    // scatter more than arrives. Shadow does neither: raking
+                    // light is where terrain relief is *most* visible, and
+                    // fading it out there — which the old `(ratio - 1) * day`
+                    // did to both halves alike — is what made ground approaching
+                    // the terminator look like smooth clay while the same
+                    // ground mid-disc showed its hills.
+                    let gain = ratio - 1.0;
+                    if gain > 0.0 {
+                        1.0 + gain * day * smoothstep(0.05, RELIEF_FULL_LIGHT, flat)
+                    } else {
+                        1.0 + gain
+                    }
                 };
 
                 // Cloud shadow: look the deck up again a little way toward the
