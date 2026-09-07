@@ -575,7 +575,17 @@ async fn handle_world_globe(
     // client-side (WebGL) globe rendering, with the starport coords in a
     // header. It has its own response shape, so branch before the image path.
     if format.as_deref() == Some("texture") {
-        return handle_world_globe_texture(stream, gcs, seed, uwp, name, head_only).await;
+        // `clouds=0`/`false`/`no`/`off` opts out of the baked cloud deck.
+        // Default on: the deck is derived from the UWP's atmosphere and
+        // hydrographics, so it carries information about the world. But it is
+        // composited into the surface RGB — there is nowhere to put a separate
+        // layer in a single texture — so a consumer that wants the bare
+        // surface, or composites its own weather, needs a way to say so.
+        let clouds = !matches!(
+            params.get("clouds").map(|s| s.trim().to_ascii_lowercase()).as_deref(),
+            Some("0") | Some("false") | Some("no") | Some("off")
+        );
+        return handle_world_globe_texture(stream, gcs, seed, uwp, name, head_only, clouds).await;
     }
 
     // Animated by default; `format=png`/`static` asks for a single frame.
@@ -632,13 +642,18 @@ async fn handle_world_globe_texture(
     uwp: &str,
     name: &str,
     head_only: bool,
+    clouds: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let cache_key = planet_cache_key(seed, uwp, name);
-    let cache_object = format!("{PLANET_CACHE_PREFIX}/globe-tex/{cache_key:016x}.png");
+    // Separate namespaces: the two variants are different images for the same
+    // world, so they must not share a cache slot.
+    let variant = if clouds { "globe-tex" } else { "globe-tex-clear" };
+    let cache_object = format!("{PLANET_CACHE_PREFIX}/{variant}/{cache_key:016x}.png");
 
     let uwp_owned = uwp.to_string();
     let name_owned = name.to_string();
-    let render = move || generate_globe_texture(seed, &uwp_owned, Some(&name_owned), TexSize::HIGH);
+    let render =
+        move || generate_globe_texture(seed, &uwp_owned, Some(&name_owned), TexSize::HIGH, clouds);
 
     match cache_or_render_bytes(stream, &gcs, &cache_object, render).await? {
         Some((bytes, status)) => {

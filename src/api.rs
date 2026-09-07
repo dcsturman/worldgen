@@ -201,9 +201,10 @@ pub fn generate_globe_texture(
     uwp: &str,
     name: Option<&str>,
     tex_size: TexSize,
+    clouds: bool,
 ) -> Result<Vec<u8>, WorldgenError> {
     let map: WorldMap = crate::worldmap::generate(uwp, seed, name)?;
-    crate::worldmap::render_globe_texture(&map, tex_size).map_err(WorldgenError::Render)
+    crate::worldmap::render_globe_texture(&map, tex_size, clouds).map_err(WorldgenError::Render)
 }
 
 /// One star's classification, as the convenience builder expects it.

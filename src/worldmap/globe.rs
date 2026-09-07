@@ -31,6 +31,7 @@ use std::f64::consts::{FRAC_PI_2, PI};
 
 use super::WorldMap;
 use super::climate;
+use super::clouds::CloudField;
 use super::colormap;
 use super::features::{CityTier, Feature};
 use super::grid::{SHEET_HEIGHT, SHEET_WIDTH, xy_to_sphere};
@@ -130,6 +131,25 @@ const TERM_WIDTH: f64 = 0.18;
 /// Limb-darkening floor: edge pixels keep this fraction of their brightness.
 const LIMB_FLOOR: f64 = 0.74;
 
+/// Cloud colour at full opacity, and the greyer tone thin cloud takes.
+/// Real cloud from orbit is not paper-white, and letting thin cover read
+/// grey while thick cover reads bright is the only depth cue available to a
+/// layer that can't cast a directional shadow.
+const CLOUD_BRIGHT: (f64, f64, f64) = (243.0, 246.0, 250.0);
+const CLOUD_THIN: (f64, f64, f64) = (186.0, 194.0, 205.0);
+/// How much cloud darkens the ground beneath it before it's composited over.
+///
+/// This is the honest half of a cloud shadow. A directional drop-shadow would
+/// need a sun direction, and the consumer warps this texture under a sun we
+/// don't control — so it would look right at one angle and wrong everywhere
+/// else. Ambient darkening under the deck is true regardless of where the sun
+/// is, and it stops the clouds reading as decals laid on the surface.
+const CLOUD_OCCLUSION: f64 = 0.35;
+/// How thoroughly cloud hides the city lights underneath it. Not total: a
+/// major conurbation glows through thin overcast, which is exactly what the
+/// real Black Marble imagery shows.
+const CLOUD_LIGHT_DIMMING: f64 = 0.80;
+
 /// Warm sodium-vapor tint of night-side city lights (added, not multiplied,
 /// on the dark side only).
 const CITY_LIGHT: (f64, f64, f64) = (255.0, 185.0, 110.0);
@@ -181,6 +201,7 @@ pub fn build_equirect_texture(map: &WorldMap, width: u32, height: u32) -> GlobeT
     let mut job = GlobeTextureJob::new(width, height);
     job.step_elevation(map);
     job.step_color(map);
+    job.populate_clouds(map);
     job.populate_city_lights(map);
     job.into_texture()
 }
@@ -207,6 +228,10 @@ pub struct GlobeTextureJob {
     /// Zero when the map has no tectonic field, which makes
     /// `rain_shadow_adjustment` a no-op — so `step_color` needs no branch.
     rain_shadow: Vec<f32>,
+    /// Per-texel cloud opacity, 0–255. Zero everywhere unless
+    /// [`Self::populate_clouds`] ran, and always zero on worlds with
+    /// atmosphere 0 or 1, which get no cloud field at all.
+    clouds: Vec<u8>,
     color: Vec<(u8, u8, u8)>,
     emissive: Vec<u8>,
     beacon: Vec<u8>,
@@ -220,6 +245,7 @@ impl GlobeTextureJob {
             height,
             elev: vec![0f32; n],
             rain_shadow: vec![0f32; n],
+            clouds: vec![0u8; n],
             color: vec![(0u8, 0u8, 0u8); n],
             emissive: vec![0u8; n],
             beacon: vec![0u8; n],
@@ -292,6 +318,28 @@ impl GlobeTextureJob {
         }
     }
 
+    /// Optional step (run before [`Self::into_texture`]): rasterize the
+    /// world's cloud deck. Coverage comes from the UWP's atmosphere and
+    /// hydrographics — see [`super::clouds`] — so the layer reports something
+    /// about the world rather than just prettying it up, and worlds that
+    /// can't have weather get nothing rather than a faint haze.
+    ///
+    /// Skipping it leaves a cloudless sky.
+    pub fn populate_clouds(&mut self, map: &WorldMap) {
+        let Some(field) = CloudField::from_uwp(&map.uwp, map.seed) else {
+            return;
+        };
+        let w = self.width as usize;
+        for ty in 0..self.height as usize {
+            let sy = (ty as f64 + 0.5) / self.height as f64 * SHEET_HEIGHT;
+            for tx in 0..w {
+                let sx = (tx as f64 + 0.5) / self.width as f64 * SHEET_WIDTH;
+                let a = field.opacity_at(&xy_to_sphere(sx, sy));
+                self.clouds[ty * w + tx] = (a * 255.0).round().clamp(0.0, 255.0) as u8;
+            }
+        }
+    }
+
     /// Optional step (run after [`Self::step_color`], before
     /// [`Self::into_texture`]): rasterize a "Black Marble" emissive map from
     /// the world's settlements. Each city splats a soft warm glow at its
@@ -342,6 +390,7 @@ impl GlobeTextureJob {
         let h = self.height as usize;
         let elev = &self.elev;
         let color = &self.color;
+        let mut emissive = self.emissive;
         let mut rgb = vec![0u8; w * h * 3];
         for ty in 0..h {
             for tx in 0..w {
@@ -387,6 +436,33 @@ impl GlobeTextureJob {
                 // `orbital::ocean_color` already brightens shallow water, and
                 // does it as a gradient over real depth.
 
+                // Clouds composite last: they sit above the terrain, so they
+                // go over the hillshade rather than under it.
+                let cloud = self.clouds[i];
+                if cloud > 0 {
+                    let a = cloud as f64 / 255.0;
+                    let shaded = 1.0 - CLOUD_OCCLUSION * a;
+                    let ground = (
+                        c.0 as f64 * shaded,
+                        c.1 as f64 * shaded,
+                        c.2 as f64 * shaded,
+                    );
+                    // Thin cloud greys, thick cloud brightens.
+                    let tint = (
+                        CLOUD_THIN.0 + (CLOUD_BRIGHT.0 - CLOUD_THIN.0) * a,
+                        CLOUD_THIN.1 + (CLOUD_BRIGHT.1 - CLOUD_THIN.1) * a,
+                        CLOUD_THIN.2 + (CLOUD_BRIGHT.2 - CLOUD_THIN.2) * a,
+                    );
+                    c = (
+                        (ground.0 + (tint.0 - ground.0) * a).round() as u8,
+                        (ground.1 + (tint.1 - ground.1) * a).round() as u8,
+                        (ground.2 + (tint.2 - ground.2) * a).round() as u8,
+                    );
+                    // The deck is above the cities too.
+                    let e = &mut emissive[i];
+                    *e = (*e as f64 * (1.0 - CLOUD_LIGHT_DIMMING * a)).round() as u8;
+                }
+
                 rgb[i * 3] = c.0;
                 rgb[i * 3 + 1] = c.1;
                 rgb[i * 3 + 2] = c.2;
@@ -396,7 +472,7 @@ impl GlobeTextureJob {
             width: self.width,
             height: self.height,
             rgb,
-            emissive: self.emissive,
+            emissive,
             beacon: self.beacon,
         }
     }
@@ -699,9 +775,25 @@ pub fn render_globe_apng(
 /// warps this texture per frame. Since the consumer warps it onto a sphere at
 /// whatever size it likes, the texture's resolution sets the ceiling on how
 /// sharp that render can be — see [`TexSize::HIGH`].
-pub fn render_globe_texture(map: &WorldMap, tex_size: TexSize) -> Result<Vec<u8>, String> {
+pub fn render_globe_texture(
+    map: &WorldMap,
+    tex_size: TexSize,
+    clouds: bool,
+) -> Result<Vec<u8>, String> {
     let (tex_w, tex_h) = (tex_size.w, tex_size.h);
-    let tex = build_equirect_texture(map, tex_w, tex_h);
+    let tex = if clouds {
+        build_equirect_texture(map, tex_w, tex_h)
+    } else {
+        // Same pipeline minus the cloud step. Consumers that composite their
+        // own weather, or want the bare surface, shouldn't be stuck with ours
+        // baked into the pixels — we can't ship it as a separate layer, so the
+        // only honest alternative is not shipping it.
+        let mut job = GlobeTextureJob::new(tex_w, tex_h);
+        job.step_elevation(map);
+        job.step_color(map);
+        job.populate_city_lights(map);
+        job.into_texture()
+    };
     let n = (tex_w as usize) * (tex_h as usize);
     let mut rgba = vec![0u8; n * 4];
     for i in 0..n {
@@ -959,7 +1051,7 @@ mod tests {
     fn globe_texture_is_rgba_at_requested_size_with_starport_chunk() {
         let map = super::super::generate("A788899-A", 1, None).unwrap();
         for tex_size in [TexSize::STANDARD, TexSize::HIGH] {
-            let bytes = render_globe_texture(&map, tex_size).unwrap();
+            let bytes = render_globe_texture(&map, tex_size, true).unwrap();
             assert_eq!(&bytes[0..8], b"\x89PNG\r\n\x1a\n");
             let dec = png::Decoder::new(std::io::Cursor::new(&bytes));
             let reader = dec.read_info().unwrap();
@@ -982,7 +1074,7 @@ mod tests {
     fn portless_globe_texture_has_no_starport_chunk() {
         let map = super::super::generate("X788899-A", 1, None).unwrap();
         assert!(starport_lonlat(&map).is_none());
-        let bytes = render_globe_texture(&map, TexSize::STANDARD).unwrap();
+        let bytes = render_globe_texture(&map, TexSize::STANDARD, true).unwrap();
         let dec = png::Decoder::new(std::io::Cursor::new(&bytes));
         let reader = dec.read_info().unwrap();
         assert!(
@@ -1028,7 +1120,10 @@ mod tests {
             // the real emissive alpha and Compression::Best. That number is
             // the one third-party consumers pay for on every cache miss, so
             // it's worth seeing next to the size bump whenever TexSize moves.
-            let served = render_globe_texture(&map, ts).unwrap();
+            //
+            // Note this builds the texture a second time, so don't read this
+            // test's wall time as the cost of one render — halve it.
+            let served = render_globe_texture(&map, ts, true).unwrap();
             eprintln!(
                 "wrote {path} ({} B opaque) — endpoint payload at {}x{}: {} B",
                 png.len(),

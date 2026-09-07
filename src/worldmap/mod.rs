@@ -17,6 +17,7 @@
 
 pub mod biome;
 pub mod climate;
+pub mod clouds;
 pub mod colormap;
 pub mod features;
 pub mod globe;
