@@ -285,6 +285,10 @@ pub struct GlobeTextureJob {
     beacon: Vec<u8>,
 }
 
+/// One entry of [`GlobeTextureJob::STEPS`]: a name for logging, and the
+/// method that runs that stage of the build.
+pub type BuildStep = (&'static str, fn(&mut GlobeTextureJob, &WorldMap));
+
 impl GlobeTextureJob {
     /// The build pipeline, in order.
     ///
@@ -299,7 +303,7 @@ impl GlobeTextureJob {
     /// list didn't. Nothing failed, nothing warned; the planet just had no
     /// weather. The names are for logging and for making a missed step
     /// legible in a diff.
-    pub const STEPS: [(&'static str, fn(&mut Self, &WorldMap)); 4] = [
+    pub const STEPS: [BuildStep; 4] = [
         ("elevation", Self::step_elevation),
         ("color", Self::step_color),
         ("clouds", Self::populate_clouds),

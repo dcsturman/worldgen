@@ -47,13 +47,29 @@ type Rgb = (f64, f64, f64);
 pub const C_SHELF: (u8, u8, u8) = (58, 104, 128);
 /// Open-ocean abyss. Deep water absorbs almost everything; the flat map's
 /// `C_DEEP_OCEAN` is a legible cartographic blue, this is a photographic one.
-pub const C_ABYSS: (u8, u8, u8) = (14, 32, 56);
+///
+/// "Photographic" is not the same as "dark", which is the trap this constant
+/// fell into once already. Most of a water world's ocean sits at full abyss
+/// (measured: 67–83% of ocean texels on typical worlds), so this colour *is*
+/// the ocean — it isn't a rare extreme reached in the middle of a basin. Set
+/// it too low and the planet reads as a lit continent floating on black.
+/// Deep water photographs as a saturated navy, not as absence of light: the
+/// tone curve below takes this to roughly (28, 54, 86) on screen, which is
+/// where open ocean actually lands in orbital photography.
+pub const C_ABYSS: (u8, u8, u8) = (26, 62, 104);
 
 /// Depth (in above-sea-level units, so negative elevation) at which the
 /// shelf gradient has fully saturated to [`C_ABYSS`]. Wide enough that a
 /// basin keeps a visible gradient across it rather than clipping to a flat
-/// black sheet a few texels off the coast.
-const SHELF_DEPTH: f64 = 0.20;
+/// sheet a few texels off the coast.
+///
+/// Sized against the actual depth distribution rather than guessed: ocean
+/// depth runs to about 1.0 with a median near 0.5, so at 0.20 roughly
+/// two-thirds of the water clipped to a single flat colour and all the
+/// bathymetry was crammed into a narrow coastal band. This spans enough of
+/// the distribution to keep a visible shelf without turning the open ocean
+/// pale — the `powf` in [`ocean_color`] still biases the ramp toward deep.
+const SHELF_DEPTH: f64 = 0.32;
 
 // ---- Biome control grid --------------------------------------------------
 
@@ -400,6 +416,32 @@ mod tests {
                 "depth cliff at {depth:.3}: {prev:?} -> {c:?}"
             );
             prev = c;
+        }
+    }
+
+    /// Open ocean must read as deep water, not as a hole in the planet.
+    ///
+    /// Most of a water world's surface is at full abyss, so this colour sets
+    /// the mood of the whole disc — and the globe then multiplies it by limb
+    /// darkening and the terminator sweep, so anything already near-black in
+    /// the albedo is black on screen across most of the visible hemisphere.
+    /// The first cut of this module shipped an abyss that did exactly that.
+    #[test]
+    fn open_ocean_is_deep_blue_not_black() {
+        // Well past SHELF_DEPTH, so this is the flat abyss colour.
+        for depth in [0.35, 0.6, 1.0] {
+            let c = surface_color(-depth, 0.5, 0.5, 0.0, 0.0);
+            let (r, g, b) = (c.0 as i32, c.1 as i32, c.2 as i32);
+            assert!(
+                b >= 70,
+                "abyss at depth {depth} is {c:?} — too dark to read as water                  once limb darkening is applied on top"
+            );
+            assert!(
+                b > g && g > r,
+                "abyss at depth {depth} is {c:?} — deep water must stay                  blue-dominant, not grey"
+            );
+            // ...and not so bright it stops being deep water.
+            assert!(b <= 130, "abyss at depth {depth} is {c:?} — too pale");
         }
     }
 
