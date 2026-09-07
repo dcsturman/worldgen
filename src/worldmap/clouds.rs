@@ -77,7 +77,7 @@ const EDGE: f64 = 0.13;
 /// cloud sitting at much lower contrast against the surface than a naive
 /// white-over-terrain composite gives you. At 0.86 the thickest cloud read as
 /// paint.
-const MAX_OPACITY: f64 = 0.70;
+pub const MAX_OPACITY: f64 = 0.70;
 
 /// Noise units above the coverage threshold at which cloud reaches
 /// [`MAX_OPACITY`].

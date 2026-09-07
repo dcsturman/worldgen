@@ -31,7 +31,7 @@ use std::f64::consts::{FRAC_PI_2, PI};
 
 use super::WorldMap;
 use super::climate;
-use super::clouds::CloudField;
+use super::clouds::{self, CloudField};
 use super::colormap;
 use super::features::{CityTier, Feature};
 use super::grid::{SHEET_HEIGHT, SHEET_WIDTH, xy_to_sphere};
@@ -162,10 +162,16 @@ const CLOUD_SHADOW: f64 = 0.55;
 
 /// Cloud colour for a given opacity: thin cover greys, thick cover brightens.
 fn cloud_tint(a: f64) -> (f64, f64, f64) {
+    // Normalized by the deck's own ceiling, not used raw. `a` tops out at
+    // CloudField::MAX_OPACITY, so keying the tint straight off it tied cloud
+    // *colour* to cloud *opacity*: lowering the ceiling to thin the deck also
+    // dragged the brightest cloud down the ramp toward grey, and the whole sky
+    // went overcast-coloured for a reason that had nothing to do with colour.
+    let t = (a / clouds::MAX_OPACITY).clamp(0.0, 1.0);
     (
-        CLOUD_THIN.0 + (CLOUD_BRIGHT.0 - CLOUD_THIN.0) * a,
-        CLOUD_THIN.1 + (CLOUD_BRIGHT.1 - CLOUD_THIN.1) * a,
-        CLOUD_THIN.2 + (CLOUD_BRIGHT.2 - CLOUD_THIN.2) * a,
+        CLOUD_THIN.0 + (CLOUD_BRIGHT.0 - CLOUD_THIN.0) * t,
+        CLOUD_THIN.1 + (CLOUD_BRIGHT.1 - CLOUD_THIN.1) * t,
+        CLOUD_THIN.2 + (CLOUD_BRIGHT.2 - CLOUD_THIN.2) * t,
     )
 }
 
@@ -173,8 +179,8 @@ fn cloud_tint(a: f64) -> (f64, f64, f64) {
 /// Real cloud from orbit is not paper-white, and letting thin cover read
 /// grey while thick cover reads bright is the only depth cue available to a
 /// layer that can't cast a directional shadow.
-const CLOUD_BRIGHT: (f64, f64, f64) = (222.0, 229.0, 238.0);
-const CLOUD_THIN: (f64, f64, f64) = (166.0, 176.0, 189.0);
+const CLOUD_BRIGHT: (f64, f64, f64) = (243.0, 246.0, 251.0);
+const CLOUD_THIN: (f64, f64, f64) = (198.0, 206.0, 217.0);
 /// How much cloud darkens the ground beneath it before it's composited over.
 ///
 /// This is the honest half of a cloud shadow. A directional drop-shadow would
