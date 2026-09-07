@@ -208,11 +208,14 @@ pub fn WorldMap() -> impl IntoView {
                 // "Page Unresponsive" dialog.
                 let mut job =
                     worldmap::GlobeTextureJob::new(worldmap::globe::TEX_W, worldmap::globe::TEX_H);
-                job.step_elevation(&map);
-                yield_to_browser().await;
-                job.step_color(&map);
-                job.populate_city_lights(&map);
-                yield_to_browser().await;
+                // Drive the pipeline from `STEPS` rather than listing the
+                // steps here: a step added to the builder then reaches this
+                // path automatically. Hand-listing them is how the cloud
+                // layer ended up server-only.
+                for (_, step) in worldmap::GlobeTextureJob::STEPS {
+                    step(&mut job, &map);
+                    yield_to_browser().await;
+                }
                 let tex = job.into_texture();
                 pending_render.set(false);
                 yield_to_browser().await;

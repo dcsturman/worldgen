@@ -244,10 +244,9 @@ pub struct GlobeTexture {
 /// "Page Unresponsive" dialog.
 pub fn build_equirect_texture(map: &WorldMap, width: u32, height: u32) -> GlobeTexture {
     let mut job = GlobeTextureJob::new(width, height);
-    job.step_elevation(map);
-    job.step_color(map);
-    job.populate_clouds(map);
-    job.populate_city_lights(map);
+    for (_, step) in GlobeTextureJob::STEPS {
+        step(&mut job, map);
+    }
     job.into_texture()
 }
 
@@ -258,6 +257,10 @@ pub fn build_equirect_texture(map: &WorldMap, width: u32, height: u32) -> GlobeT
 pub struct GlobeTextureJob {
     width: u32,
     height: u32,
+    /// Cleared by [`Self::without_clouds`]; makes the cloud step a no-op
+    /// rather than requiring callers to skip it, so there is exactly one
+    /// pipeline and no way to drop a step by omission.
+    clouds_enabled: bool,
     elev: Vec<f32>,
     /// Per-texel tectonic rain-shadow, computed in [`Self::step_elevation`]
     /// and consumed by [`Self::step_color`].
@@ -283,11 +286,40 @@ pub struct GlobeTextureJob {
 }
 
 impl GlobeTextureJob {
+    /// The build pipeline, in order.
+    ///
+    /// Callers that drive the job by hand — the WASM path yields to the
+    /// browser between steps so a slow machine can't trip "Page Unresponsive"
+    /// — should iterate this rather than listing the steps themselves, so a
+    /// step added here reaches them automatically.
+    ///
+    /// That is not hypothetical tidiness: the cloud layer shipped working on
+    /// the server and silently absent in the browser, because
+    /// `build_equirect_texture` gained the step and the frontend's hand-written
+    /// list didn't. Nothing failed, nothing warned; the planet just had no
+    /// weather. The names are for logging and for making a missed step
+    /// legible in a diff.
+    pub const STEPS: [(&'static str, fn(&mut Self, &WorldMap)); 4] = [
+        ("elevation", Self::step_elevation),
+        ("color", Self::step_color),
+        ("clouds", Self::populate_clouds),
+        ("city lights", Self::populate_city_lights),
+    ];
+
+    /// Build with no cloud deck. The step still runs in sequence, it just
+    /// does nothing — cheaper than clearing the channel afterwards, and it
+    /// keeps `STEPS` the single description of the pipeline.
+    pub fn without_clouds(mut self) -> Self {
+        self.clouds_enabled = false;
+        self
+    }
+
     pub fn new(width: u32, height: u32) -> Self {
         let n = (width as usize) * (height as usize);
         Self {
             width,
             height,
+            clouds_enabled: true,
             elev: vec![0f32; n],
             rain_shadow: vec![0f32; n],
             clouds: vec![0u8; n],
@@ -371,6 +403,9 @@ impl GlobeTextureJob {
     ///
     /// Skipping it leaves a cloudless sky.
     pub fn populate_clouds(&mut self, map: &WorldMap) {
+        if !self.clouds_enabled {
+            return;
+        }
         let Some(field) = CloudField::from_uwp(&map.uwp, map.seed) else {
             return;
         };
@@ -1009,14 +1044,14 @@ pub fn render_globe_texture(
     let tex = if clouds {
         build_equirect_texture(map, tex_w, tex_h)
     } else {
-        // Same pipeline minus the cloud step. Consumers that composite their
-        // own weather, or want the bare surface, shouldn't be stuck with ours
-        // baked into the pixels — we can't ship it as a separate layer, so the
-        // only honest alternative is not shipping it.
-        let mut job = GlobeTextureJob::new(tex_w, tex_h);
-        job.step_elevation(map);
-        job.step_color(map);
-        job.populate_city_lights(map);
+        // Same pipeline, with the cloud step neutered. Consumers that
+        // composite their own weather, or want the bare surface, shouldn't be
+        // stuck with ours baked into the pixels — this variant is a single
+        // flat image, so not shipping it is the only honest alternative.
+        let mut job = GlobeTextureJob::new(tex_w, tex_h).without_clouds();
+        for (_, step) in GlobeTextureJob::STEPS {
+            step(&mut job, map);
+        }
         job.into_texture()
     };
     // Flattened: this variant is a single image, so the consumer can't light
@@ -1225,6 +1260,60 @@ mod tests {
         let a = t.warp_frame(96, 0.0);
         let b = t.warp_frame(96, std::f64::consts::PI);
         assert_ne!(a, b, "opposite hemispheres should differ");
+    }
+
+    /// Every consumer of the builder must run the whole pipeline. This is the
+    /// regression test for the cloud layer shipping server-only: the frontend
+    /// hand-listed the steps, the list went stale when a step was added, and
+    /// nothing failed — the planet simply had no weather.
+    ///
+    /// Asserting on `STEPS` rather than on the rendered output because that is
+    /// the actual invariant: there is one description of the pipeline and
+    /// everyone drives it.
+    #[test]
+    fn pipeline_steps_all_run_and_contribute() {
+        let map = super::super::generate("A788899-A", 1, None).unwrap();
+
+        // Driving STEPS gives the same texture as the convenience builder.
+        let mut job = GlobeTextureJob::new(128, 64);
+        for (_, step) in GlobeTextureJob::STEPS {
+            step(&mut job, &map);
+        }
+        let stepped = job.into_texture();
+        let built = build_equirect_texture(&map, 128, 64);
+        assert_eq!(
+            stepped.rgb, built.rgb,
+            "STEPS must match build_equirect_texture"
+        );
+        assert_eq!(stepped.clouds, built.clouds);
+
+        // And each channel a step is responsible for is actually populated,
+        // so a step that silently no-ops gets caught here.
+        assert!(
+            built.clouds.iter().any(|&c| c > 0),
+            "an atmosphere-8 world must have a cloud deck"
+        );
+        assert!(
+            built.emissive.iter().any(|&e| e > 0),
+            "a populated world must have city lights"
+        );
+        assert!(
+            built.normal_xy.iter().any(|&[x, y]| x != 0 || y != 0),
+            "a world with land must have surface normals"
+        );
+
+        // without_clouds neuters exactly one step and nothing else.
+        let mut bare = GlobeTextureJob::new(128, 64).without_clouds();
+        for (_, step) in GlobeTextureJob::STEPS {
+            step(&mut bare, &map);
+        }
+        let bare = bare.into_texture();
+        assert!(
+            bare.clouds.iter().all(|&c| c == 0),
+            "without_clouds must leave the deck empty"
+        );
+        assert_eq!(bare.rgb, built.rgb, "clouds must not touch the albedo");
+        assert_eq!(bare.emissive, built.emissive);
     }
 
     /// The normal map is a lossy round trip — gradient to unit normal to two
