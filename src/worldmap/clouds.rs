@@ -77,6 +77,32 @@ const EDGE: f64 = 0.13;
 /// keeps the terrain we spent so long on from vanishing entirely.
 const MAX_OPACITY: f64 = 0.86;
 
+/// Noise units above the coverage threshold at which cloud reaches
+/// [`MAX_OPACITY`].
+///
+/// This is what stops the deck being a binary mask. Thresholding alone gives
+/// every covered texel the same opacity, so the sky comes out as flat white
+/// paper cut-outs with a soft edge — the interior of a cloud is exactly as
+/// opaque as its rim, which no photograph of a planet has ever shown. Ramping
+/// opacity with how far the noise clears the cut makes thickness continuous:
+/// the fringe of a system is a veil you can see ground through, the core is
+/// solid, and everything between is between.
+const THICK_SPAN: f64 = 0.17;
+
+/// Opacity of the thinnest cloud that still counts as cloud, as a fraction of
+/// [`MAX_OPACITY`]. Above zero so a wisp is visible rather than a hole.
+const THIN_FLOOR: f64 = 0.34;
+
+/// Amplitude of the fine band folded into the shape noise before
+/// thresholding.
+///
+/// Perturbing the field *before* the cut rather than modulating opacity after
+/// it does two jobs with one term: it frays the edges of a system into
+/// filaments, and it punches thin patches through the middle of a thick deck.
+/// Modulating afterwards would only have done the second, and would have left
+/// the outline as smooth as the coarse noise that drew it.
+const DETAIL_AMP: f64 = 0.20;
+
 /// Domain-warp amplitude for the cloud field, in sphere units. This is what
 /// turns fBm blobs into something with the sheared, banded look of weather.
 const WARP: f64 = 0.18;
@@ -84,6 +110,9 @@ const WARP: f64 = 0.18;
 /// A world's cloud deck, sampled on the unit sphere.
 pub struct CloudField {
     shape: Fbm<Simplex>,
+    /// Fine band that breaks up both the outline and the interior; see
+    /// [`DETAIL_AMP`].
+    detail: Fbm<Simplex>,
     warp: Fbm<Simplex>,
     /// Base coverage from the UWP, before latitude banding.
     coverage: f64,
@@ -111,6 +140,16 @@ impl CloudField {
             .set_frequency(5.5)
             .set_lacunarity(2.1)
             .set_persistence(0.55);
+        // Picks up where `shape` runs out (5.5 → ~53 across five octaves at
+        // lacunarity 2.1), carrying the deck down to the scale of individual
+        // cloud streets. Three octaves: this is one extra fBm evaluation on
+        // every texel of a 2048x1024 texture, so it buys detail with the
+        // fewest octaves that still read as fractal.
+        let detail = Fbm::<Simplex>::new(shape_seed.wrapping_add(0x85EB_CA6B))
+            .set_octaves(3)
+            .set_frequency(13.0)
+            .set_lacunarity(2.1)
+            .set_persistence(0.5);
         // Low octave count: the warp only has to shear the deck, and it costs
         // three evaluations per sample (one per axis).
         let warp = Fbm::<Simplex>::new(shape_seed.wrapping_add(0x2545_F491))
@@ -121,6 +160,7 @@ impl CloudField {
 
         Some(Self {
             shape,
+            detail,
             warp,
             coverage,
         })
@@ -139,11 +179,18 @@ impl CloudField {
         let wz = self.warp.get([p[0] - 19.2, p[1] + 6.3, p[2] - 5.8]);
         let q = [p[0] + WARP * wx, p[1] + WARP * wy, p[2] + WARP * wz];
 
-        let n = (0.5 + 0.5 * NOISE_GAIN * self.shape.get(q)).clamp(0.0, 1.0);
+        let raw = self.shape.get(q) + DETAIL_AMP * self.detail.get(q);
+        let n = (0.5 + 0.5 * NOISE_GAIN * raw).clamp(0.0, 1.0);
         // Threshold placed so roughly `target` of the sky ends up covered:
         // higher coverage pushes the cut down into the noise distribution.
         let cut = 1.0 - target;
-        MAX_OPACITY * smoothstep(cut - EDGE, cut + EDGE, n)
+        // Two independent factors: `presence` decides whether there is cloud
+        // here at all (and softens the boundary), `thickness` decides how much
+        // light it stops. Multiplying them means a cloud fades in at its rim
+        // *and* thins toward it, which is what gives the deck depth.
+        let presence = smoothstep(cut - EDGE, cut + EDGE, n);
+        let thickness = ((n - cut) / THICK_SPAN).clamp(0.0, 1.0);
+        MAX_OPACITY * presence * (THIN_FLOOR + (1.0 - THIN_FLOOR) * thickness)
     }
 }
 
@@ -192,6 +239,23 @@ mod tests {
         total / N as f64
     }
 
+    /// Share of the sphere carrying cloud thick enough to see, which is what
+    /// "cloud cover" means everywhere outside this file.
+    fn fraction_covered(f: &CloudField) -> f64 {
+        const N: usize = 4000;
+        let golden = std::f64::consts::PI * (3.0 - 5.0_f64.sqrt());
+        let mut covered = 0usize;
+        for i in 0..N {
+            let z = 1.0 - 2.0 * (i as f64 + 0.5) / N as f64;
+            let r = (1.0 - z * z).max(0.0).sqrt();
+            let theta = golden * i as f64;
+            if f.opacity_at(&[r * theta.cos(), r * theta.sin(), z]) > 0.05 * MAX_OPACITY {
+                covered += 1;
+            }
+        }
+        covered as f64 / N as f64
+    }
+
     /// Vacuum and trace atmospheres get no cloud layer at all — not a faint
     /// one. A world with no air cannot have weather, and the absence is
     /// information the viewer should be able to trust.
@@ -227,15 +291,30 @@ mod tests {
     }
 
     /// An Earth-like world should land in a believable range rather than
-    /// merely being "more than a desert" — real global cloud cover is ~0.40
-    /// hemispheric-mean, and the deck is partly transparent here, so anything
-    /// wildly outside this band means the thresholding drifted.
+    /// merely being "more than a desert" — anything wildly outside this band
+    /// means the thresholding drifted.
+    ///
+    /// Measured as *coverage* — the share of sky with cloud in it — not as
+    /// mean opacity. The two were interchangeable while every covered texel
+    /// sat at MAX_OPACITY, and stopped being so the moment thickness became
+    /// continuous: mean opacity now falls when clouds get thinner even though
+    /// exactly as much sky is cloudy, so it can no longer answer the question
+    /// this test is asking. Coverage is also the quantity the real-world
+    /// figure refers to.
     #[test]
     fn earthlike_coverage_is_plausible() {
-        let m = mean_opacity(&field("C886977-8").unwrap());
+        let f = field("C886977-8").unwrap();
+        let covered = fraction_covered(&f);
         assert!(
-            (0.10..=0.55).contains(&m),
-            "earth-like mean cloud opacity {m:.3} outside a plausible range"
+            (0.15..=0.60).contains(&covered),
+            "earth-like cloud coverage {covered:.3} outside a plausible range"
+        );
+        // Separately, the deck must still stop a meaningful amount of light —
+        // coverage by veil so thin it's invisible would pass the check above.
+        let m = mean_opacity(&f);
+        assert!(
+            m > 0.05,
+            "earth-like mean cloud opacity {m:.3} — the deck is invisible"
         );
     }
 
@@ -254,6 +333,50 @@ mod tests {
         assert!(
             storm_track > subtropics,
             "storm track ({storm_track:.3}) should out-cloud the subtropical highs ({subtropics:.3})"
+        );
+    }
+
+    /// The deck must have a range of thicknesses, not two states.
+    ///
+    /// With a plain threshold every covered texel came out at MAX_OPACITY, so
+    /// the sky read as flat white cut-outs laid on the planet — visually the
+    /// same failure as the paint-by-numbers terrain this whole effort exists
+    /// to remove. Assert that a good share of the cloud is genuinely partial:
+    /// see-through enough to show ground, opaque enough to be cloud.
+    #[test]
+    fn cloud_thickness_varies_rather_than_being_a_binary_mask() {
+        const N: usize = 20_000;
+        let f = field("C886977-8").unwrap();
+        let golden = std::f64::consts::PI * (3.0 - 5.0_f64.sqrt());
+        let (mut cloudy, mut partial, mut solid) = (0usize, 0usize, 0usize);
+        for i in 0..N {
+            let z = 1.0 - 2.0 * (i as f64 + 0.5) / N as f64;
+            let r = (1.0 - z * z).max(0.0).sqrt();
+            let theta = golden * i as f64;
+            let a = f.opacity_at(&[r * theta.cos(), r * theta.sin(), z]);
+            // Below 5% of peak is clear sky, not thin cloud.
+            if a > 0.05 * MAX_OPACITY {
+                cloudy += 1;
+                if a < 0.85 * MAX_OPACITY {
+                    partial += 1;
+                } else {
+                    solid += 1;
+                }
+            }
+        }
+        assert!(cloudy > 0, "world should have some cloud at all");
+        let share = partial as f64 / cloudy as f64;
+        assert!(
+            share > 0.5,
+            "only {:.0}% of cloud is partially transparent ({partial} partial, \
+             {solid} solid) — the deck is behaving like a binary mask",
+            share * 100.0
+        );
+        // ...and it must still reach real opacity somewhere, or the clouds
+        // are haze rather than weather.
+        assert!(
+            solid > 0,
+            "no cloud anywhere reaches near-peak opacity — the deck is all veil"
         );
     }
 

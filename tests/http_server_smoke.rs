@@ -51,12 +51,20 @@ async fn send_request(addr: std::net::SocketAddr, request: &str) -> Vec<u8> {
     let mut sock = TcpStream::connect(addr).await.unwrap();
     sock.write_all(request.as_bytes()).await.unwrap();
     let mut buf = Vec::new();
-    // 120 s budget — system PNGs at scale=2.0 finish in under a
-    // second, but /world renders take ~30 s in debug builds (the
-    // raster loop is the slow path and is unoptimized without
-    // --release). The timeout is the safety net for a wedged test,
-    // not the expected duration.
-    timeout(Duration::from_secs(120), sock.read_to_end(&mut buf))
+    // 600 s budget. System PNGs at scale=2.0 finish in under a second,
+    // but the planet renders are slow in debug builds (the raster and
+    // texture loops are float-heavy and unoptimized without --release):
+    // a flat /world takes ~30 s, and a globe — which builds a full
+    // 2048x1024 equirectangular texture, four times the texels the
+    // 1024x512 one used to — takes ~107 s on its own and longer when
+    // the harness runs several globe tests at once. The old 120 s
+    // budget sat right on top of that and the globe tests started
+    // failing as "response read timed out", which reads like a server
+    // hang rather than a build-profile cost.
+    //
+    // This is the safety net for a wedged test, not the expected
+    // duration; the tests take as long as they take either way.
+    timeout(Duration::from_secs(600), sock.read_to_end(&mut buf))
         .await
         .expect("response read timed out")
         .unwrap();
