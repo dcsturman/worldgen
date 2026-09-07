@@ -77,7 +77,7 @@ const EDGE: f64 = 0.13;
 /// cloud sitting at much lower contrast against the surface than a naive
 /// white-over-terrain composite gives you. At 0.86 the thickest cloud read as
 /// paint.
-pub const MAX_OPACITY: f64 = 0.70;
+pub const MAX_OPACITY: f64 = 0.62;
 
 /// Noise units above the coverage threshold at which cloud reaches
 /// [`MAX_OPACITY`].
@@ -110,7 +110,7 @@ const THICK_SPAN: f64 = 0.30;
 /// So this and [`MAX_OPACITY`] pull in opposite directions on purpose: the
 /// peak is high so cores can be genuinely bright, and the exponent is what
 /// keeps almost nothing near that peak.
-const THICK_GAMMA: f64 = 2.3;
+const THICK_GAMMA: f64 = 2.6;
 
 /// Opacity of the thinnest cloud that still counts as cloud, as a fraction of
 /// [`MAX_OPACITY`].
@@ -121,7 +121,7 @@ const THICK_GAMMA: f64 = 2.3;
 /// with a few bright clouds and nothing else in it. This floor puts the thin
 /// end back at a wash you can read terrain straight through, which is most of
 /// what the reference imagery actually shows.
-const THIN_FLOOR: f64 = 0.23;
+const THIN_FLOOR: f64 = 0.26;
 
 /// Amplitude of the fine band folded into the shape noise before
 /// thresholding.
