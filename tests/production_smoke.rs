@@ -463,6 +463,36 @@ async fn live_world_endpoint_caches_via_x_cache_header() {
     );
 }
 
+/// Fetch `url`, requiring a 200 and returning `(bytes, X-Cache)`.
+///
+/// The determinism tests below used to call `.bytes()` straight off the
+/// response and compare, which quietly turned any error page into "output".
+/// A scale-out event once served one call a 2.4 MB PNG and the next a
+/// 157-byte nginx 502 — nginx binds port 80 about two seconds before the
+/// render server binds 8081, and Cloud Run's TCP startup probe lets traffic
+/// in during that window — and the test reported it as broken determinism,
+/// which sent the investigation after a nonexistent RNG bug. Assert the
+/// status here so a 5xx says it is a 5xx.
+async fn fetch_ok(url: &str) -> (Vec<u8>, String) {
+    let resp = slow_client().get(url).send().await.unwrap();
+    let status = resp.status().as_u16();
+    let cache = resp
+        .headers()
+        .get("x-cache")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("(missing)")
+        .to_string();
+    let body = resp.bytes().await.unwrap().to_vec();
+    assert_eq!(
+        status,
+        200,
+        "{url} returned {status} ({} bytes) — the instance was not ready to \
+         serve, which is a deploy/startup problem, not a render problem",
+        body.len()
+    );
+    (body, cache)
+}
+
 #[tokio::test]
 #[ignore]
 async fn live_world_endpoint_is_byte_deterministic() {
@@ -471,28 +501,13 @@ async fn live_world_endpoint_is_byte_deterministic() {
     // the downsample step — bytes must be the same whether served from
     // cache or freshly generated.
     let url = format!("{}/api/world?{NORICUM_WORLD_QUERY}", base_url());
-    let a = slow_client()
-        .get(&url)
-        .send()
-        .await
-        .unwrap()
-        .bytes()
-        .await
-        .unwrap()
-        .to_vec();
-    let b = slow_client()
-        .get(&url)
-        .send()
-        .await
-        .unwrap()
-        .bytes()
-        .await
-        .unwrap()
-        .to_vec();
+    let (a, cache_a) = fetch_ok(&url).await;
+    let (b, cache_b) = fetch_ok(&url).await;
     assert_eq!(
         a,
         b,
-        "/world bytes drifted between calls — determinism broken (len {} vs {})",
+        "/world bytes drifted between calls — determinism broken \
+         (len {} [{cache_a}] vs {} [{cache_b}])",
         a.len(),
         b.len()
     );
@@ -504,25 +519,16 @@ async fn live_world_endpoint_canonical_scale_is_byte_deterministic() {
     // Same as above but at scale=2.0 — bypasses the downsample branch
     // and pins that the cached canonical bytes are served verbatim.
     let url = format!("{}/api/world?{NORICUM_WORLD_QUERY}&scale=2.0", base_url());
-    let a = slow_client()
-        .get(&url)
-        .send()
-        .await
-        .unwrap()
-        .bytes()
-        .await
-        .unwrap()
-        .to_vec();
-    let b = slow_client()
-        .get(&url)
-        .send()
-        .await
-        .unwrap()
-        .bytes()
-        .await
-        .unwrap()
-        .to_vec();
-    assert_eq!(a, b, "/world canonical bytes drifted between calls");
+    let (a, cache_a) = fetch_ok(&url).await;
+    let (b, cache_b) = fetch_ok(&url).await;
+    assert_eq!(
+        a,
+        b,
+        "/world canonical bytes drifted between calls \
+         (len {} [{cache_a}] vs {} [{cache_b}])",
+        a.len(),
+        b.len()
+    );
     // And verify the canonical dimensions while we're here.
     let w = u32::from_be_bytes([a[16], a[17], a[18], a[19]]);
     let h = u32::from_be_bytes([a[20], a[21], a[22], a[23]]);

@@ -222,6 +222,28 @@ async fn options_returns_204_with_cors_headers() {
     assert!(head.contains("Access-Control-Allow-Methods: GET, HEAD, OPTIONS"));
 }
 
+/// `/api/health` is what the Cloud Run startup probe should target.
+///
+/// The default probe is a TCP check on port 80, which nginx satisfies about
+/// two seconds before this server binds 8081 — so Cloud Run routes traffic
+/// to an instance whose upstream is still refusing connections, and those
+/// requests come back as nginx 502s. A probe that has to reach *this*
+/// handler can only pass once both processes are up.
+///
+/// It must stay dependency-free: no render, no GCS, no Firestore. A health
+/// check that can fail for a reason unrelated to "can this instance serve
+/// HTTP" is worse than none, because it takes healthy instances out of
+/// rotation.
+#[tokio::test]
+async fn health_endpoint_returns_200_without_touching_anything() {
+    let addr = spawn_http_server().await;
+    let req = format!("GET /api/health HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n");
+    let buf = send_request(addr, &req).await;
+    let (head, body) = split_response(&buf);
+    assert!(head.starts_with("HTTP/1.1 200 OK\r\n"), "head:\n{head}");
+    assert_eq!(String::from_utf8_lossy(&body), "ok");
+}
+
 #[tokio::test]
 async fn unknown_path_returns_404() {
     let addr = spawn_http_server().await;

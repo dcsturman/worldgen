@@ -170,6 +170,20 @@ pub async fn handle_http(
     // `/worldmap`, broke the SPA planet-viewer page, and silently
     // intercepted bare `/world` system-generator navigation.
     match path {
+        // Readiness, not liveness. Cloud Run's startup probe defaults to a
+        // TCP check on port 80 — which nginx satisfies the moment it binds,
+        // roughly two seconds before this server binds 8081. In that window
+        // the instance is "healthy" and receiving traffic, and every request
+        // gets nginx's 502 from a refused upstream connect. That is not
+        // hypothetical: it is what a scale-out event did to a production
+        // smoke test, whose byte-comparison then reported a 2.4 MB PNG and a
+        // 157-byte error page as "output drifted".
+        //
+        // Answering here means a probe against this path only passes once
+        // *both* processes are up, which is the actual condition for the
+        // instance being able to serve. Point the Cloud Run startup probe at
+        // it (httpGet /api/health) — a TCP probe on 80 cannot express this.
+        "/api/health" => write_simple(reader.get_mut(), 200, "OK", "ok").await,
         "/api/system" => handle_system(reader.get_mut(), query, head_only).await,
         "/api/system_svg" => handle_system_svg(reader.get_mut(), query, head_only).await,
         "/api/world" => handle_world(reader.get_mut(), query, head_only, gcs).await,
