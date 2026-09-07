@@ -42,6 +42,7 @@ use crate::api::{
     generate_planet_png_scaled, generate_system_png_scaled, generate_system_svg, parse_stellar,
 };
 use crate::backend::gcs::GcsClient;
+use crate::worldmap::{ApngTiming, TexSize};
 use crate::seed::{planet_seed, system_seed};
 use crate::systems::constraint::SystemConstraints;
 
@@ -592,12 +593,22 @@ async fn handle_world_globe(
                 &uwp_owned,
                 Some(&name_owned),
                 GLOBE_APNG_SIZE,
-                GLOBE_FRAMES,
-                GLOBE_DELAY_NUM,
-                GLOBE_DELAY_DEN,
+                ApngTiming {
+                    frames: GLOBE_FRAMES,
+                    delay_num: GLOBE_DELAY_NUM,
+                    delay_den: GLOBE_DELAY_DEN,
+                },
+                TexSize::HIGH,
             )
         } else {
-            generate_globe_png(seed, &uwp_owned, Some(&name_owned), GLOBE_PNG_SIZE, 0.0)
+            generate_globe_png(
+                seed,
+                &uwp_owned,
+                Some(&name_owned),
+                GLOBE_PNG_SIZE,
+                0.0,
+                TexSize::HIGH,
+            )
         }
     };
 
@@ -627,7 +638,7 @@ async fn handle_world_globe_texture(
 
     let uwp_owned = uwp.to_string();
     let name_owned = name.to_string();
-    let render = move || generate_globe_texture(seed, &uwp_owned, Some(&name_owned));
+    let render = move || generate_globe_texture(seed, &uwp_owned, Some(&name_owned), TexSize::HIGH);
 
     match cache_or_render_bytes(stream, &gcs, &cache_object, render).await? {
         Some((bytes, status)) => {

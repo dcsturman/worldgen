@@ -12,7 +12,7 @@
 
 use crate::systems::constraint::{Constraint, ConstraintError, SystemConstraints};
 use crate::systems::system::{StarOrbit, StarSize, StarType, System};
-use crate::worldmap::{MapError, WorldMap};
+use crate::worldmap::{ApngTiming, MapError, TexSize, WorldMap};
 
 /// Unified error type for the public library API.
 ///
@@ -164,9 +164,10 @@ pub fn generate_globe_png(
     name: Option<&str>,
     size: u32,
     spin: f64,
+    tex_size: TexSize,
 ) -> Result<Vec<u8>, WorldgenError> {
     let map: WorldMap = crate::worldmap::generate(uwp, seed, name)?;
-    crate::worldmap::render_globe_png(&map, size, spin).map_err(WorldgenError::Render)
+    crate::worldmap::render_globe_png(&map, size, spin, tex_size).map_err(WorldgenError::Render)
 }
 
 /// Generate a **spinning globe** of a planet surface as an animated PNG
@@ -174,18 +175,17 @@ pub fn generate_globe_png(
 /// `delay_num/delay_den` seconds, looping forever. APNG is a PNG (served as
 /// `image/png`) and animates natively in every modern browser.
 ///
-/// Deterministic for fixed `(seed, uwp, name, size, frames, delay)`.
+/// Deterministic for fixed `(seed, uwp, name, size, timing, tex_size)`.
 pub fn generate_globe_apng(
     seed: u64,
     uwp: &str,
     name: Option<&str>,
     size: u32,
-    frames: u32,
-    delay_num: u16,
-    delay_den: u16,
+    timing: ApngTiming,
+    tex_size: TexSize,
 ) -> Result<Vec<u8>, WorldgenError> {
     let map: WorldMap = crate::worldmap::generate(uwp, seed, name)?;
-    crate::worldmap::render_globe_apng(&map, size, frames, delay_num, delay_den)
+    crate::worldmap::render_globe_apng(&map, size, timing, tex_size)
         .map_err(WorldgenError::Render)
 }
 
@@ -200,9 +200,10 @@ pub fn generate_globe_texture(
     seed: u64,
     uwp: &str,
     name: Option<&str>,
+    tex_size: TexSize,
 ) -> Result<Vec<u8>, WorldgenError> {
     let map: WorldMap = crate::worldmap::generate(uwp, seed, name)?;
-    crate::worldmap::render_globe_texture(&map).map_err(WorldgenError::Render)
+    crate::worldmap::render_globe_texture(&map, tex_size).map_err(WorldgenError::Render)
 }
 
 /// One star's classification, as the convenience builder expects it.

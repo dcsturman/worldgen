@@ -44,6 +44,58 @@ pub const TEX_W: u32 = 1024;
 /// Default equirectangular texture height (latitude).
 pub const TEX_H: u32 = 512;
 
+/// Equirectangular texture dimensions to build a globe at.
+///
+/// Explicit at every call site rather than a single global constant, because
+/// the two consumers want different answers and neither should silently
+/// inherit the other's. The server caches its renders, so it can afford
+/// [`TexSize::HIGH`]; the frontend builds the texture in WASM on the user's
+/// machine every time a world is generated, where 4× the texels is 4× the
+/// wait, and its 460-px canvas cannot resolve them anyway.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TexSize {
+    pub w: u32,
+    pub h: u32,
+}
+
+impl TexSize {
+    /// 1024×512 — what every consumer got before, and still what the
+    /// in-browser path uses.
+    pub const STANDARD: Self = Self {
+        w: TEX_W,
+        h: TEX_H,
+    };
+    /// 2048×1024. A globe disc of side `n` shows a hemisphere across `n`
+    /// pixels, i.e. half the texture width, so 1024 gives only about one texel
+    /// per pixel at the sub-viewer point and less toward the limb — which was
+    /// throwing away the fractal coastline and fine relief detail before it
+    /// ever reached a viewer.
+    pub const HIGH: Self = Self { w: 2048, h: 1024 };
+}
+
+/// Animation timing for a spinning-globe APNG: how many frames make up the
+/// full turn, and how long each is held (`delay_num / delay_den` seconds).
+///
+/// Grouped rather than passed as three loose numbers because they only ever
+/// mean anything together — and two adjacent `u16`s with no names between
+/// them at a call site is a swap waiting to happen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ApngTiming {
+    pub frames: u32,
+    pub delay_num: u16,
+    pub delay_den: u16,
+}
+
+impl ApngTiming {
+    /// [`DEFAULT_FRAMES`] frames at 1/5 s each — one full turn in about seven
+    /// seconds.
+    pub const DEFAULT: Self = Self {
+        frames: DEFAULT_FRAMES,
+        delay_num: 1,
+        delay_den: 5,
+    };
+}
+
 /// Default number of frames in a full-rotation flipbook. 36 frames = one
 /// frame per 10° of spin — smooth enough to read as continuous rotation
 /// while keeping the APNG small.
@@ -598,8 +650,13 @@ fn smoothstep(e0: f64, e1: f64, x: f64) -> f64 {
 
 /// Render a single static globe frame for `map` as a PNG, viewed at sub-viewer
 /// longitude `spin` (radians). `size` is the output square's side in pixels.
-pub fn render_globe_png(map: &WorldMap, size: u32, spin: f64) -> Result<Vec<u8>, String> {
-    let tex = build_equirect_texture(map, TEX_W, TEX_H);
+pub fn render_globe_png(
+    map: &WorldMap,
+    size: u32,
+    spin: f64,
+    tex_size: TexSize,
+) -> Result<Vec<u8>, String> {
+    let tex = build_equirect_texture(map, tex_size.w, tex_size.h);
     let frame = tex.warp_frame(size, spin);
     encode_png_rgba(&frame, size, size)
 }
@@ -612,13 +669,17 @@ pub fn render_globe_png(map: &WorldMap, size: u32, spin: f64) -> Result<Vec<u8>,
 pub fn render_globe_apng(
     map: &WorldMap,
     size: u32,
-    frames: u32,
-    delay_num: u16,
-    delay_den: u16,
+    timing: ApngTiming,
+    tex_size: TexSize,
 ) -> Result<Vec<u8>, String> {
     use std::f64::consts::PI;
+    let ApngTiming {
+        frames,
+        delay_num,
+        delay_den,
+    } = timing;
     let frames = frames.max(1);
-    let tex = build_equirect_texture(map, TEX_W, TEX_H);
+    let tex = build_equirect_texture(map, tex_size.w, tex_size.h);
     let buffers: Vec<Vec<u8>> = (0..frames)
         .map(|f| tex.warp_frame(size, f as f64 / frames as f64 * 2.0 * PI))
         .collect();
@@ -631,14 +692,17 @@ pub fn render_globe_apng(
 /// colour, the alpha channel carries the night-side city-light emissive
 /// intensity. If the world has a starport, its texture coordinates
 /// `(lon, lat)` in radians are embedded as a `Starport` tEXt chunk so the
-/// consumer can draw the beacon. The image is [`TEX_W`]×[`TEX_H`].
+/// consumer can draw the beacon. The image is `tex_size.w`×`tex_size.h`.
 ///
 /// This is the payload for `/api/world?projection=globe&format=texture`: the
 /// expensive generation happens here (server-side, cached); the client only
-/// warps this texture per frame.
-pub fn render_globe_texture(map: &WorldMap) -> Result<Vec<u8>, String> {
-    let tex = build_equirect_texture(map, TEX_W, TEX_H);
-    let n = (TEX_W as usize) * (TEX_H as usize);
+/// warps this texture per frame. Since the consumer warps it onto a sphere at
+/// whatever size it likes, the texture's resolution sets the ceiling on how
+/// sharp that render can be — see [`TexSize::HIGH`].
+pub fn render_globe_texture(map: &WorldMap, tex_size: TexSize) -> Result<Vec<u8>, String> {
+    let (tex_w, tex_h) = (tex_size.w, tex_size.h);
+    let tex = build_equirect_texture(map, tex_w, tex_h);
+    let n = (tex_w as usize) * (tex_h as usize);
     let mut rgba = vec![0u8; n * 4];
     for i in 0..n {
         rgba[i * 4] = tex.rgb[i * 3];
@@ -649,7 +713,7 @@ pub fn render_globe_texture(map: &WorldMap) -> Result<Vec<u8>, String> {
 
     let mut out = Vec::new();
     {
-        let mut enc = png::Encoder::new(&mut out, TEX_W, TEX_H);
+        let mut enc = png::Encoder::new(&mut out, tex_w, tex_h);
         enc.set_color(png::ColorType::Rgba);
         enc.set_depth(png::BitDepth::Eight);
         enc.set_compression(png::Compression::Best);
@@ -843,7 +907,7 @@ mod tests {
     #[test]
     fn static_globe_png_decodes() {
         let map = super::super::generate("A788899-A", 1, None).unwrap();
-        let bytes = render_globe_png(&map, 128, 0.0).unwrap();
+        let bytes = render_globe_png(&map, 128, 0.0, TexSize::STANDARD).unwrap();
         assert_eq!(&bytes[0..8], b"\x89PNG\r\n\x1a\n");
         let dec = png::Decoder::new(std::io::Cursor::new(&bytes));
         let reader = dec.read_info().unwrap();
@@ -854,7 +918,17 @@ mod tests {
     #[test]
     fn apng_is_animated_with_expected_frame_count() {
         let map = super::super::generate("A788899-A", 1, None).unwrap();
-        let bytes = render_globe_apng(&map, 96, 8, 1, 10).unwrap();
+        let bytes = render_globe_apng(
+            &map,
+            96,
+            ApngTiming {
+                frames: 8,
+                delay_num: 1,
+                delay_den: 10,
+            },
+            TexSize::STANDARD,
+        )
+        .unwrap();
         assert_eq!(&bytes[0..8], b"\x89PNG\r\n\x1a\n");
         let dec = png::Decoder::new(std::io::Cursor::new(&bytes));
         let reader = dec.read_info().unwrap();
@@ -877,32 +951,38 @@ mod tests {
         assert_eq!(static_frame, apng_first);
     }
 
+    /// The texture comes out at whatever [`TexSize`] was asked for, and both
+    /// sizes carry the same metadata — the server renders `HIGH` while the
+    /// in-browser path stays on `STANDARD`, so neither may quietly lose the
+    /// starport chunk or change colour type.
     #[test]
-    fn globe_texture_is_rgba_1024x512_with_starport_chunk() {
+    fn globe_texture_is_rgba_at_requested_size_with_starport_chunk() {
         let map = super::super::generate("A788899-A", 1, None).unwrap();
-        let bytes = render_globe_texture(&map).unwrap();
-        assert_eq!(&bytes[0..8], b"\x89PNG\r\n\x1a\n");
-        let dec = png::Decoder::new(std::io::Cursor::new(&bytes));
-        let reader = dec.read_info().unwrap();
-        let info = reader.info();
-        assert_eq!((info.width, info.height), (TEX_W, TEX_H));
-        assert_eq!(info.color_type, png::ColorType::Rgba);
-        // An A-port world embeds its starport coords as a tEXt chunk, and
-        // starport_lonlat reports the same presence.
-        assert!(starport_lonlat(&map).is_some());
-        assert!(
-            info.uncompressed_latin1_text
-                .iter()
-                .any(|c| c.keyword == "Starport"),
-            "A-port texture should carry a Starport chunk"
-        );
+        for tex_size in [TexSize::STANDARD, TexSize::HIGH] {
+            let bytes = render_globe_texture(&map, tex_size).unwrap();
+            assert_eq!(&bytes[0..8], b"\x89PNG\r\n\x1a\n");
+            let dec = png::Decoder::new(std::io::Cursor::new(&bytes));
+            let reader = dec.read_info().unwrap();
+            let info = reader.info();
+            assert_eq!((info.width, info.height), (tex_size.w, tex_size.h));
+            assert_eq!(info.color_type, png::ColorType::Rgba);
+            // An A-port world embeds its starport coords as a tEXt chunk, and
+            // starport_lonlat reports the same presence.
+            assert!(starport_lonlat(&map).is_some());
+            assert!(
+                info.uncompressed_latin1_text
+                    .iter()
+                    .any(|c| c.keyword == "Starport"),
+                "A-port texture should carry a Starport chunk at {tex_size:?}"
+            );
+        }
     }
 
     #[test]
     fn portless_globe_texture_has_no_starport_chunk() {
         let map = super::super::generate("X788899-A", 1, None).unwrap();
         assert!(starport_lonlat(&map).is_none());
-        let bytes = render_globe_texture(&map).unwrap();
+        let bytes = render_globe_texture(&map, TexSize::STANDARD).unwrap();
         let dec = png::Decoder::new(std::io::Cursor::new(&bytes));
         let reader = dec.read_info().unwrap();
         assert!(
@@ -935,15 +1015,27 @@ mod tests {
     fn dump_globe_texture() {
         for (name, uwp) in [("garden", "A788899-A"), ("earth", "C886977-8")] {
             let map = super::super::generate(uwp, 1, None).unwrap();
-            let tex = build_equirect_texture(&map, TEX_W, TEX_H);
+            let ts = TexSize::HIGH;
+            let tex = build_equirect_texture(&map, ts.w, ts.h);
             let mut rgba = Vec::with_capacity(tex.rgb.len() / 3 * 4);
             for px in tex.rgb.as_chunks::<3>().0 {
                 rgba.extend_from_slice(&[px[0], px[1], px[2], 255]);
             }
-            let png = encode_png_rgba(&rgba, TEX_W, TEX_H).unwrap();
+            let png = encode_png_rgba(&rgba, ts.w, ts.h).unwrap();
             let path = format!("/tmp/globe_tex_{name}.png");
             std::fs::write(&path, &png).unwrap();
-            eprintln!("wrote {path} ({} B)", png.len());
+            // Also report what the endpoint actually ships: same pixels, but
+            // the real emissive alpha and Compression::Best. That number is
+            // the one third-party consumers pay for on every cache miss, so
+            // it's worth seeing next to the size bump whenever TexSize moves.
+            let served = render_globe_texture(&map, ts).unwrap();
+            eprintln!(
+                "wrote {path} ({} B opaque) — endpoint payload at {}x{}: {} B",
+                png.len(),
+                ts.w,
+                ts.h,
+                served.len()
+            );
         }
     }
 
@@ -961,8 +1053,8 @@ mod tests {
         ];
         for (name, uwp) in cases {
             let map = super::super::generate(uwp, 1, None).unwrap();
-            let png = render_globe_png(&map, 512, 0.0).unwrap();
-            let apng = render_globe_apng(&map, 400, DEFAULT_FRAMES, 1, 5).unwrap();
+            let png = render_globe_png(&map, 512, 0.0, TexSize::HIGH).unwrap();
+            let apng = render_globe_apng(&map, 400, ApngTiming::DEFAULT, TexSize::HIGH).unwrap();
             std::fs::write(format!("/tmp/globe_{name}.png"), &png).unwrap();
             std::fs::write(format!("/tmp/globe_{name}.apng.png"), &apng).unwrap();
             eprintln!(

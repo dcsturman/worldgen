@@ -257,7 +257,15 @@ pub fn WorldMap() -> impl IntoView {
                     yield_to_browser().await;
                     if is_globe {
                         // Match the server's spinning-globe defaults.
-                        worldmap::render_globe_apng(&map, GLOBE_DISPLAY_SIZE, 36, 1, 5)
+                        // STANDARD, not HIGH: this build runs in WASM on the user's own
+                        // machine while they wait, and the download matches
+                        // what the live canvas beside it is showing.
+                        worldmap::render_globe_apng(
+                            &map,
+                            GLOBE_DISPLAY_SIZE,
+                            worldmap::ApngTiming::DEFAULT,
+                            worldmap::TexSize::STANDARD,
+                        )
                     } else {
                         worldmap::render_png(&map)
                     }
