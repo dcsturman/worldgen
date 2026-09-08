@@ -116,6 +116,11 @@ docker buildx build --platform linux/amd64 \
 # promises the user while it spins. 4 vCPU requires at least 2 GiB on
 # Cloud Run, hence the memory. Leaving these implicit would mean a future
 # deploy from a fresh checkout silently reverting the fix.
+#
+# --max-instances is not a preference: us-central1 allows this project 200
+# total vCPU, and 4 vCPU x the previous cap of 100 instances asked for 400.
+# The deploy is rejected outright without this. If the CPU count ever goes
+# up again, this has to come down to match, or the quota has to go up.
 gcloud run deploy worldgen \
   --image gcr.io/$GCP_PROJECT/worldgen \
   --region us-central1 \
@@ -123,4 +128,5 @@ gcloud run deploy worldgen \
   --allow-unauthenticated \
   --cpu 4 \
   --memory 2Gi \
+  --max-instances 50 \
   --set-env-vars GCP_PROJECT=$GCP_PROJECT,FIRESTORE_DATABASE_ID=worldgen,GCS_BUCKET=$GCS_BUCKET,RUST_LOG=info
