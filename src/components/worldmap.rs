@@ -208,11 +208,14 @@ pub fn WorldMap() -> impl IntoView {
                 // "Page Unresponsive" dialog.
                 let mut job =
                     worldmap::GlobeTextureJob::new(worldmap::globe::TEX_W, worldmap::globe::TEX_H);
-                job.step_elevation(&map);
-                yield_to_browser().await;
-                job.step_color(&map);
-                job.populate_city_lights(&map);
-                yield_to_browser().await;
+                // Drive the pipeline from `STEPS` rather than listing the
+                // steps here: a step added to the builder then reaches this
+                // path automatically. Hand-listing them is how the cloud
+                // layer ended up server-only.
+                for (_, step) in worldmap::GlobeTextureJob::STEPS {
+                    step(&mut job, &map);
+                    yield_to_browser().await;
+                }
                 let tex = job.into_texture();
                 pending_render.set(false);
                 yield_to_browser().await;
@@ -257,7 +260,15 @@ pub fn WorldMap() -> impl IntoView {
                     yield_to_browser().await;
                     if is_globe {
                         // Match the server's spinning-globe defaults.
-                        worldmap::render_globe_apng(&map, GLOBE_DISPLAY_SIZE, 36, 1, 5)
+                        // STANDARD, not HIGH: this build runs in WASM on the user's own
+                        // machine while they wait, and the download matches
+                        // what the live canvas beside it is showing.
+                        worldmap::render_globe_apng(
+                            &map,
+                            GLOBE_DISPLAY_SIZE,
+                            worldmap::ApngTiming::DEFAULT,
+                            worldmap::TexSize::STANDARD,
+                        )
                     } else {
                         worldmap::render_png(&map)
                     }

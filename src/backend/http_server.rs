@@ -42,6 +42,7 @@ use crate::api::{
     generate_planet_png_scaled, generate_system_png_scaled, generate_system_svg, parse_stellar,
 };
 use crate::backend::gcs::GcsClient;
+use crate::worldmap::{ApngTiming, TexSize};
 use crate::seed::{planet_seed, system_seed};
 use crate::systems::constraint::SystemConstraints;
 
@@ -57,9 +58,22 @@ use crate::systems::constraint::SystemConstraints;
 const PLANET_CANONICAL_SCALE: f32 = 2.0;
 
 /// GCS object-path prefix for cached planet PNGs. The version segment
-/// (`v1`) lets us bust the cache on a worldgen version bump by
+/// (`v2`) lets us bust the cache on a worldgen version bump by
 /// changing the prefix instead of deleting objects.
-const PLANET_CACHE_PREFIX: &str = "world/v1";
+///
+/// The cache key is `(seed, uwp, name)` — pure world *identity*, with nothing
+/// about the generator that produced the image — so a change to worldgen does
+/// not invalidate anything on its own. Without a bump, a world someone had
+/// already viewed would keep serving its old terrain indefinitely while a
+/// world nobody had opened yet would render with the new: the same world
+/// showing up as two different planets depending on view history.
+///
+/// Bumped to `v2` for the terrain changes of 2026-09-06 — continuous globe
+/// colormap, high-frequency relief, fractal coastlines via a fine domain-warp
+/// band, and the plate-bias fix that removed the straight channels along
+/// continental plate boundaries. Old `world/v1/` objects are orphaned rather
+/// than deleted, so this is reversible by putting the prefix back.
+const PLANET_CACHE_PREFIX: &str = "world/v2";
 
 /// Globe (orthographic projection) render parameters for `?projection=globe`.
 /// Fixed server-side so the cache key stays `(seed, uwp, name)` per variant
@@ -156,6 +170,20 @@ pub async fn handle_http(
     // `/worldmap`, broke the SPA planet-viewer page, and silently
     // intercepted bare `/world` system-generator navigation.
     match path {
+        // Readiness, not liveness. Cloud Run's startup probe defaults to a
+        // TCP check on port 80 — which nginx satisfies the moment it binds,
+        // roughly two seconds before this server binds 8081. In that window
+        // the instance is "healthy" and receiving traffic, and every request
+        // gets nginx's 502 from a refused upstream connect. That is not
+        // hypothetical: it is what a scale-out event did to a production
+        // smoke test, whose byte-comparison then reported a 2.4 MB PNG and a
+        // 157-byte error page as "output drifted".
+        //
+        // Answering here means a probe against this path only passes once
+        // *both* processes are up, which is the actual condition for the
+        // instance being able to serve. Point the Cloud Run startup probe at
+        // it (httpGet /api/health) — a TCP probe on 80 cannot express this.
+        "/api/health" => write_simple(reader.get_mut(), 200, "OK", "ok").await,
         "/api/system" => handle_system(reader.get_mut(), query, head_only).await,
         "/api/system_svg" => handle_system_svg(reader.get_mut(), query, head_only).await,
         "/api/world" => handle_world(reader.get_mut(), query, head_only, gcs).await,
@@ -540,7 +568,7 @@ async fn handle_world(
 /// Renders the planet as an orthographic globe — either a static PNG
 /// (`format=png`/`static`) or a spinning animated PNG (default, or
 /// `format=apng`). Both are cached in GCS under a projection-specific path
-/// (`world/v1/globe[-anim]/…`) so they never collide with the flat map's
+/// (`world/v2/globe[-anim]/…`) so they never collide with the flat map's
 /// cache. The render size and frame count are fixed server-side
 /// ([`GLOBE_PNG_SIZE`] etc.) so the cache key stays `(seed, uwp, name)` per
 /// variant.
@@ -561,7 +589,17 @@ async fn handle_world_globe(
     // client-side (WebGL) globe rendering, with the starport coords in a
     // header. It has its own response shape, so branch before the image path.
     if format.as_deref() == Some("texture") {
-        return handle_world_globe_texture(stream, gcs, seed, uwp, name, head_only).await;
+        // `clouds=0`/`false`/`no`/`off` opts out of the baked cloud deck.
+        // Default on: the deck is derived from the UWP's atmosphere and
+        // hydrographics, so it carries information about the world. But it is
+        // composited into the surface RGB — there is nowhere to put a separate
+        // layer in a single texture — so a consumer that wants the bare
+        // surface, or composites its own weather, needs a way to say so.
+        let clouds = !matches!(
+            params.get("clouds").map(|s| s.trim().to_ascii_lowercase()).as_deref(),
+            Some("0") | Some("false") | Some("no") | Some("off")
+        );
+        return handle_world_globe_texture(stream, gcs, seed, uwp, name, head_only, clouds).await;
     }
 
     // Animated by default; `format=png`/`static` asks for a single frame.
@@ -579,12 +617,22 @@ async fn handle_world_globe(
                 &uwp_owned,
                 Some(&name_owned),
                 GLOBE_APNG_SIZE,
-                GLOBE_FRAMES,
-                GLOBE_DELAY_NUM,
-                GLOBE_DELAY_DEN,
+                ApngTiming {
+                    frames: GLOBE_FRAMES,
+                    delay_num: GLOBE_DELAY_NUM,
+                    delay_den: GLOBE_DELAY_DEN,
+                },
+                TexSize::HIGH,
             )
         } else {
-            generate_globe_png(seed, &uwp_owned, Some(&name_owned), GLOBE_PNG_SIZE, 0.0)
+            generate_globe_png(
+                seed,
+                &uwp_owned,
+                Some(&name_owned),
+                GLOBE_PNG_SIZE,
+                0.0,
+                TexSize::HIGH,
+            )
         }
     };
 
@@ -598,7 +646,7 @@ async fn handle_world_globe(
 /// in one bad request becomes a clean 500 instead of aborting the process.
 /// Globe texture sub-handler for `…&projection=globe&format=texture`. Serves
 /// the equirectangular surface texture (RGB surface + alpha emissive) for
-/// client-side rendering, cached under `world/v1/globe-tex/`, with the
+/// client-side rendering, cached under `world/v2/globe-tex/`, with the
 /// starport's `(lon, lat)` echoed back in an `X-Starport` header (read from the
 /// PNG's `Starport` tEXt chunk so it survives a cache hit).
 async fn handle_world_globe_texture(
@@ -608,13 +656,18 @@ async fn handle_world_globe_texture(
     uwp: &str,
     name: &str,
     head_only: bool,
+    clouds: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let cache_key = planet_cache_key(seed, uwp, name);
-    let cache_object = format!("{PLANET_CACHE_PREFIX}/globe-tex/{cache_key:016x}.png");
+    // Separate namespaces: the two variants are different images for the same
+    // world, so they must not share a cache slot.
+    let variant = if clouds { "globe-tex" } else { "globe-tex-clear" };
+    let cache_object = format!("{PLANET_CACHE_PREFIX}/{variant}/{cache_key:016x}.png");
 
     let uwp_owned = uwp.to_string();
     let name_owned = name.to_string();
-    let render = move || generate_globe_texture(seed, &uwp_owned, Some(&name_owned));
+    let render =
+        move || generate_globe_texture(seed, &uwp_owned, Some(&name_owned), TexSize::HIGH, clouds);
 
     match cache_or_render_bytes(stream, &gcs, &cache_object, render).await? {
         Some((bytes, status)) => {

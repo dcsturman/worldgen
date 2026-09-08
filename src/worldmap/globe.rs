@@ -31,9 +31,12 @@ use std::f64::consts::{FRAC_PI_2, PI};
 
 use super::WorldMap;
 use super::climate;
+use super::clouds::{self, CloudField};
 use super::colormap;
 use super::features::{CityTier, Feature};
 use super::grid::{SHEET_HEIGHT, SHEET_WIDTH, xy_to_sphere};
+use super::noise::DetailField;
+use super::orbital;
 
 /// Default equirectangular texture width (longitude). 2:1 with the height.
 /// 1024×512 is plenty of detail for globes up to ~600 px and keeps the
@@ -41,6 +44,58 @@ use super::grid::{SHEET_HEIGHT, SHEET_WIDTH, xy_to_sphere};
 pub const TEX_W: u32 = 1024;
 /// Default equirectangular texture height (latitude).
 pub const TEX_H: u32 = 512;
+
+/// Equirectangular texture dimensions to build a globe at.
+///
+/// Explicit at every call site rather than a single global constant, because
+/// the two consumers want different answers and neither should silently
+/// inherit the other's. The server caches its renders, so it can afford
+/// [`TexSize::HIGH`]; the frontend builds the texture in WASM on the user's
+/// machine every time a world is generated, where 4× the texels is 4× the
+/// wait, and its 460-px canvas cannot resolve them anyway.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TexSize {
+    pub w: u32,
+    pub h: u32,
+}
+
+impl TexSize {
+    /// 1024×512 — what every consumer got before, and still what the
+    /// in-browser path uses.
+    pub const STANDARD: Self = Self {
+        w: TEX_W,
+        h: TEX_H,
+    };
+    /// 2048×1024. A globe disc of side `n` shows a hemisphere across `n`
+    /// pixels, i.e. half the texture width, so 1024 gives only about one texel
+    /// per pixel at the sub-viewer point and less toward the limb — which was
+    /// throwing away the fractal coastline and fine relief detail before it
+    /// ever reached a viewer.
+    pub const HIGH: Self = Self { w: 2048, h: 1024 };
+}
+
+/// Animation timing for a spinning-globe APNG: how many frames make up the
+/// full turn, and how long each is held (`delay_num / delay_den` seconds).
+///
+/// Grouped rather than passed as three loose numbers because they only ever
+/// mean anything together — and two adjacent `u16`s with no names between
+/// them at a call site is a swap waiting to happen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ApngTiming {
+    pub frames: u32,
+    pub delay_num: u16,
+    pub delay_den: u16,
+}
+
+impl ApngTiming {
+    /// [`DEFAULT_FRAMES`] frames at 1/5 s each — one full turn in about seven
+    /// seconds.
+    pub const DEFAULT: Self = Self {
+        frames: DEFAULT_FRAMES,
+        delay_num: 1,
+        delay_den: 5,
+    };
+}
 
 /// Default number of frames in a full-rotation flipbook. 36 frames = one
 /// frame per 10° of spin — smooth enough to read as continuous rotation
@@ -76,6 +131,69 @@ const TERM_WIDTH: f64 = 0.18;
 /// Limb-darkening floor: edge pixels keep this fraction of their brightness.
 const LIMB_FLOOR: f64 = 0.74;
 
+/// Clamp on the relief term — the ratio of perturbed to flat sun cosine.
+/// Unbounded it runs away at grazing incidence, which is physically a long
+/// shadow but numerically a divide by nearly zero.
+/// Kept fairly tight for the same reason as the gain above: a wide range
+/// only shows up as a wide range if the terrain rarely reaches it, and ours
+/// reaches it constantly.
+const RELIEF_MIN: f64 = 0.58;
+const RELIEF_MAX: f64 = 1.35;
+
+/// Sun cosine at which slope *brightening* reaches full strength; below this
+/// it tapers to nothing by the terminator.
+///
+/// Only the brightening is tapered. Both halves of the relief ratio come from
+/// the same division, but they are not equally true near the terminator: a
+/// slope turned away from a low sun really is in deep shadow, so the darkening
+/// stays, while a slope turned toward it cannot scatter more light than
+/// arrives — and with the ratio clamped at RELIEF_MAX and `day` still near 1
+/// just inside the terminator, that is exactly what it was doing. Sunward
+/// slopes came out at ~1.35x the brightness of the subsolar point, saturating
+/// against the clamp in flat blown-out patches, which is what turned
+/// vegetation greens into fluorescent lime along the day/night edge.
+const RELIEF_FULL_LIGHT: f64 = 0.35;
+/// How far toward the sun to look when sampling the deck for its shadow, in
+/// sphere radii. Stands in for cloud altitude: larger throws the shadow
+/// further from the cloud that casts it.
+const CLOUD_HEIGHT: f64 = 0.035;
+/// How much of the light a full-opacity deck takes out of the ground beneath.
+const CLOUD_SHADOW: f64 = 0.55;
+
+/// Cloud colour for a given opacity: thin cover greys, thick cover brightens.
+fn cloud_tint(a: f64) -> (f64, f64, f64) {
+    // Normalized by the deck's own ceiling, not used raw. `a` tops out at
+    // CloudField::MAX_OPACITY, so keying the tint straight off it tied cloud
+    // *colour* to cloud *opacity*: lowering the ceiling to thin the deck also
+    // dragged the brightest cloud down the ramp toward grey, and the whole sky
+    // went overcast-coloured for a reason that had nothing to do with colour.
+    let t = (a / clouds::MAX_OPACITY).clamp(0.0, 1.0);
+    (
+        CLOUD_THIN.0 + (CLOUD_BRIGHT.0 - CLOUD_THIN.0) * t,
+        CLOUD_THIN.1 + (CLOUD_BRIGHT.1 - CLOUD_THIN.1) * t,
+        CLOUD_THIN.2 + (CLOUD_BRIGHT.2 - CLOUD_THIN.2) * t,
+    )
+}
+
+/// Cloud colour at full opacity, and the greyer tone thin cloud takes.
+/// Real cloud from orbit is not paper-white, and letting thin cover read
+/// grey while thick cover reads bright is the only depth cue available to a
+/// layer that can't cast a directional shadow.
+const CLOUD_BRIGHT: (f64, f64, f64) = (243.0, 246.0, 251.0);
+const CLOUD_THIN: (f64, f64, f64) = (198.0, 206.0, 217.0);
+/// How much cloud darkens the ground beneath it before it's composited over.
+///
+/// This is the honest half of a cloud shadow. A directional drop-shadow would
+/// need a sun direction, and the consumer warps this texture under a sun we
+/// don't control — so it would look right at one angle and wrong everywhere
+/// else. Ambient darkening under the deck is true regardless of where the sun
+/// is, and it stops the clouds reading as decals laid on the surface.
+const CLOUD_OCCLUSION: f64 = 0.35;
+/// How thoroughly cloud hides the city lights underneath it. Not total: a
+/// major conurbation glows through thin overcast, which is exactly what the
+/// real Black Marble imagery shows.
+const CLOUD_LIGHT_DIMMING: f64 = 0.80;
+
 /// Warm sodium-vapor tint of night-side city lights (added, not multiplied,
 /// on the dark side only).
 const CITY_LIGHT: (f64, f64, f64) = (255.0, 185.0, 110.0);
@@ -93,13 +211,37 @@ const BEACON_RADIUS_FRAC: f64 = 0.011;
 /// loops seamlessly (the pulse phase returns to its start after 2π of spin).
 const BEACON_PULSES: f64 = 8.0;
 
+/// One bilinear sample of a [`GlobeTexture`]: everything the warp needs at a
+/// point, gathered in a single lookup.
+struct Sample {
+    /// Surface colour with no directional light applied.
+    albedo: (f64, f64, f64),
+    emissive: f64,
+    beacon: f64,
+    /// Tangent-space normal's `(east, north)` components; `up` is implied.
+    normal_en: (f64, f64),
+    /// Cloud opacity, 0–1.
+    cloud: f64,
+}
+
 /// A gap-free equirectangular texture of a world's surface, suitable for
 /// projecting onto a sphere. Row-major, `width × height`.
 pub struct GlobeTexture {
     pub width: u32,
     pub height: u32,
-    /// `width * height * 3` bytes, RGB row-major — the daylight surface.
+    /// `width * height * 3` bytes, RGB row-major — the surface **albedo**,
+    /// with no directional light of any kind baked in. See
+    /// [`GlobeTextureJob::into_texture`] for why, and [`Self::baked_rgb`] for
+    /// the flattened form single-image consumers want.
     pub rgb: Vec<u8>,
+    /// `width * height` tangent-space surface normals as `[x, y]` in
+    /// `(east, north)`, each `i8` scaled by 127; the `up` component is
+    /// recovered as `sqrt(1 - x² - y²)`. Zero over water, which is flat.
+    pub normal_xy: Vec<[i8; 2]>,
+    /// `width * height` bytes of cloud opacity, 0–255. Kept out of `rgb` so
+    /// the warp can light the deck, shadow the ground beneath it, and dim the
+    /// city lights under it — none of which is possible once it's composited.
+    pub clouds: Vec<u8>,
     /// `width * height` bytes — a "Black Marble" emissive channel: the
     /// intensity of artificial light (city glow) at each texel, scaled by
     /// settlement size. Sampled and shown only on the night side during the
@@ -125,9 +267,9 @@ pub struct GlobeTexture {
 /// "Page Unresponsive" dialog.
 pub fn build_equirect_texture(map: &WorldMap, width: u32, height: u32) -> GlobeTexture {
     let mut job = GlobeTextureJob::new(width, height);
-    job.step_elevation(map);
-    job.step_color(map);
-    job.populate_city_lights(map);
+    for (_, step) in GlobeTextureJob::STEPS {
+        step(&mut job, map);
+    }
     job.into_texture()
 }
 
@@ -138,46 +280,119 @@ pub fn build_equirect_texture(map: &WorldMap, width: u32, height: u32) -> GlobeT
 pub struct GlobeTextureJob {
     width: u32,
     height: u32,
+    /// Cleared by [`Self::without_clouds`]; makes the cloud step a no-op
+    /// rather than requiring callers to skip it, so there is exactly one
+    /// pipeline and no way to drop a step by omission.
+    clouds_enabled: bool,
     elev: Vec<f32>,
+    /// Per-texel tectonic rain-shadow, computed in [`Self::step_elevation`]
+    /// and consumed by [`Self::step_color`].
+    ///
+    /// It lives here rather than being sampled where it's used because both
+    /// it and the elevation need the same expensive thing: the tectonic
+    /// domain warp, which evaluates two fBm bands three times over (once per
+    /// axis) and was previously computed twice per texel — once inside
+    /// `elevation_offset`, then again inside `rain_shadow_at`. Warping once
+    /// and carrying the f32 result forward costs 2 MB at 1024×512 and removes
+    /// the single largest term in the sampling path.
+    ///
+    /// Zero when the map has no tectonic field, which makes
+    /// `rain_shadow_adjustment` a no-op — so `step_color` needs no branch.
+    rain_shadow: Vec<f32>,
+    /// Per-texel cloud opacity, 0–255. Zero everywhere unless
+    /// [`Self::populate_clouds`] ran, and always zero on worlds with
+    /// atmosphere 0 or 1, which get no cloud field at all.
+    clouds: Vec<u8>,
     color: Vec<(u8, u8, u8)>,
     emissive: Vec<u8>,
     beacon: Vec<u8>,
 }
 
+/// One entry of [`GlobeTextureJob::STEPS`]: a name for logging, and the
+/// method that runs that stage of the build.
+pub type BuildStep = (&'static str, fn(&mut GlobeTextureJob, &WorldMap));
+
 impl GlobeTextureJob {
+    /// The build pipeline, in order.
+    ///
+    /// Callers that drive the job by hand — the WASM path yields to the
+    /// browser between steps so a slow machine can't trip "Page Unresponsive"
+    /// — should iterate this rather than listing the steps themselves, so a
+    /// step added here reaches them automatically.
+    ///
+    /// That is not hypothetical tidiness: the cloud layer shipped working on
+    /// the server and silently absent in the browser, because
+    /// `build_equirect_texture` gained the step and the frontend's hand-written
+    /// list didn't. Nothing failed, nothing warned; the planet just had no
+    /// weather. The names are for logging and for making a missed step
+    /// legible in a diff.
+    pub const STEPS: [BuildStep; 4] = [
+        ("elevation", Self::step_elevation),
+        ("color", Self::step_color),
+        ("clouds", Self::populate_clouds),
+        ("city lights", Self::populate_city_lights),
+    ];
+
+    /// Build with no cloud deck. The step still runs in sequence, it just
+    /// does nothing — cheaper than clearing the channel afterwards, and it
+    /// keeps `STEPS` the single description of the pipeline.
+    pub fn without_clouds(mut self) -> Self {
+        self.clouds_enabled = false;
+        self
+    }
+
     pub fn new(width: u32, height: u32) -> Self {
         let n = (width as usize) * (height as usize);
         Self {
             width,
             height,
+            clouds_enabled: true,
             elev: vec![0f32; n],
+            rain_shadow: vec![0f32; n],
+            clouds: vec![0u8; n],
             color: vec![(0u8, 0u8, 0u8); n],
             emissive: vec![0u8; n],
             beacon: vec![0u8; n],
         }
     }
 
-    /// Step 1: above-sea elevation per texel. Steps 2 and 3 read this grid for
-    /// continentality and hillshade.
+    /// Step 1: above-sea elevation per texel, plus the tectonic rain-shadow
+    /// that step 2 needs. Steps 2 and 3 read this grid for continentality and
+    /// hillshade.
+    ///
+    /// Both outputs come from one [`ElevationField::warp`] call — see
+    /// [`Self::rain_shadow`] for why they're computed together.
     pub fn step_elevation(&mut self, map: &WorldMap) {
         let w = self.width as usize;
+        let tectonics = map.elev_field.tectonics();
         for ty in 0..self.height as usize {
             let sy = (ty as f64 + 0.5) / self.height as f64 * SHEET_HEIGHT;
             for tx in 0..w {
                 let sx = (tx as f64 + 0.5) / self.width as f64 * SHEET_WIDTH;
                 let sphere = xy_to_sphere(sx, sy);
-                let e = map.elev_field.sample(&sphere);
+                let warped = map.elev_field.warp(&sphere);
+                let e = map.elev_field.sample_prewarped(&sphere, &warped);
                 let above = climate::amplify_elevation(e - map.sea_level, map.uwp.hydrographics());
-                self.elev[ty * w + tx] = above as f32;
+                let i = ty * w + tx;
+                self.elev[i] = above as f32;
+                if let Some(tec) = tectonics {
+                    self.rain_shadow[i] = tec.rain_shadow_at_warped(&warped) as f32;
+                }
             }
         }
     }
 
     /// Step 2: fold elevation + climate into a base biome colour per texel.
+    ///
+    /// Unlike the flat map's [`super::raster::RasterJob::step_color`], which
+    /// paints legend swatches via [`colormap::elevation_color`], this uses the
+    /// continuous [`orbital`] path: the same climate inputs and the same
+    /// palette, but blended, mottled by a detail field and tone-curved. The
+    /// flat map stays a precision instrument; the globe gets to be a photo.
     pub fn step_color(&mut self, map: &WorldMap) {
         let w = self.width as usize;
         let h = self.height as usize;
-        let tectonics = map.elev_field.tectonics();
+        let detail = DetailField::from_uwp(&map.uwp, map.seed);
         for ty in 0..h {
             let sy = (ty as f64 + 0.5) / self.height as f64 * SHEET_HEIGHT;
             for tx in 0..w {
@@ -192,16 +407,42 @@ impl GlobeTextureJob {
                     &map.uwp,
                 );
 
+                // Rain shadow was computed in step_elevation, which already
+                // had the warped point in hand.
                 let mut hu = map.humidity_field.sample(&sphere, &map.uwp);
-                if let Some(tec) = tectonics {
-                    hu = colormap::rain_shadow_adjustment(hu, tec.rain_shadow_at(&sphere));
-                }
+                hu = colormap::rain_shadow_adjustment(hu, self.rain_shadow[ty * w + tx] as f64);
                 hu = climate::apply_altitude_drying(hu, above);
                 if above > 0.0 {
                     let cont = continentality_wrapped(&self.elev, w, h, tx, ty);
                     hu = super::raster::apply_continentality(hu, cont);
                 }
-                self.color[ty * w + tx] = colormap::elevation_color(above, t, hu);
+                let (mottle, grain) = detail.sample(&sphere);
+                self.color[ty * w + tx] = orbital::surface_color(above, t, hu, mottle, grain);
+            }
+        }
+    }
+
+    /// Optional step (run before [`Self::into_texture`]): rasterize the
+    /// world's cloud deck. Coverage comes from the UWP's atmosphere and
+    /// hydrographics — see [`super::clouds`] — so the layer reports something
+    /// about the world rather than just prettying it up, and worlds that
+    /// can't have weather get nothing rather than a faint haze.
+    ///
+    /// Skipping it leaves a cloudless sky.
+    pub fn populate_clouds(&mut self, map: &WorldMap) {
+        if !self.clouds_enabled {
+            return;
+        }
+        let Some(field) = CloudField::from_uwp(&map.uwp, map.seed) else {
+            return;
+        };
+        let w = self.width as usize;
+        for ty in 0..self.height as usize {
+            let sy = (ty as f64 + 0.5) / self.height as f64 * SHEET_HEIGHT;
+            for tx in 0..w {
+                let sx = (tx as f64 + 0.5) / self.width as f64 * SHEET_WIDTH;
+                let a = field.opacity_at(&xy_to_sphere(sx, sy));
+                self.clouds[ty * w + tx] = (a * 255.0).round().clamp(0.0, 255.0) as u8;
             }
         }
     }
@@ -251,61 +492,76 @@ impl GlobeTextureJob {
     /// Step 3 (terminal): hillshade land + faint tide on shallow water, baking
     /// the RGB texture. Longitude wraps; latitude clamps at the poles. The
     /// emissive channel (if [`Self::populate_city_lights`] ran) passes through.
+    /// Step 3 (terminal): bake the texture.
+    ///
+    /// What this deliberately does *not* do is apply any directional light.
+    /// It used to: a Lambert hillshade with the sun fixed in texture space.
+    /// That is wrong for a globe for a reason that has nothing to do with who
+    /// picks the sun — the texture is in *planet frame* and the sun lives in
+    /// *camera frame*, so anything sun-dependent baked here rotates with the
+    /// terrain. A mountain would carry its highlight around the disc as the
+    /// planet turned, while the terminator stayed put, and the two would agree
+    /// at exactly one spin angle.
+    ///
+    /// So the texture carries only view-independent data — albedo, surface
+    /// normals, cloud opacity, emissive — and every directional effect is
+    /// computed per pixel in [`GlobeTexture::warp_into`], where the light
+    /// direction is known. Consumers that can only take a single flat image
+    /// get [`GlobeTexture::baked_rgb`], which applies the old bake on the way
+    /// out.
     pub fn into_texture(self) -> GlobeTexture {
         let w = self.width as usize;
         let h = self.height as usize;
         let elev = &self.elev;
-        let color = &self.color;
         let mut rgb = vec![0u8; w * h * 3];
+        let mut normal_xy = vec![[0i8; 2]; w * h];
         for ty in 0..h {
             for tx in 0..w {
                 let i = ty * w + tx;
-                let mut c = color[i];
+                let c = self.color[i];
+                rgb[i * 3] = c.0;
+                rgb[i * 3 + 1] = c.1;
+                rgb[i * 3 + 2] = c.2;
 
+                if elev[i] <= 0.0 {
+                    continue; // water stays flat; its normal is the sphere's
+                }
                 let il = i - tx + ((tx + w - 1) % w); // wrap left
                 let ir = i - tx + ((tx + 1) % w); // wrap right
                 let iu = if ty > 0 { i - w } else { i };
                 let id = if ty + 1 < h { i + w } else { i };
 
-                if elev[i] > 0.0 {
-                    const SHADE_GAIN: f64 = 30.0;
-                    let dx = (elev[ir] - elev[il]) as f64 * SHADE_GAIN;
-                    let dy = (elev[id] - elev[iu]) as f64 * SHADE_GAIN;
-                    const FLAT_LIMIT: f64 = 0.20;
-                    const FULL_LIMIT: f64 = 0.50;
-                    let slope = (dx * dx + dy * dy).sqrt();
-                    let tt = ((slope - FLAT_LIMIT) / (FULL_LIMIT - FLAT_LIMIT)).clamp(0.0, 1.0);
-                    let strength = tt * tt * (3.0 - 2.0 * tt);
-                    if strength > 0.0 {
-                        let lit = colormap::apply_hillshade(c, dx, dy);
-                        c = (
-                            lerp_byte(c.0, lit.0, strength),
-                            lerp_byte(c.1, lit.1, strength),
-                            lerp_byte(c.2, lit.2, strength),
-                        );
-                    }
-                } else {
-                    let any_land =
-                        elev[il] > 0.0 || elev[ir] > 0.0 || elev[iu] > 0.0 || elev[id] > 0.0;
-                    if any_land {
-                        const TIDE: (u8, u8, u8) = (180, 198, 220);
-                        c = (
-                            lerp_byte(c.0, TIDE.0, 0.45),
-                            lerp_byte(c.1, TIDE.1, 0.45),
-                            lerp_byte(c.2, TIDE.2, 0.45),
-                        );
-                    }
-                }
-
-                rgb[i * 3] = c.0;
-                rgb[i * 3 + 1] = c.1;
-                rgb[i * 3 + 2] = c.2;
+                // Gain is what makes ordinary terrain visible rather than
+                // pinned flat: typical per-texel deltas are ~0.002, so a
+                // slope only registers once it's scaled up by this much.
+                //
+                // It is a compromise across a wide range of slopes, and 140
+                // was set for the gentle end. Rough ground has per-texel
+                // deltas an order of magnitude larger, and at 140 those tilt
+                // the normal past 70 degrees — far enough that the lighting
+                // ratio pins against its clamps on almost every texel, which
+                // turns hill country into two-tone striping instead of
+                // shading. That is what put fluorescent lime bands across
+                // vegetated highlands.
+                const SLOPE_GAIN: f64 = 85.0;
+                let dx = (elev[ir] - elev[il]) as f64 * SLOPE_GAIN;
+                let dy = (elev[id] - elev[iu]) as f64 * SLOPE_GAIN;
+                // Tangent-space normal, in (east, north, up). Texture y runs
+                // south, so the north component takes `dy` unnegated.
+                let (nx, ny, nz) = (-dx, dy, 1.0);
+                let len = (nx * nx + ny * ny + nz * nz).sqrt();
+                normal_xy[i] = [
+                    ((nx / len) * 127.0).round().clamp(-127.0, 127.0) as i8,
+                    ((ny / len) * 127.0).round().clamp(-127.0, 127.0) as i8,
+                ];
             }
         }
         GlobeTexture {
             width: self.width,
             height: self.height,
             rgb,
+            normal_xy,
+            clouds: self.clouds,
             emissive: self.emissive,
             beacon: self.beacon,
         }
@@ -364,12 +620,83 @@ fn continentality_wrapped(elev: &[f32], w: usize, h: usize, tx: usize, ty: usize
 }
 
 impl GlobeTexture {
+    /// Flatten to a single lit RGB image, for consumers that can only take
+    /// one texture and do no lighting of their own.
+    ///
+    /// This applies the compromises [`GlobeTextureJob::into_texture`] exists
+    /// to avoid — a hillshade lit from a fixed direction in texture space, and
+    /// clouds composited into the surface — because a consumer holding one
+    /// flat image has no way to do better. It is what
+    /// `/api/world?…&format=texture` ships, so that endpoint's output is
+    /// unchanged by moving the real lighting into the warp.
+    ///
+    /// Anything that warps this itself (our own renders, or a client that
+    /// takes the normal and cloud channels) should use the raw fields instead
+    /// and light them per frame.
+    pub fn baked_rgb(&self) -> Vec<u8> {
+        let n = (self.width as usize) * (self.height as usize);
+        let mut out = self.rgb.clone();
+        for i in 0..n {
+            let mut c = (out[i * 3], out[i * 3 + 1], out[i * 3 + 2]);
+
+            let [nx, ny] = self.normal_xy[i];
+            if nx != 0 || ny != 0 {
+                // Recover the gradient the normal came from.
+                //
+                // Mind the axis: the stored normal is in (east, north, up),
+                // while `apply_hillshade` works in texture space where y runs
+                // *down*. Storing put `north = +dy`, so coming back out the
+                // second argument is `+y/z`, not `-y/z` — get that backwards
+                // and the flattened image is lit from the wrong side of the
+                // hill, with nothing else to give it away.
+                let (x, y) = (nx as f64 / 127.0, ny as f64 / 127.0);
+                let z = (1.0 - x * x - y * y).max(1e-6).sqrt();
+                c = colormap::apply_hillshade(c, -x / z, y / z);
+            }
+
+            let cloud = self.clouds[i];
+            if cloud > 0 {
+                let a = cloud as f64 / 255.0;
+                let shaded = 1.0 - CLOUD_OCCLUSION * a;
+                let ground = (
+                    c.0 as f64 * shaded,
+                    c.1 as f64 * shaded,
+                    c.2 as f64 * shaded,
+                );
+                let tint = cloud_tint(a);
+                c = (
+                    (ground.0 + (tint.0 - ground.0) * a).round() as u8,
+                    (ground.1 + (tint.1 - ground.1) * a).round() as u8,
+                    (ground.2 + (tint.2 - ground.2) * a).round() as u8,
+                );
+            }
+
+            out[i * 3] = c.0;
+            out[i * 3 + 1] = c.1;
+            out[i * 3 + 2] = c.2;
+        }
+        out
+    }
+
+    /// City-light emissive with the cloud deck's dimming already applied, for
+    /// the flattened path where the consumer can't do it per pixel.
+    pub fn baked_emissive(&self) -> Vec<u8> {
+        self.emissive
+            .iter()
+            .zip(&self.clouds)
+            .map(|(&e, &cloud)| {
+                let a = cloud as f64 / 255.0;
+                (e as f64 * (1.0 - CLOUD_LIGHT_DIMMING * a)).round() as u8
+            })
+            .collect()
+    }
+
     /// Bilinearly sample the texture at a 3D unit-sphere position (in the
     /// `xy_to_sphere` convention: `z` is the pole axis). Returns the surface
     /// RGB, the emissive (city-light) intensity, and the starport-beacon
     /// intensity at that point. Longitude wraps, latitude clamps.
     #[inline]
-    fn sample(&self, p: [f64; 3]) -> ((f64, f64, f64), f64, f64) {
+    fn sample(&self, p: [f64; 3]) -> Sample {
         let lat = p[2].clamp(-1.0, 1.0).asin();
         let lon = p[1].atan2(p[0]).rem_euclid(2.0 * PI);
         // Match xy_to_sphere: x∈[0,W)→lon∈[0,2π); y∈[0,H)→lat from +π/2 to -π/2.
@@ -383,18 +710,22 @@ impl GlobeTexture {
         let tx = fx - x0 as f64;
         let tyf = fy - y0 as f64;
 
-        // Sample one texel as (r, g, b, emissive, beacon), all f64.
-        let px = |x: i32, y: i32| -> [f64; 5] {
+        // Sample one texel as (r, g, b, emissive, beacon, n.x, n.y, cloud).
+        let px = |x: i32, y: i32| -> [f64; 8] {
             let xi = x.rem_euclid(w) as usize;
             let yi = y.clamp(0, h - 1) as usize;
             let flat = yi * self.width as usize + xi;
             let i = flat * 3;
+            let [nx, ny] = self.normal_xy[flat];
             [
                 self.rgb[i] as f64,
                 self.rgb[i + 1] as f64,
                 self.rgb[i + 2] as f64,
                 self.emissive[flat] as f64,
                 self.beacon[flat] as f64,
+                nx as f64 / 127.0,
+                ny as f64 / 127.0,
+                self.clouds[flat] as f64 / 255.0,
             ]
         };
         let c00 = px(x0, y0);
@@ -402,13 +733,41 @@ impl GlobeTexture {
         let c01 = px(x0, y0 + 1);
         let c11 = px(x0 + 1, y0 + 1);
         let lerp = |a: f64, b: f64, t: f64| a + (b - a) * t;
-        let mut out = [0.0f64; 5];
-        for k in 0..5 {
+        let mut out = [0.0f64; 8];
+        for k in 0..8 {
             let top = lerp(c00[k], c10[k], tx);
             let bot = lerp(c01[k], c11[k], tx);
             out[k] = lerp(top, bot, tyf);
         }
-        ((out[0], out[1], out[2]), out[3], out[4])
+        Sample {
+            albedo: (out[0], out[1], out[2]),
+            emissive: out[3],
+            beacon: out[4],
+            normal_en: (out[5], out[6]),
+            cloud: out[7],
+        }
+    }
+
+    /// Cloud opacity alone at a sphere position, bilinear. Used for the
+    /// shadow lookup, which needs a second sample per pixel at an offset
+    /// point and has no use for the other channels.
+    #[inline]
+    fn sample_cloud(&self, p: [f64; 3]) -> f64 {
+        let lat = p[2].clamp(-1.0, 1.0).asin();
+        let lon = p[1].atan2(p[0]).rem_euclid(2.0 * PI);
+        let fx = lon / (2.0 * PI) * self.width as f64 - 0.5;
+        let fy = (FRAC_PI_2 - lat) / PI * self.height as f64 - 0.5;
+        let (w, h) = (self.width as i32, self.height as i32);
+        let (x0, y0) = (fx.floor() as i32, fy.floor() as i32);
+        let (tx, ty) = (fx - x0 as f64, fy - y0 as f64);
+        let at = |x: i32, y: i32| -> f64 {
+            let xi = x.rem_euclid(w) as usize;
+            let yi = y.clamp(0, h - 1) as usize;
+            self.clouds[yi * self.width as usize + xi] as f64 / 255.0
+        };
+        let top = at(x0, y0) + (at(x0 + 1, y0) - at(x0, y0)) * tx;
+        let bot = at(x0, y0 + 1) + (at(x0 + 1, y0 + 1) - at(x0, y0 + 1)) * tx;
+        top + (bot - top) * ty
     }
 
     /// Orthographically project the texture onto a sphere into a fresh
@@ -490,30 +849,132 @@ impl GlobeTexture {
                 let cl = lat.cos();
                 let sphere = [cl * lon.cos(), cl * lon.sin(), lat.sin()];
 
-                let ((cr, cg, cb), emissive, beacon) = self.sample(sphere);
-                let (mut r, mut g, mut b) = (cr, cg, cb);
+                let sample = self.sample(sphere);
+                let (mut r, mut g, mut b) = sample.albedo;
 
-                // Day/night: `lambert` is the sun cosine at this point; a
-                // smoothstep across the terminator gives `day` ∈ [0,1] (1 =
-                // full daylight, 0 = night). The night side keeps NIGHT_LEVEL
-                // of its brightness so it stays readable. Then limb-darken.
+                // Day/night: `lambert` is the sun cosine for the *sphere* at
+                // this point, so the terminator stays a smooth global sweep
+                // rather than being chewed up by every hillside. A smoothstep
+                // across it gives `day` ∈ [0,1] (1 = full daylight, 0 =
+                // night). The night side keeps NIGHT_LEVEL of its brightness
+                // so it stays readable.
                 let lambert = dot(p_cam, light);
                 let day = smoothstep(-TERM_WIDTH, TERM_WIDTH, lambert);
+
+                // Terrain relief, lit here rather than baked into the texture.
+                //
+                // Build the surface normal in camera space from the stored
+                // tangent-space one: `up` is the sphere normal, `east` is the
+                // direction of increasing longitude, `north` completes it.
+                // The relief term is the *ratio* of the perturbed sun cosine
+                // to the flat one, which isolates the hillside's contribution
+                // from the global illumination already carried by `day` —
+                // otherwise slopes near the terminator would darken twice.
+                // The ratio runs away at grazing incidence (which is what a
+                // long shadow is), hence the clamp, and it fades out with
+                // `day` because unlit ground has no relief to show.
+                let relief = {
+                    let (tn_e, tn_n) = sample.normal_en;
+                    let tn_up = (1.0 - tn_e * tn_e - tn_n * tn_n).max(0.0).sqrt();
+                    let east_hat = normalize(cross(north, p_cam));
+                    let north_hat = cross(p_cam, east_hat);
+                    let n_cam = normalize([
+                        east_hat[0] * tn_e + north_hat[0] * tn_n + p_cam[0] * tn_up,
+                        east_hat[1] * tn_e + north_hat[1] * tn_n + p_cam[1] * tn_up,
+                        east_hat[2] * tn_e + north_hat[2] * tn_n + p_cam[2] * tn_up,
+                    ]);
+                    let lit = dot(n_cam, light).max(0.0);
+                    let flat = lambert.max(0.0);
+                    let ratio = if flat > 0.05 {
+                        (lit / flat).clamp(RELIEF_MIN, RELIEF_MAX)
+                    } else {
+                        1.0
+                    };
+                    // The two halves of the ratio are treated differently,
+                    // because near the terminator only one of them is true.
+                    //
+                    // Brightening fades with the light that causes it (see
+                    // RELIEF_FULL_LIGHT) and with `day`, since a slope cannot
+                    // scatter more than arrives. Shadow does neither: raking
+                    // light is where terrain relief is *most* visible, and
+                    // fading it out there — which the old `(ratio - 1) * day`
+                    // did to both halves alike — is what made ground approaching
+                    // the terminator look like smooth clay while the same
+                    // ground mid-disc showed its hills.
+                    let gain = ratio - 1.0;
+                    if gain > 0.0 {
+                        1.0 + gain * day * smoothstep(0.05, RELIEF_FULL_LIGHT, flat)
+                    } else {
+                        1.0 + gain
+                    }
+                };
+
+                // Cloud shadow: look the deck up again a little way toward the
+                // sun, so the shadow falls on the far side of the cloud from
+                // the light and sweeps across the ground as the planet turns.
+                // Baking this was never an option — the offset direction lives
+                // in camera space, so it would have been right at one spin
+                // angle and wrong at the rest.
+                let shadow = if sample.cloud > 0.0 || CLOUD_SHADOW > 0.0 {
+                    let along = [
+                        light[0] - p_cam[0] * lambert,
+                        light[1] - p_cam[1] * lambert,
+                        light[2] - p_cam[2] * lambert,
+                    ];
+                    let m = (along[0] * along[0] + along[1] * along[1] + along[2] * along[2])
+                        .sqrt()
+                        .max(1e-9);
+                    let off = [
+                        p_cam[0] + along[0] / m * CLOUD_HEIGHT,
+                        p_cam[1] + along[1] / m * CLOUD_HEIGHT,
+                        p_cam[2] + along[2] / m * CLOUD_HEIGHT,
+                    ];
+                    let off = normalize(off);
+                    let (de2, dn2, df2) = (dot(off, east), dot(off, north), dot(off, front));
+                    let lat2 = dn2.clamp(-1.0, 1.0).asin();
+                    let lon2 = de2.atan2(df2) + spin;
+                    let cl2 = lat2.cos();
+                    self.sample_cloud([cl2 * lon2.cos(), cl2 * lon2.sin(), lat2.sin()])
+                } else {
+                    0.0
+                };
+
+                // Ground: albedo, relief-shaded, then darkened where the deck
+                // stands between it and the sun.
+                let ground_shadow = 1.0 - CLOUD_SHADOW * shadow * day;
+                r *= relief * ground_shadow;
+                g *= relief * ground_shadow;
+                b *= relief * ground_shadow;
+
+                // City lights ("Black Marble"): warm sodium glow, additive and
+                // only on the night side, fading out through the terminator.
+                // Cloud over a city dims it — the deck is above the lights.
+                let night = 1.0 - day;
+                if night > 0.0 && sample.emissive > 0.0 {
+                    let through = 1.0 - CLOUD_LIGHT_DIMMING * sample.cloud;
+                    let lit = (sample.emissive / 255.0) * night * CITY_LIGHT_GAIN * through;
+                    r += CITY_LIGHT.0 * lit;
+                    g += CITY_LIGHT.1 * lit;
+                    b += CITY_LIGHT.2 * lit;
+                }
+
+                // Cloud deck over the top, lit by the same sun as everything
+                // else and so darkening naturally through the terminator.
+                if sample.cloud > 0.0 {
+                    let a = sample.cloud;
+                    let tint = cloud_tint(a);
+                    r += (tint.0 - r) * a;
+                    g += (tint.1 - g) * a;
+                    b += (tint.2 - b) * a;
+                }
+
+                // Global day/night and limb darkening, applied to ground and
+                // cloud alike since both are lit by the same star.
                 let mut shade = NIGHT_LEVEL + (1.0 - NIGHT_LEVEL) * day;
                 shade *= LIMB_FLOOR + (1.0 - LIMB_FLOOR) * nz;
                 r *= shade;
                 g *= shade;
                 b *= shade;
-
-                // City lights ("Black Marble"): warm sodium glow, additive and
-                // only on the night side, fading out through the terminator.
-                let night = 1.0 - day;
-                if night > 0.0 && emissive > 0.0 {
-                    let lit = (emissive / 255.0) * night * CITY_LIGHT_GAIN;
-                    r += CITY_LIGHT.0 * lit;
-                    g += CITY_LIGHT.1 * lit;
-                    b += CITY_LIGHT.2 * lit;
-                }
 
                 // Soft bright atmosphere rim on the lit limb (inner edge).
                 let edge = (dist / radius).clamp(0.0, 1.0);
@@ -526,8 +987,8 @@ impl GlobeTexture {
 
                 // Starport beacon: blended toward red (so the hot core overrides
                 // terrain), shown in daylight as well as night, pulsing gently.
-                if beacon > 0.0 {
-                    let bo = (beacon / 255.0) * beacon_pulse;
+                if sample.beacon > 0.0 {
+                    let bo = (sample.beacon / 255.0) * beacon_pulse;
                     r += (BEACON_COLOR.0 - r) * bo;
                     g += (BEACON_COLOR.1 - g) * bo;
                     b += (BEACON_COLOR.2 - b) * bo;
@@ -547,6 +1008,23 @@ impl GlobeTexture {
 }
 
 #[inline]
+fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+
+fn normalize(v: [f64; 3]) -> [f64; 3] {
+    let m = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    if m < 1e-12 {
+        [0.0, 0.0, 1.0]
+    } else {
+        [v[0] / m, v[1] / m, v[2] / m]
+    }
+}
+
 fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
@@ -558,15 +1036,15 @@ fn smoothstep(e0: f64, e1: f64, x: f64) -> f64 {
     t * t * (3.0 - 2.0 * t)
 }
 
-#[inline]
-fn lerp_byte(a: u8, b: u8, t: f64) -> u8 {
-    (a as f64 + (b as f64 - a as f64) * t).clamp(0.0, 255.0) as u8
-}
-
 /// Render a single static globe frame for `map` as a PNG, viewed at sub-viewer
 /// longitude `spin` (radians). `size` is the output square's side in pixels.
-pub fn render_globe_png(map: &WorldMap, size: u32, spin: f64) -> Result<Vec<u8>, String> {
-    let tex = build_equirect_texture(map, TEX_W, TEX_H);
+pub fn render_globe_png(
+    map: &WorldMap,
+    size: u32,
+    spin: f64,
+    tex_size: TexSize,
+) -> Result<Vec<u8>, String> {
+    let tex = build_equirect_texture(map, tex_size.w, tex_size.h);
     let frame = tex.warp_frame(size, spin);
     encode_png_rgba(&frame, size, size)
 }
@@ -579,13 +1057,17 @@ pub fn render_globe_png(map: &WorldMap, size: u32, spin: f64) -> Result<Vec<u8>,
 pub fn render_globe_apng(
     map: &WorldMap,
     size: u32,
-    frames: u32,
-    delay_num: u16,
-    delay_den: u16,
+    timing: ApngTiming,
+    tex_size: TexSize,
 ) -> Result<Vec<u8>, String> {
     use std::f64::consts::PI;
+    let ApngTiming {
+        frames,
+        delay_num,
+        delay_den,
+    } = timing;
     let frames = frames.max(1);
-    let tex = build_equirect_texture(map, TEX_W, TEX_H);
+    let tex = build_equirect_texture(map, tex_size.w, tex_size.h);
     let buffers: Vec<Vec<u8>> = (0..frames)
         .map(|f| tex.warp_frame(size, f as f64 / frames as f64 * 2.0 * PI))
         .collect();
@@ -598,25 +1080,50 @@ pub fn render_globe_apng(
 /// colour, the alpha channel carries the night-side city-light emissive
 /// intensity. If the world has a starport, its texture coordinates
 /// `(lon, lat)` in radians are embedded as a `Starport` tEXt chunk so the
-/// consumer can draw the beacon. The image is [`TEX_W`]×[`TEX_H`].
+/// consumer can draw the beacon. The image is `tex_size.w`×`tex_size.h`.
 ///
 /// This is the payload for `/api/world?projection=globe&format=texture`: the
 /// expensive generation happens here (server-side, cached); the client only
-/// warps this texture per frame.
-pub fn render_globe_texture(map: &WorldMap) -> Result<Vec<u8>, String> {
-    let tex = build_equirect_texture(map, TEX_W, TEX_H);
-    let n = (TEX_W as usize) * (TEX_H as usize);
+/// warps this texture per frame. Since the consumer warps it onto a sphere at
+/// whatever size it likes, the texture's resolution sets the ceiling on how
+/// sharp that render can be — see [`TexSize::HIGH`].
+pub fn render_globe_texture(
+    map: &WorldMap,
+    tex_size: TexSize,
+    clouds: bool,
+) -> Result<Vec<u8>, String> {
+    let (tex_w, tex_h) = (tex_size.w, tex_size.h);
+    let tex = if clouds {
+        build_equirect_texture(map, tex_w, tex_h)
+    } else {
+        // Same pipeline, with the cloud step neutered. Consumers that
+        // composite their own weather, or want the bare surface, shouldn't be
+        // stuck with ours baked into the pixels — this variant is a single
+        // flat image, so not shipping it is the only honest alternative.
+        let mut job = GlobeTextureJob::new(tex_w, tex_h).without_clouds();
+        for (_, step) in GlobeTextureJob::STEPS {
+            step(&mut job, map);
+        }
+        job.into_texture()
+    };
+    // Flattened: this variant is a single image, so the consumer can't light
+    // it. `baked_rgb` applies the fixed-direction hillshade and composites the
+    // clouds, keeping this endpoint's output what it has always been even
+    // though the real lighting now happens in the warp.
+    let rgb = tex.baked_rgb();
+    let emissive = tex.baked_emissive();
+    let n = (tex_w as usize) * (tex_h as usize);
     let mut rgba = vec![0u8; n * 4];
     for i in 0..n {
-        rgba[i * 4] = tex.rgb[i * 3];
-        rgba[i * 4 + 1] = tex.rgb[i * 3 + 1];
-        rgba[i * 4 + 2] = tex.rgb[i * 3 + 2];
-        rgba[i * 4 + 3] = tex.emissive[i];
+        rgba[i * 4] = rgb[i * 3];
+        rgba[i * 4 + 1] = rgb[i * 3 + 1];
+        rgba[i * 4 + 2] = rgb[i * 3 + 2];
+        rgba[i * 4 + 3] = emissive[i];
     }
 
     let mut out = Vec::new();
     {
-        let mut enc = png::Encoder::new(&mut out, TEX_W, TEX_H);
+        let mut enc = png::Encoder::new(&mut out, tex_w, tex_h);
         enc.set_color(png::ColorType::Rgba);
         enc.set_depth(png::BitDepth::Eight);
         enc.set_compression(png::Compression::Best);
@@ -807,10 +1314,98 @@ mod tests {
         assert_ne!(a, b, "opposite hemispheres should differ");
     }
 
+    /// Every consumer of the builder must run the whole pipeline. This is the
+    /// regression test for the cloud layer shipping server-only: the frontend
+    /// hand-listed the steps, the list went stale when a step was added, and
+    /// nothing failed — the planet simply had no weather.
+    ///
+    /// Asserting on `STEPS` rather than on the rendered output because that is
+    /// the actual invariant: there is one description of the pipeline and
+    /// everyone drives it.
+    #[test]
+    fn pipeline_steps_all_run_and_contribute() {
+        let map = super::super::generate("A788899-A", 1, None).unwrap();
+
+        // Driving STEPS gives the same texture as the convenience builder.
+        let mut job = GlobeTextureJob::new(128, 64);
+        for (_, step) in GlobeTextureJob::STEPS {
+            step(&mut job, &map);
+        }
+        let stepped = job.into_texture();
+        let built = build_equirect_texture(&map, 128, 64);
+        assert_eq!(
+            stepped.rgb, built.rgb,
+            "STEPS must match build_equirect_texture"
+        );
+        assert_eq!(stepped.clouds, built.clouds);
+
+        // And each channel a step is responsible for is actually populated,
+        // so a step that silently no-ops gets caught here.
+        assert!(
+            built.clouds.iter().any(|&c| c > 0),
+            "an atmosphere-8 world must have a cloud deck"
+        );
+        assert!(
+            built.emissive.iter().any(|&e| e > 0),
+            "a populated world must have city lights"
+        );
+        assert!(
+            built.normal_xy.iter().any(|&[x, y]| x != 0 || y != 0),
+            "a world with land must have surface normals"
+        );
+
+        // without_clouds neuters exactly one step and nothing else.
+        let mut bare = GlobeTextureJob::new(128, 64).without_clouds();
+        for (_, step) in GlobeTextureJob::STEPS {
+            step(&mut bare, &map);
+        }
+        let bare = bare.into_texture();
+        assert!(
+            bare.clouds.iter().all(|&c| c == 0),
+            "without_clouds must leave the deck empty"
+        );
+        assert_eq!(bare.rgb, built.rgb, "clouds must not touch the albedo");
+        assert_eq!(bare.emissive, built.emissive);
+    }
+
+    /// The normal map is a lossy round trip — gradient to unit normal to two
+    /// quantized bytes and back — and it sits between the terrain and every
+    /// lit pixel, in both the warp and the flattened bake. A sign error here
+    /// silently lights hills from the wrong side and nothing else catches it,
+    /// so check the axis convention explicitly.
+    #[test]
+    fn normal_map_round_trips_the_gradient() {
+        for (dx, dy) in [
+            (0.0, 0.0),
+            (0.4, 0.0),
+            (-0.4, 0.0),
+            (0.0, 0.4),
+            (0.0, -0.4),
+            (0.3, -0.5),
+            (-0.7, 0.2),
+        ] {
+            // Encode exactly as into_texture does: (east, north, up).
+            let (nx, ny, nz) = (-dx, dy, 1.0f64);
+            let len: f64 = (nx * nx + ny * ny + nz * nz).sqrt();
+            let sx = ((nx / len) * 127.0).round().clamp(-127.0, 127.0) as i8;
+            let sy = ((ny / len) * 127.0).round().clamp(-127.0, 127.0) as i8;
+
+            // Decode exactly as baked_rgb does.
+            let (x, y) = (sx as f64 / 127.0, sy as f64 / 127.0);
+            let z = (1.0 - x * x - y * y).max(1e-6).sqrt();
+            let (got_dx, got_dy) = (-x / z, y / z);
+
+            assert!(
+                (got_dx - dx).abs() < 0.02 && (got_dy - dy).abs() < 0.02,
+                "gradient ({dx}, {dy}) round-tripped to ({got_dx:.4}, {got_dy:.4})"
+            );
+        }
+    }
+
     #[test]
     fn static_globe_png_decodes() {
         let map = super::super::generate("A788899-A", 1, None).unwrap();
-        let bytes = render_globe_png(&map, 128, 0.0).unwrap();
+        let bytes = render_globe_png(&map, 128, 0.0, TexSize::STANDARD).unwrap();
         assert_eq!(&bytes[0..8], b"\x89PNG\r\n\x1a\n");
         let dec = png::Decoder::new(std::io::Cursor::new(&bytes));
         let reader = dec.read_info().unwrap();
@@ -821,7 +1416,17 @@ mod tests {
     #[test]
     fn apng_is_animated_with_expected_frame_count() {
         let map = super::super::generate("A788899-A", 1, None).unwrap();
-        let bytes = render_globe_apng(&map, 96, 8, 1, 10).unwrap();
+        let bytes = render_globe_apng(
+            &map,
+            96,
+            ApngTiming {
+                frames: 8,
+                delay_num: 1,
+                delay_den: 10,
+            },
+            TexSize::STANDARD,
+        )
+        .unwrap();
         assert_eq!(&bytes[0..8], b"\x89PNG\r\n\x1a\n");
         let dec = png::Decoder::new(std::io::Cursor::new(&bytes));
         let reader = dec.read_info().unwrap();
@@ -844,32 +1449,38 @@ mod tests {
         assert_eq!(static_frame, apng_first);
     }
 
+    /// The texture comes out at whatever [`TexSize`] was asked for, and both
+    /// sizes carry the same metadata — the server renders `HIGH` while the
+    /// in-browser path stays on `STANDARD`, so neither may quietly lose the
+    /// starport chunk or change colour type.
     #[test]
-    fn globe_texture_is_rgba_1024x512_with_starport_chunk() {
+    fn globe_texture_is_rgba_at_requested_size_with_starport_chunk() {
         let map = super::super::generate("A788899-A", 1, None).unwrap();
-        let bytes = render_globe_texture(&map).unwrap();
-        assert_eq!(&bytes[0..8], b"\x89PNG\r\n\x1a\n");
-        let dec = png::Decoder::new(std::io::Cursor::new(&bytes));
-        let reader = dec.read_info().unwrap();
-        let info = reader.info();
-        assert_eq!((info.width, info.height), (TEX_W, TEX_H));
-        assert_eq!(info.color_type, png::ColorType::Rgba);
-        // An A-port world embeds its starport coords as a tEXt chunk, and
-        // starport_lonlat reports the same presence.
-        assert!(starport_lonlat(&map).is_some());
-        assert!(
-            info.uncompressed_latin1_text
-                .iter()
-                .any(|c| c.keyword == "Starport"),
-            "A-port texture should carry a Starport chunk"
-        );
+        for tex_size in [TexSize::STANDARD, TexSize::HIGH] {
+            let bytes = render_globe_texture(&map, tex_size, true).unwrap();
+            assert_eq!(&bytes[0..8], b"\x89PNG\r\n\x1a\n");
+            let dec = png::Decoder::new(std::io::Cursor::new(&bytes));
+            let reader = dec.read_info().unwrap();
+            let info = reader.info();
+            assert_eq!((info.width, info.height), (tex_size.w, tex_size.h));
+            assert_eq!(info.color_type, png::ColorType::Rgba);
+            // An A-port world embeds its starport coords as a tEXt chunk, and
+            // starport_lonlat reports the same presence.
+            assert!(starport_lonlat(&map).is_some());
+            assert!(
+                info.uncompressed_latin1_text
+                    .iter()
+                    .any(|c| c.keyword == "Starport"),
+                "A-port texture should carry a Starport chunk at {tex_size:?}"
+            );
+        }
     }
 
     #[test]
     fn portless_globe_texture_has_no_starport_chunk() {
         let map = super::super::generate("X788899-A", 1, None).unwrap();
         assert!(starport_lonlat(&map).is_none());
-        let bytes = render_globe_texture(&map).unwrap();
+        let bytes = render_globe_texture(&map, TexSize::STANDARD, true).unwrap();
         let dec = png::Decoder::new(std::io::Cursor::new(&bytes));
         let reader = dec.read_info().unwrap();
         assert!(
@@ -883,6 +1494,52 @@ mod tests {
     }
 
     /// Visual dump: write a static globe PNG and a spinning APNG to /tmp for
+    /// Visual dump: write the raw equirectangular surface texture to /tmp,
+    /// opaque, for judging detail at 1:1. Ignored by default.
+    ///
+    /// The globe dumps below are the wrong tool for that: a 512-px disc shows
+    /// the 1024-wide texture at roughly one texel per pixel *at the sub-viewer
+    /// point* and far worse toward the limb, so fine relief reads as mush
+    /// there whether or not it's present. Look at the texture to decide
+    /// whether detail exists; look at the globe to decide whether it reads.
+    ///
+    /// Note this is the surface RGB only — the emissive (city-light) channel
+    /// `render_globe_texture` puts in alpha is dropped, because an image
+    /// viewer composites that as transparency and shows a near-blank sheet.
+    ///
+    /// `cargo test --lib --release worldmap::globe::tests::dump_globe_texture -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn dump_globe_texture() {
+        for (name, uwp) in [("garden", "A788899-A"), ("earth", "C886977-8")] {
+            let map = super::super::generate(uwp, 1, None).unwrap();
+            let ts = TexSize::HIGH;
+            let tex = build_equirect_texture(&map, ts.w, ts.h);
+            let mut rgba = Vec::with_capacity(tex.rgb.len() / 3 * 4);
+            for px in tex.rgb.as_chunks::<3>().0 {
+                rgba.extend_from_slice(&[px[0], px[1], px[2], 255]);
+            }
+            let png = encode_png_rgba(&rgba, ts.w, ts.h).unwrap();
+            let path = format!("/tmp/globe_tex_{name}.png");
+            std::fs::write(&path, &png).unwrap();
+            // Also report what the endpoint actually ships: same pixels, but
+            // the real emissive alpha and Compression::Best. That number is
+            // the one third-party consumers pay for on every cache miss, so
+            // it's worth seeing next to the size bump whenever TexSize moves.
+            //
+            // Note this builds the texture a second time, so don't read this
+            // test's wall time as the cost of one render — halve it.
+            let served = render_globe_texture(&map, ts, true).unwrap();
+            eprintln!(
+                "wrote {path} ({} B opaque) — endpoint payload at {}x{}: {} B",
+                png.len(),
+                ts.w,
+                ts.h,
+                served.len()
+            );
+        }
+    }
+
     /// eyeballing. Ignored by default.
     /// `cargo test --lib worldmap::globe::tests::dump_globe -- --ignored --nocapture`
     #[test]
@@ -897,8 +1554,8 @@ mod tests {
         ];
         for (name, uwp) in cases {
             let map = super::super::generate(uwp, 1, None).unwrap();
-            let png = render_globe_png(&map, 512, 0.0).unwrap();
-            let apng = render_globe_apng(&map, 400, DEFAULT_FRAMES, 1, 5).unwrap();
+            let png = render_globe_png(&map, 512, 0.0, TexSize::HIGH).unwrap();
+            let apng = render_globe_apng(&map, 400, ApngTiming::DEFAULT, TexSize::HIGH).unwrap();
             std::fs::write(format!("/tmp/globe_{name}.png"), &png).unwrap();
             std::fs::write(format!("/tmp/globe_{name}.apng.png"), &apng).unwrap();
             eprintln!(

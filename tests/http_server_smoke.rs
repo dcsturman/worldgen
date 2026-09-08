@@ -51,12 +51,20 @@ async fn send_request(addr: std::net::SocketAddr, request: &str) -> Vec<u8> {
     let mut sock = TcpStream::connect(addr).await.unwrap();
     sock.write_all(request.as_bytes()).await.unwrap();
     let mut buf = Vec::new();
-    // 120 s budget — system PNGs at scale=2.0 finish in under a
-    // second, but /world renders take ~30 s in debug builds (the
-    // raster loop is the slow path and is unoptimized without
-    // --release). The timeout is the safety net for a wedged test,
-    // not the expected duration.
-    timeout(Duration::from_secs(120), sock.read_to_end(&mut buf))
+    // 600 s budget. System PNGs at scale=2.0 finish in under a second,
+    // but the planet renders are slow in debug builds (the raster and
+    // texture loops are float-heavy and unoptimized without --release):
+    // a flat /world takes ~30 s, and a globe — which builds a full
+    // 2048x1024 equirectangular texture, four times the texels the
+    // 1024x512 one used to — takes ~107 s on its own and longer when
+    // the harness runs several globe tests at once. The old 120 s
+    // budget sat right on top of that and the globe tests started
+    // failing as "response read timed out", which reads like a server
+    // hang rather than a build-profile cost.
+    //
+    // This is the safety net for a wedged test, not the expected
+    // duration; the tests take as long as they take either way.
+    timeout(Duration::from_secs(600), sock.read_to_end(&mut buf))
         .await
         .expect("response read timed out")
         .unwrap();
@@ -220,6 +228,28 @@ async fn options_returns_204_with_cors_headers() {
     );
     assert!(head.contains("Access-Control-Allow-Origin: *"));
     assert!(head.contains("Access-Control-Allow-Methods: GET, HEAD, OPTIONS"));
+}
+
+/// `/api/health` is what the Cloud Run startup probe should target.
+///
+/// The default probe is a TCP check on port 80, which nginx satisfies about
+/// two seconds before this server binds 8081 — so Cloud Run routes traffic
+/// to an instance whose upstream is still refusing connections, and those
+/// requests come back as nginx 502s. A probe that has to reach *this*
+/// handler can only pass once both processes are up.
+///
+/// It must stay dependency-free: no render, no GCS, no Firestore. A health
+/// check that can fail for a reason unrelated to "can this instance serve
+/// HTTP" is worse than none, because it takes healthy instances out of
+/// rotation.
+#[tokio::test]
+async fn health_endpoint_returns_200_without_touching_anything() {
+    let addr = spawn_http_server().await;
+    let req = format!("GET /api/health HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n");
+    let buf = send_request(addr, &req).await;
+    let (head, body) = split_response(&buf);
+    assert!(head.starts_with("HTTP/1.1 200 OK\r\n"), "head:\n{head}");
+    assert_eq!(String::from_utf8_lossy(&body), "ok");
 }
 
 #[tokio::test]
