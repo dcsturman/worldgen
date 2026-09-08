@@ -92,6 +92,22 @@ Drop `--test production_smoke` → also runs every other ignored test.
 Drop `-- --ignored` → tests are listed as ignored but don't execute.
 Drop `--nocapture` → still works, but you lose live progress output.
 
+### Why debug builds optimize dependencies
+
+`Cargo.toml` sets `[profile.dev.package."*"] opt-level = 3`. The test suite
+spends nearly all its time inside `noise` evaluating simplex fBm — a planet
+render is millions of texels at tens of noise evaluations each, and the
+tectonic domain warp multiplies that again. Unoptimized, one
+`planet_png_scaled_*` test took over a minute and CI ran for thirteen.
+
+Optimizing *only* dependencies keeps our own code compiled the way `cargo
+test` normally compiles it — full debug info, real line numbers in panics,
+assertions intact — while the hot numeric library underneath runs at release
+speed. That plus a cargo cache in CI took the pipeline from 13m06s to 2m28s
+without dropping a single test. If it ever needs to get faster again, split
+the render-heavy `tests/library_api.rs` into its own parallel job before
+reaching for `#[ignore]`; coverage is the expensive thing to buy back.
+
 The wasm target requires `rustup target add wasm32-unknown-unknown` and `cargo install trunk`. `Trunk.toml` sets `getrandom_backend="wasm_js"` via rustflags — needed because `getrandom` 0.3 requires explicit backend selection on wasm.
 
 ## Binaries
@@ -146,6 +162,66 @@ Server env vars (see `src/bin/server.rs`):
   Each variant caches under its own path (`world/v2/`, `world/v2/globe/`, `world/v2/globe-anim/`, `world/v2/globe-tex/`) so they never collide. The version segment is bumped whenever a worldgen change alters what a world looks like — the cache key is `(seed, uwp, name)` with nothing about the generator in it, so without a bump previously-viewed worlds keep serving their old terrain forever while unviewed ones render with the new.
 - `WS_PORT` (default 8081), `WS_HOST` (default `0.0.0.0`)
 - `RUST_LOG`
+- `WORLDGEN_RENDER_THREADS` (default: one per available core) — workers the
+  globe texture build splits across. Native only; the in-browser path is
+  single-threaded by construction (`render_threads` is hardcoded to 1 on
+  wasm) and renders a quarter of the texels. Set it to `1` to reproduce
+  single-vCPU behaviour locally. Output is byte-identical at any worker
+  count, asserted by `texture_is_independent_of_worker_count` — which is the
+  whole safety argument for the threading, since a lost race here would show
+  up not as a crash but as a planet that looks different depending on which
+  machine rendered it, then cached in GCS for whichever version won.
+
+### Cloud Run sizing is a renderer parameter, not just capacity
+
+`push_image.sh` deploys with `--cpu 4 --memory 2Gi --max-instances 50`, and
+all three are load-bearing:
+
+- **`--cpu 4`** — the texture build parallelizes across cores, so vCPU count
+  sets render latency. A cold 2048×1024 globe is ~24 s at 1 vCPU and ~11 s at
+  4. The TravellerMap client tells the user a first render takes "up to ~15
+  seconds" while it spins, so this is the difference between that copy being
+  true and being a lie. Costs roughly 1.5× per cold render for a 2.7×
+  speedup, and only on a cache miss.
+- **`--memory 2Gi`** — Cloud Run requires it at 4 vCPU. Not a measured need.
+- **`--max-instances 50`** — not a preference. us-central1 allows this
+  project 200 total vCPU, and 4 vCPU across the old cap of 100 instances asks
+  for 400, so the deploy is *rejected* without it. Raising CPU again means
+  lowering this to match, or raising the quota.
+
+These live in the script rather than being set by hand, because a hand-set
+value is exactly what a later scripted deploy silently reverts.
+
+### The startup probe must hit `/api/health`, not port 80
+
+The image runs nginx and the render server under supervisord. Cloud Run's
+default startup probe is a TCP check on port 80 — which nginx satisfies about
+two seconds before the render server binds 8081. In that window the instance
+is "ready" and taking traffic, and every request gets nginx's 502 from a
+refused upstream connect. This fires on every scale-out, and it is what once
+made a smoke test compare a 2.4 MB PNG against a 157-byte error page and
+report it as broken determinism.
+
+`/api/health` is dependency-free (no render, no GCS, no Firestore) so it can
+only answer once both processes are up:
+
+```bash
+gcloud run services update worldgen --region=us-central1 \
+  --startup-probe=httpGet.path=/api/health,httpGet.port=80,periodSeconds=3,failureThreshold=20,timeoutSeconds=2
+```
+
+`timeoutSeconds` must be strictly less than `periodSeconds` or the update is
+rejected. Apply this only *after* an image containing `/api/health` is live,
+or the probe fails every instance.
+
+### Cache writes are awaited, deliberately
+
+`/api/world` awaits its GCS upload (10 s timeout) rather than detaching it.
+Shipping the response first looks like the obvious optimization and is
+backwards on Cloud Run: CPU is throttled to near zero the moment a response
+completes, so a detached upload is scheduled exactly when the instance loses
+the ability to perform it. Nothing retries, so a failed write leaves that
+world uncached indefinitely and every future viewer pays a full render.
 
 ### `TRAVELLERMAP_URL` — build-time, baked into both binaries
 
