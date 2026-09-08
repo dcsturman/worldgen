@@ -31,6 +31,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use siphasher::sip::SipHasher24;
 use std::hash::Hasher;
@@ -188,6 +189,35 @@ pub async fn handle_http(
         "/api/system_svg" => handle_system_svg(reader.get_mut(), query, head_only).await,
         "/api/world" => handle_world(reader.get_mut(), query, head_only, gcs).await,
         _ => write_simple(reader.get_mut(), 404, "Not Found", "Unknown endpoint").await,
+    }
+}
+
+/// How long to wait for a cache upload before giving up and serving anyway.
+///
+/// The upload used to be a detached `tokio::spawn` so the response could ship
+/// first. On Cloud Run that is precisely backwards: CPU is throttled to near
+/// zero the moment a response completes, so the upload was being scheduled at
+/// the instant the instance lost the ability to perform it, and it died with
+/// "error sending request". Every such failure means the next viewer of that
+/// world waits for a full render again — and a cold globe is ~10 s, so the
+/// cost of a lost write is far larger than the cost of waiting for it.
+///
+/// Awaiting it inline costs a fraction of a second on a path that already
+/// took seconds to render. The timeout is there so a wedged GCS degrades to
+/// "slow once" rather than holding the client open.
+const CACHE_PUT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Write a freshly rendered planet into the cache, logging rather than
+/// failing the request: a lost cache write costs the next viewer a re-render,
+/// which is not a reason to deny this one the image it already has.
+async fn cache_put(gcs: &Arc<GcsClient>, key: &str, bytes: Vec<u8>) {
+    match tokio::time::timeout(CACHE_PUT_TIMEOUT, gcs.put(key, bytes, "image/png")).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => log::warn!("GCS put failed for {key}: {e}"),
+        Err(_) => log::warn!(
+            "GCS put for {key} exceeded {CACHE_PUT_TIMEOUT:?}; serving anyway, \
+             the next request for this world will re-render"
+        ),
     }
 }
 
@@ -509,18 +539,8 @@ async fn handle_world(
                         return render_panic_500(stream, "/api/world", &panic_msg).await;
                     }
                 };
-            // Fire-and-forget upload so the response ships immediately.
-            // A failed upload just means the next request is another
-            // cache miss — correctness is preserved, only the next
-            // user's latency is affected.
-            let gcs2 = gcs.clone();
-            let key2 = cache_object.clone();
-            let bytes2 = bytes.clone();
-            tokio::spawn(async move {
-                if let Err(e) = gcs2.put(&key2, bytes2, "image/png").await {
-                    log::warn!("GCS put failed for {key2}: {e}");
-                }
-            });
+            // Awaited, not detached — see CACHE_PUT_TIMEOUT.
+            cache_put(&gcs, &cache_object, bytes.clone()).await;
             (bytes, "MISS")
         }
         Err(e) => {
@@ -731,14 +751,7 @@ async fn cache_or_render_bytes(
     };
 
     if do_upload {
-        let gcs2 = gcs.clone();
-        let key2 = cache_object.to_string();
-        let bytes2 = bytes.clone();
-        tokio::spawn(async move {
-            if let Err(e) = gcs2.put(&key2, bytes2, "image/png").await {
-                log::warn!("GCS put failed for {key2}: {e}");
-            }
-        });
+        cache_put(gcs, cache_object, bytes.clone()).await;
     }
 
     Ok(Some((bytes, status)))
