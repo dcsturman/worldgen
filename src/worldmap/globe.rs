@@ -280,6 +280,11 @@ pub fn build_equirect_texture(map: &WorldMap, width: u32, height: u32) -> GlobeT
 pub struct GlobeTextureJob {
     width: u32,
     height: u32,
+    /// Workers the row-parallel steps split across. Held on the job rather
+    /// than read from the environment inside the loops, so it is a value that
+    /// can be varied — which is what lets a test assert the output doesn't
+    /// depend on it.
+    workers: usize,
     /// Cleared by [`Self::without_clouds`]; makes the cloud step a no-op
     /// rather than requiring callers to skip it, so there is exactly one
     /// pipeline and no way to drop a step by omission.
@@ -312,6 +317,121 @@ pub struct GlobeTextureJob {
 /// method that runs that stage of the build.
 pub type BuildStep = (&'static str, fn(&mut GlobeTextureJob, &WorldMap));
 
+/// Rows per worker for the row-parallel texture steps.
+///
+/// The per-texel steps are independent — every texel is a pure function of its
+/// own sphere position — so the only thing standing between them and linear
+/// scaling is that nothing was splitting them up. Bands are contiguous row
+/// ranges so each worker walks memory forward and writes a disjoint slice.
+///
+/// wasm gets exactly one band: browsers give us no threads here, and the
+/// frontend already yields between steps to keep the tab responsive.
+///
+/// `WORLDGEN_RENDER_THREADS` overrides the worker count, which is how the
+/// scaling was measured before committing to more vCPUs in production.
+fn band_rows(h: usize, workers: usize) -> usize {
+    h.div_ceil(workers.clamp(1, h.max(1))).max(1)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn render_threads() -> usize {
+    1
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn render_threads() -> usize {
+    std::env::var("WORLDGEN_RENDER_THREADS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
+}
+
+/// One band of [`GlobeTextureJob::step_elevation`].
+fn elevation_band(
+    map: &WorldMap,
+    w: usize,
+    h: usize,
+    row0: usize,
+    elev: &mut [f32],
+    rain: &mut [f32],
+) {
+    let tectonics = map.elev_field.tectonics();
+    for (i, (e_row, r_row)) in elev.chunks_mut(w).zip(rain.chunks_mut(w)).enumerate() {
+        let ty = row0 + i;
+        let sy = (ty as f64 + 0.5) / h as f64 * SHEET_HEIGHT;
+        for tx in 0..w {
+            let sx = (tx as f64 + 0.5) / w as f64 * SHEET_WIDTH;
+            let sphere = xy_to_sphere(sx, sy);
+            let warped = map.elev_field.warp(&sphere);
+            let e = map.elev_field.sample_prewarped(&sphere, &warped);
+            let above = climate::amplify_elevation(e - map.sea_level, map.uwp.hydrographics());
+            e_row[tx] = above as f32;
+            if let Some(tec) = tectonics {
+                r_row[tx] = tec.rain_shadow_at_warped(&warped) as f32;
+            }
+        }
+    }
+}
+
+/// One band of [`GlobeTextureJob::step_color`].
+///
+/// `elev` and `rain` are the *whole* fields, not this band's slice:
+/// continentality reads a neighbourhood that crosses band boundaries.
+#[allow(clippy::too_many_arguments)]
+fn color_band(
+    map: &WorldMap,
+    detail: &DetailField,
+    w: usize,
+    h: usize,
+    row0: usize,
+    elev: &[f32],
+    rain: &[f32],
+    color: &mut [(u8, u8, u8)],
+) {
+    for (i, c_row) in color.chunks_mut(w).enumerate() {
+        let ty = row0 + i;
+        let sy = (ty as f64 + 0.5) / h as f64 * SHEET_HEIGHT;
+        for tx in 0..w {
+            let sx = (tx as f64 + 0.5) / w as f64 * SHEET_WIDTH;
+            let sphere = xy_to_sphere(sx, sy);
+            let above = elev[ty * w + tx] as f64;
+
+            let raw_t = climate::temperature_at_wobbled(&sphere, &map.temp_field);
+            let t = climate::apply_lapse(
+                climate::adjust_temperature(raw_t, &map.uwp),
+                above,
+                &map.uwp,
+            );
+
+            // Rain shadow was computed in step_elevation, which already
+            // had the warped point in hand.
+            let mut hu = map.humidity_field.sample(&sphere, &map.uwp);
+            hu = colormap::rain_shadow_adjustment(hu, rain[ty * w + tx] as f64);
+            hu = climate::apply_altitude_drying(hu, above);
+            if above > 0.0 {
+                let cont = continentality_wrapped(elev, w, h, tx, ty);
+                hu = super::raster::apply_continentality(hu, cont);
+            }
+            let (mottle, grain) = detail.sample(&sphere);
+            c_row[tx] = orbital::surface_color(above, t, hu, mottle, grain);
+        }
+    }
+}
+
+/// One band of [`GlobeTextureJob::populate_clouds`].
+fn cloud_band(field: &CloudField, w: usize, h: usize, row0: usize, clouds: &mut [u8]) {
+    for (i, row) in clouds.chunks_mut(w).enumerate() {
+        let ty = row0 + i;
+        let sy = (ty as f64 + 0.5) / h as f64 * SHEET_HEIGHT;
+        for (tx, out) in row.iter_mut().enumerate() {
+            let sx = (tx as f64 + 0.5) / w as f64 * SHEET_WIDTH;
+            let a = field.opacity_at(&xy_to_sphere(sx, sy));
+            *out = (a * 255.0).round().clamp(0.0, 255.0) as u8;
+        }
+    }
+}
+
 impl GlobeTextureJob {
     /// The build pipeline, in order.
     ///
@@ -333,6 +453,15 @@ impl GlobeTextureJob {
         ("city lights", Self::populate_city_lights),
     ];
 
+    /// Override the worker count for the row-parallel steps. The output is
+    /// identical whatever this is set to — bands write disjoint slices of the
+    /// same buffers and read only shared state — so this exists for tests and
+    /// for measuring scaling, not to trade quality for speed.
+    pub fn with_workers(mut self, workers: usize) -> Self {
+        self.workers = workers.max(1);
+        self
+    }
+
     /// Build with no cloud deck. The step still runs in sequence, it just
     /// does nothing — cheaper than clearing the channel afterwards, and it
     /// keeps `STEPS` the single description of the pipeline.
@@ -346,6 +475,7 @@ impl GlobeTextureJob {
         Self {
             width,
             height,
+            workers: render_threads(),
             clouds_enabled: true,
             elev: vec![0f32; n],
             rain_shadow: vec![0f32; n],
@@ -363,22 +493,26 @@ impl GlobeTextureJob {
     /// Both outputs come from one [`ElevationField::warp`] call — see
     /// [`Self::rain_shadow`] for why they're computed together.
     pub fn step_elevation(&mut self, map: &WorldMap) {
-        let w = self.width as usize;
-        let tectonics = map.elev_field.tectonics();
-        for ty in 0..self.height as usize {
-            let sy = (ty as f64 + 0.5) / self.height as f64 * SHEET_HEIGHT;
-            for tx in 0..w {
-                let sx = (tx as f64 + 0.5) / self.width as f64 * SHEET_WIDTH;
-                let sphere = xy_to_sphere(sx, sy);
-                let warped = map.elev_field.warp(&sphere);
-                let e = map.elev_field.sample_prewarped(&sphere, &warped);
-                let above = climate::amplify_elevation(e - map.sea_level, map.uwp.hydrographics());
-                let i = ty * w + tx;
-                self.elev[i] = above as f32;
-                if let Some(tec) = tectonics {
-                    self.rain_shadow[i] = tec.rain_shadow_at_warped(&warped) as f32;
-                }
+        let (w, h) = (self.width as usize, self.height as usize);
+        let rows = band_rows(h, self.workers);
+        let chunk = rows * w;
+        let Self {
+            elev, rain_shadow, ..
+        } = self;
+        let bands = elev
+            .chunks_mut(chunk)
+            .zip(rain_shadow.chunks_mut(chunk))
+            .enumerate();
+
+        #[cfg(not(target_arch = "wasm32"))]
+        std::thread::scope(|scope| {
+            for (bi, (e, r)) in bands {
+                scope.spawn(move || elevation_band(map, w, h, bi * rows, e, r));
             }
+        });
+        #[cfg(target_arch = "wasm32")]
+        for (bi, (e, r)) in bands {
+            elevation_band(map, w, h, bi * rows, e, r);
         }
     }
 
@@ -390,35 +524,33 @@ impl GlobeTextureJob {
     /// palette, but blended, mottled by a detail field and tone-curved. The
     /// flat map stays a precision instrument; the globe gets to be a photo.
     pub fn step_color(&mut self, map: &WorldMap) {
-        let w = self.width as usize;
-        let h = self.height as usize;
+        let (w, h) = (self.width as usize, self.height as usize);
+        let rows = band_rows(h, self.workers);
+        let chunk = rows * w;
         let detail = DetailField::from_uwp(&map.uwp, map.seed);
-        for ty in 0..h {
-            let sy = (ty as f64 + 0.5) / self.height as f64 * SHEET_HEIGHT;
-            for tx in 0..w {
-                let sx = (tx as f64 + 0.5) / self.width as f64 * SHEET_WIDTH;
-                let sphere = xy_to_sphere(sx, sy);
-                let above = self.elev[ty * w + tx] as f64;
+        let Self {
+            elev,
+            rain_shadow,
+            color,
+            ..
+        } = self;
+        // Shared, not per-band: continentality reads across band edges.
+        let elev: &[f32] = elev;
+        let rain: &[f32] = rain_shadow;
+        let bands = color.chunks_mut(chunk).enumerate();
 
-                let raw_t = climate::temperature_at_wobbled(&sphere, &map.temp_field);
-                let t = climate::apply_lapse(
-                    climate::adjust_temperature(raw_t, &map.uwp),
-                    above,
-                    &map.uwp,
-                );
-
-                // Rain shadow was computed in step_elevation, which already
-                // had the warped point in hand.
-                let mut hu = map.humidity_field.sample(&sphere, &map.uwp);
-                hu = colormap::rain_shadow_adjustment(hu, self.rain_shadow[ty * w + tx] as f64);
-                hu = climate::apply_altitude_drying(hu, above);
-                if above > 0.0 {
-                    let cont = continentality_wrapped(&self.elev, w, h, tx, ty);
-                    hu = super::raster::apply_continentality(hu, cont);
-                }
-                let (mottle, grain) = detail.sample(&sphere);
-                self.color[ty * w + tx] = orbital::surface_color(above, t, hu, mottle, grain);
+        #[cfg(not(target_arch = "wasm32"))]
+        std::thread::scope(|scope| {
+            let detail = &detail;
+            for (bi, c) in bands {
+                scope.spawn(move || {
+                    color_band(map, detail, w, h, bi * rows, elev, rain, c);
+                });
             }
+        });
+        #[cfg(target_arch = "wasm32")]
+        for (bi, c) in bands {
+            color_band(map, &detail, w, h, bi * rows, elev, rain, c);
         }
     }
 
@@ -436,14 +568,21 @@ impl GlobeTextureJob {
         let Some(field) = CloudField::from_uwp(&map.uwp, map.seed) else {
             return;
         };
-        let w = self.width as usize;
-        for ty in 0..self.height as usize {
-            let sy = (ty as f64 + 0.5) / self.height as f64 * SHEET_HEIGHT;
-            for tx in 0..w {
-                let sx = (tx as f64 + 0.5) / self.width as f64 * SHEET_WIDTH;
-                let a = field.opacity_at(&xy_to_sphere(sx, sy));
-                self.clouds[ty * w + tx] = (a * 255.0).round().clamp(0.0, 255.0) as u8;
+        let (w, h) = (self.width as usize, self.height as usize);
+        let rows = band_rows(h, self.workers);
+        let chunk = rows * w;
+        let bands = self.clouds.chunks_mut(chunk).enumerate();
+
+        #[cfg(not(target_arch = "wasm32"))]
+        std::thread::scope(|scope| {
+            let field = &field;
+            for (bi, c) in bands {
+                scope.spawn(move || cloud_band(field, w, h, bi * rows, c));
             }
+        });
+        #[cfg(target_arch = "wasm32")]
+        for (bi, c) in bands {
+            cloud_band(&field, w, h, bi * rows, c);
         }
     }
 
@@ -1366,6 +1505,45 @@ mod tests {
         );
         assert_eq!(bare.rgb, built.rgb, "clouds must not touch the albedo");
         assert_eq!(bare.emissive, built.emissive);
+    }
+
+    /// The row-parallel steps must produce byte-identical output whatever
+    /// the worker count is.
+    ///
+    /// This is the whole safety argument for the threading, stated as a test:
+    /// bands write disjoint slices and read only shared immutable state, so
+    /// splitting the work differently cannot change the result. If that ever
+    /// stops holding — a step gains a running accumulator, or starts reading a
+    /// buffer another band is still writing — the planet's appearance would
+    /// silently depend on the machine it rendered on, and the GCS cache would
+    /// then serve whichever version won the race.
+    #[test]
+    fn texture_is_independent_of_worker_count() {
+        let map = super::super::generate("D8867BB-1", 1, Some("Noricum")).unwrap();
+        let build = |workers: usize| {
+            let mut job = GlobeTextureJob::new(256, 128).with_workers(workers);
+            for (_, step) in GlobeTextureJob::STEPS {
+                step(&mut job, &map);
+            }
+            job.into_texture()
+        };
+        let serial = build(1);
+        for workers in [2, 3, 7, 64] {
+            let parallel = build(workers);
+            assert_eq!(serial.rgb, parallel.rgb, "rgb differs at {workers} workers");
+            assert_eq!(
+                serial.normal_xy, parallel.normal_xy,
+                "normals differ at {workers} workers"
+            );
+            assert_eq!(
+                serial.clouds, parallel.clouds,
+                "clouds differ at {workers} workers"
+            );
+            assert_eq!(
+                serial.emissive, parallel.emissive,
+                "emissive differs at {workers} workers"
+            );
+        }
     }
 
     /// The normal map is a lossy round trip — gradient to unit normal to two

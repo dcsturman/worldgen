@@ -106,9 +106,21 @@ docker buildx build --platform linux/amd64 \
 # Deploy to Cloud Run with environment variables. `--set-env-vars`
 # replaces all existing vars, so every var the backend needs has to be
 # named explicitly here — adding GCS_BUCKET to the existing trio.
+#
+# --cpu/--memory are stated explicitly rather than left to whatever the
+# service happens to have. The globe texture build splits across cores
+# (see `band_rows` in src/worldmap/globe.rs), so the vCPU count is a
+# performance parameter of the renderer, not just a capacity knob: at 1
+# vCPU a cold 2048x1024 globe takes ~24 s, at 4 it takes ~9 s, which is
+# what keeps it under the "up to ~15 seconds" the TravellerMap client
+# promises the user while it spins. 4 vCPU requires at least 2 GiB on
+# Cloud Run, hence the memory. Leaving these implicit would mean a future
+# deploy from a fresh checkout silently reverting the fix.
 gcloud run deploy worldgen \
   --image gcr.io/$GCP_PROJECT/worldgen \
   --region us-central1 \
   --platform managed \
   --allow-unauthenticated \
+  --cpu 4 \
+  --memory 2Gi \
   --set-env-vars GCP_PROJECT=$GCP_PROJECT,FIRESTORE_DATABASE_ID=worldgen,GCS_BUCKET=$GCS_BUCKET,RUST_LOG=info
