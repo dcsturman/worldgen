@@ -96,6 +96,22 @@ gcp_auth = { version = "0.12", optional = true }
 # codegen unit lets the linker drop unused code aggressively across the
 # whole crate graph; strip removes debug symbols (the dominant bloat in
 # the previous 36 MB debug build); panic = "abort" elides the unwinder.
+# Optimize dependencies even in debug builds.
+#
+# The test suite spends nearly all of its time inside `noise` evaluating
+# simplex fBm — a planet render is millions of texels, each costing tens of
+# noise evaluations, and the domain warp that gives us fractal coastlines
+# multiplied that again. Unoptimized, a single `planet_png_scaled` test took
+# over a minute, and CI ran for thirteen.
+#
+# Optimizing only dependencies keeps our own code compiled the way `cargo
+# test` normally compiles it — full debug info, real line numbers in panics,
+# assertions intact — while the hot numeric library underneath runs at release
+# speed. The alternative, cutting tests out of CI, buys the same minutes by
+# giving up coverage.
+[profile.dev.package."*"]
+opt-level = 3
+
 [profile.release]
 opt-level = "z"
 lto = "fat"

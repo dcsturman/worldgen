@@ -16,7 +16,22 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+
+    # Without this, every run recompiled the entire dependency graph from
+    # scratch — leptos, tokio, the whole tree — before a single test ran.
+    # That was the larger half of a thirteen-minute CI; the other half was
+    # unoptimized noise evaluation in the planet renders, addressed by
+    # `[profile.dev.package."*"] opt-level = 3` in Cargo.toml.
+    #
+    # The cache is keyed on the lockfile and the compiler version, so a
+    # dependency bump invalidates it and nothing else does.
+    - name: Cache cargo build
+      uses: Swatinem/rust-cache@v2
+
     - name: Build
       run: cargo build --verbose
+
+    # No `--verbose`: it prints every compiler invocation, which buries the
+    # actual failure when there is one.
     - name: Run tests
-      run: cargo test --verbose
+      run: cargo test
