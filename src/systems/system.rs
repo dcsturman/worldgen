@@ -167,6 +167,9 @@ pub struct SystemOverrides {
 #[cfg_attr(feature = "frontend", derive(Store))]
 pub struct System {
     pub name: String,
+    /// Constraints this system couldn't honour. Populated during placement;
+    /// read via [`System::dropped_constraints`], which walks companions too.
+    pub dropped: Vec<DroppedConstraint>,
     pub star: Star,
     #[cfg_attr(feature = "frontend", store)]
     pub secondary: Option<Box<System>>,
@@ -280,6 +283,93 @@ pub struct Star {
     pub size: StarSize,
 }
 
+/// Which kind of body a dropped constraint described.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BodyKind {
+    Planet,
+    Belt,
+    GasGiant,
+    Moon,
+    Empty,
+}
+
+impl std::fmt::Display for BodyKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            BodyKind::Planet => "planet",
+            BodyKind::Belt => "belt",
+            BodyKind::GasGiant => "gas giant",
+            BodyKind::Moon => "moon",
+            BodyKind::Empty => "empty orbit",
+        })
+    }
+}
+
+/// A constraint the generator accepted but could not honour.
+///
+/// Distinct from [`ConstraintError`], which rejects a constraint set before
+/// generation starts. These arise *during* placement, when a constraint is
+/// individually valid but doesn't fit the system that got rolled — a pinned
+/// orbit past the star's last one, a slot already taken by a companion star.
+///
+/// They were `warn!` calls until this existed, which in practice meant they
+/// vanished: the system generated, looked plausible, and silently omitted
+/// something the author had explicitly asked for. Curated overrides make that
+/// intolerable — the whole point of writing one down is that it shows up —
+/// so they're a returned value now, and the validator treats any of them as
+/// a failure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DroppedConstraint {
+    /// Pinned orbit is past the system's last orbit.
+    OrbitOutOfRange {
+        body: BodyKind,
+        orbit: i32,
+        max_orbits: usize,
+    },
+    /// Pinned orbit was already occupied.
+    OrbitOccupied { body: BodyKind, orbit: i32 },
+    /// No orbit was pinned and the system had no free orbit left.
+    NoFreeOrbit { body: BodyKind },
+    /// A negative orbit, which can't refer to anything.
+    NegativeOrbit { body: BodyKind, orbit: i32 },
+    /// A moon's parent orbit is outside the system.
+    MoonParentOutOfRange { parent_orbit: i32 },
+    /// A moon's parent orbit holds something that can't have moons.
+    MoonParentCannotHoldMoons { parent_orbit: i32 },
+}
+
+impl std::fmt::Display for DroppedConstraint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DroppedConstraint::OrbitOutOfRange {
+                body,
+                orbit,
+                max_orbits,
+            } => write!(
+                f,
+                "{body} pinned to orbit {orbit}, but the system only has {max_orbits} orbits"
+            ),
+            DroppedConstraint::OrbitOccupied { body, orbit } => {
+                write!(f, "{body} pinned to orbit {orbit}, which is already occupied")
+            }
+            DroppedConstraint::NoFreeOrbit { body } => {
+                write!(f, "{body} has no pinned orbit and the system has no free one")
+            }
+            DroppedConstraint::NegativeOrbit { body, orbit } => {
+                write!(f, "{body} pinned to negative orbit {orbit}")
+            }
+            DroppedConstraint::MoonParentOutOfRange { parent_orbit } => write!(
+                f,
+                "moon references parent orbit {parent_orbit}, which is outside the system"
+            ),
+            DroppedConstraint::MoonParentCannotHoldMoons { parent_orbit } => write!(
+                f,
+                "moon references parent orbit {parent_orbit}, which holds nothing that can have moons"
+            ),
+        }
+    }
+}
+
 /// Contents of an orbital slot
 ///
 /// Represents what occupies a specific orbital position in the system.
@@ -319,6 +409,7 @@ impl System {
     ) -> System {
         System {
             name: gen_star_system_name(),
+            dropped: Vec::new(),
             star: Star {
                 star_type,
                 subtype,
@@ -698,11 +789,45 @@ impl System {
         while viable_outer_orbits.len() + viable_inner_orbits.len() > 0 && num_giants > 0 {
             // If the override at this index pins an orbit and that
             // orbit is currently viable (i.e. empty and within range),
-            // honor it. Otherwise fall back to the random pick.
-            let pinned_orbit: Option<usize> = overrides
-                .and_then(|list| list.get(placed_idx).and_then(|o| o.orbit))
-                .and_then(|o| if o >= 0 { Some(o as usize) } else { None })
-                .filter(|o| viable_outer_orbits.contains(o) || viable_inner_orbits.contains(o));
+            // honor it. Otherwise fall back to the random pick — and record
+            // why, which the old `.filter()` did not.
+            //
+            // This path fails more quietly than the planet and belt ones: an
+            // unhonourable pin didn't drop the giant, it placed it somewhere
+            // else at random. You asked for orbit 5, got orbit 9, and nothing
+            // anywhere said so.
+            let requested: Option<i32> = overrides
+                .and_then(|list| list.get(placed_idx).and_then(|o| o.orbit));
+            let max_orbits = self.get_max_orbits();
+            let pinned_orbit: Option<usize> = match requested {
+                None => None,
+                Some(o) if o < 0 => {
+                    self.dropped.push(DroppedConstraint::NegativeOrbit {
+                        body: BodyKind::GasGiant,
+                        orbit: o,
+                    });
+                    None
+                }
+                Some(o) => {
+                    let ou = o as usize;
+                    if viable_outer_orbits.contains(&ou) || viable_inner_orbits.contains(&ou) {
+                        Some(ou)
+                    } else if ou >= max_orbits {
+                        self.dropped.push(DroppedConstraint::OrbitOutOfRange {
+                            body: BodyKind::GasGiant,
+                            orbit: o,
+                            max_orbits,
+                        });
+                        None
+                    } else {
+                        self.dropped.push(DroppedConstraint::OrbitOccupied {
+                            body: BodyKind::GasGiant,
+                            orbit: o,
+                        });
+                        None
+                    }
+                }
+            };
 
             let orbit = if let Some(o) = pinned_orbit {
                 viable_outer_orbits.retain(|x| *x != o);
@@ -1140,11 +1265,31 @@ impl System {
             // edge case.
             let orbit = match p.orbit {
                 Some(o) => {
-                    let o_usize = o.max(0) as usize;
-                    if o_usize >= self.get_max_orbits() || !self.is_slot_empty(o_usize) {
-                        warn!(
-                            "Planet constraint for orbit {o} can't be placed (occupied or out of range); skipping"
-                        );
+                    if o < 0 {
+                        self.dropped.push(DroppedConstraint::NegativeOrbit {
+                            body: BodyKind::Planet,
+                            orbit: o,
+                        });
+                        continue;
+                    }
+                    let o_usize = o as usize;
+                    // Reported separately: "out of range" means the system
+                    // wasn't grown far enough for a high pinned orbit, which
+                    // is our bug; "occupied" means the constraint collided
+                    // with something, which is the author's to resolve.
+                    if o_usize >= self.get_max_orbits() {
+                        self.dropped.push(DroppedConstraint::OrbitOutOfRange {
+                            body: BodyKind::Planet,
+                            orbit: o,
+                            max_orbits: self.get_max_orbits(),
+                        });
+                        continue;
+                    }
+                    if !self.is_slot_empty(o_usize) {
+                        self.dropped.push(DroppedConstraint::OrbitOccupied {
+                            body: BodyKind::Planet,
+                            orbit: o,
+                        });
                         continue;
                     }
                     o_usize
@@ -1152,7 +1297,9 @@ impl System {
                 None => match self.get_unused_orbits().first() {
                     Some(o) => *o,
                     None => {
-                        warn!("Planet constraint with no orbit and no empty slots; skipping");
+                        self.dropped.push(DroppedConstraint::NoFreeOrbit {
+                            body: BodyKind::Planet,
+                        });
                         continue;
                     }
                 },
@@ -1198,11 +1345,27 @@ impl System {
         for b in belts {
             let orbit = match b.orbit {
                 Some(o) => {
-                    let o_usize = o.max(0) as usize;
-                    if o_usize >= self.get_max_orbits() || !self.is_slot_empty(o_usize) {
-                        warn!(
-                            "Belt constraint for orbit {o} can't be placed (occupied or out of range); skipping"
-                        );
+                    if o < 0 {
+                        self.dropped.push(DroppedConstraint::NegativeOrbit {
+                            body: BodyKind::Belt,
+                            orbit: o,
+                        });
+                        continue;
+                    }
+                    let o_usize = o as usize;
+                    if o_usize >= self.get_max_orbits() {
+                        self.dropped.push(DroppedConstraint::OrbitOutOfRange {
+                            body: BodyKind::Belt,
+                            orbit: o,
+                            max_orbits: self.get_max_orbits(),
+                        });
+                        continue;
+                    }
+                    if !self.is_slot_empty(o_usize) {
+                        self.dropped.push(DroppedConstraint::OrbitOccupied {
+                            body: BodyKind::Belt,
+                            orbit: o,
+                        });
                         continue;
                     }
                     o_usize
@@ -1210,7 +1373,9 @@ impl System {
                 None => match self.get_unused_orbits().first() {
                     Some(o) => *o,
                     None => {
-                        warn!("Belt constraint with no orbit and no empty slots; skipping");
+                        self.dropped.push(DroppedConstraint::NoFreeOrbit {
+                            body: BodyKind::Belt,
+                        });
                         continue;
                     }
                 },
@@ -1265,6 +1430,33 @@ impl System {
             + overrides.planets.len()
             + overrides.belts.len()
             + overrides.gas_giants.as_ref().map_or(0, |g| g.len());
+
+        // A pinned orbit needs the system to reach *that index*, which
+        // counting bodies doesn't guarantee. "The gas giant is at orbit 12"
+        // in a ten-orbit system used to grow the list by the number of
+        // constraints — two or three slots — leaving orbit 12 still out of
+        // range, and the body was then dropped. Grow to whichever demand is
+        // larger.
+        let highest_pinned = overrides
+            .planets
+            .iter()
+            .filter_map(|p| p.orbit)
+            .chain(overrides.belts.iter().filter_map(|b| b.orbit))
+            .chain(
+                overrides
+                    .gas_giants
+                    .iter()
+                    .flat_map(|g| g.iter().filter_map(|g| g.orbit)),
+            )
+            .chain(overrides.empties.iter().copied())
+            .filter(|o| *o >= 0)
+            .max()
+            .map(|o| o as usize + 1)
+            .unwrap_or(0);
+        if highest_pinned > self.get_max_orbits() {
+            self.set_max_orbits(highest_pinned - 1);
+        }
+
         let empty = self.get_unused_orbits().len();
         if empty < required {
             let deficit = required - empty;
@@ -1284,15 +1476,19 @@ impl System {
     fn apply_empty_constraints(&mut self, empties: &[i32]) {
         for &orbit in empties {
             if orbit < 0 {
-                warn!("Empty constraint with negative orbit ({orbit}); skipping");
+                self.dropped.push(DroppedConstraint::NegativeOrbit {
+                    body: BodyKind::Empty,
+                    orbit,
+                });
                 continue;
             }
             let o = orbit as usize;
             if o >= self.get_max_orbits() {
-                warn!(
-                    "Empty constraint at orbit {orbit} is past the system's max ({}); skipping",
-                    self.get_max_orbits()
-                );
+                self.dropped.push(DroppedConstraint::OrbitOutOfRange {
+                    body: BodyKind::Empty,
+                    orbit,
+                    max_orbits: self.get_max_orbits(),
+                });
                 continue;
             }
             self.set_orbit_slot(o, OrbitContent::Blocked);
@@ -1310,14 +1506,16 @@ impl System {
         for m in moons {
             let parent_orbit = m.parent_orbit;
             if parent_orbit < 0 {
-                warn!("Moon constraint with negative parent_orbit ({parent_orbit}); skipping");
+                self.dropped.push(DroppedConstraint::NegativeOrbit {
+                    body: BodyKind::Moon,
+                    orbit: parent_orbit,
+                });
                 continue;
             }
             let parent_idx = parent_orbit as usize;
             if parent_idx >= self.orbit_slots.len() {
-                warn!(
-                    "Moon constraint references parent_orbit {parent_orbit} which is out of range; skipping"
-                );
+                self.dropped
+                    .push(DroppedConstraint::MoonParentOutOfRange { parent_orbit });
                 continue;
             }
 
@@ -1388,9 +1586,9 @@ impl System {
                     );
                     parent.push_satellite(satellite);
                 }
-                _ => warn!(
-                    "Moon constraint parent_orbit {parent_orbit} doesn't reference a World or GasGiant; skipping"
-                ),
+                _ => self
+                    .dropped
+                    .push(DroppedConstraint::MoonParentCannotHoldMoons { parent_orbit }),
             }
         }
     }
@@ -1417,10 +1615,30 @@ impl System {
     }
 }
 
+impl System {
+    /// Every constraint this system and its companions failed to honour.
+    ///
+    /// Walks the tree because companions are `System`s in their own right
+    /// and place their own constrained bodies — a drop inside a companion is
+    /// just as much a failure to honour the author's intent as one in the
+    /// primary, and reporting only the primary's would hide it.
+    pub fn dropped_constraints(&self) -> Vec<DroppedConstraint> {
+        let mut all = self.dropped.clone();
+        for child in [self.secondary.as_deref(), self.tertiary.as_deref()]
+            .into_iter()
+            .flatten()
+        {
+            all.extend(child.dropped_constraints());
+        }
+        all
+    }
+}
+
 impl Default for System {
     fn default() -> Self {
         Self {
             name: "Unknown".to_string(),
+            dropped: Vec::new(),
             star: Star {
                 star_type: StarType::G,
                 subtype: 0,
@@ -1983,6 +2201,74 @@ mod tests {
     use std::collections::HashMap;
 
     #[test_log::test]
+    /// A body pinned to a high orbit must actually land there.
+    ///
+    /// `ensure_orbits_for_constraints` used to grow the system by the
+    /// *count* of constrained bodies, not by the highest orbit any of them
+    /// asked for — so "the gas giant is at orbit 12", which is exactly the
+    /// sort of fact source material gives you, produced a system of ten
+    /// orbits and quietly no gas giant.
+    #[test]
+    fn a_high_pinned_orbit_grows_the_system_to_fit() {
+        let mut cs = SystemConstraints::from_main_world("Pourne", "A9B2887-A").unwrap();
+        cs.bodies.push(Constraint::GasGiant {
+            name: None,
+            orbit: Some(12),
+            size: None,
+            num_satellites: None,
+        });
+        let sys = System::generate_from_constraints_seeded(3, cs).expect("generates");
+        assert_eq!(
+            sys.dropped_constraints(),
+            Vec::new(),
+            "constraint was dropped rather than honoured"
+        );
+        assert!(
+            matches!(
+                sys.orbit_slots.get(12),
+                Some(Some(OrbitContent::GasGiant(_)))
+            ),
+            "orbit 12 holds {:?}",
+            sys.orbit_slots.get(12)
+        );
+    }
+
+    /// The diagnostics have to say which of the two kinds a failure is:
+    /// out-of-range is the generator failing to make room, occupied is the
+    /// author's constraints colliding. Conflating them sends you to edit the
+    /// wrong thing.
+    #[test]
+    fn a_collision_reports_occupied_not_out_of_range() {
+        let mut cs = SystemConstraints::from_main_world("Pourne", "A9B2887-A").unwrap();
+        // Two constraints on one orbit is caught by `validate` before
+        // generation, which is the better outcome and not what this test is
+        // about. The collisions that reach placement are the ones validation
+        // can't see: here a companion star takes orbit 4, and a planet is
+        // pinned to it.
+        cs.bodies.push(Constraint::Star {
+            orbit: Some(StarOrbit::System(4)),
+            spectral: Some(StarType::M),
+            subtype: Some(5),
+            size: Some(StarSize::V),
+            name: None,
+        });
+        cs.bodies.push(Constraint::Planet {
+            name: Some("Doomed".into()),
+            orbit: Some(4),
+            uwp: None,
+            num_satellites: None,
+            is_mainworld: false,
+        });
+        let sys = System::generate_from_constraints_seeded(5, cs).expect("generates");
+        let dropped = sys.dropped_constraints();
+        assert!(
+            dropped
+                .iter()
+                .any(|d| matches!(d, DroppedConstraint::OrbitOccupied { orbit: 4, .. })),
+            "expected an OrbitOccupied at 4, got {dropped:?}"
+        );
+    }
+
     /// Naming the system names every body that doesn't carry a name of its
     /// own — "Merak Mists III" and friends are built from it. That's the
     /// reason the field exists; a name that only labelled the star would be
