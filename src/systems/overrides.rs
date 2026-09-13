@@ -31,6 +31,10 @@ use crate::systems::system::StarOrbit;
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OverrideFile {
+    /// Free-text header so the file explains itself to whoever opens it.
+    /// Named with a leading underscore to read as "not data".
+    #[serde(default, rename = "_comment", skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
     pub overrides: Vec<SystemOverride>,
 }
 
@@ -390,6 +394,59 @@ fn is_anonymous_pbg_filler(c: &Constraint) -> bool {
     }
 }
 
+/// The override file, compiled into the binary.
+///
+/// Compiled in rather than read at runtime because deploy *is* the update
+/// mechanism: there's no filesystem in the container worth depending on, no
+/// per-request I/O, and a malformed file becomes a build failure instead of
+/// a production surprise. `include_str!` also works on wasm, so the frontend
+/// sees the same data as the server.
+const OVERRIDES_JSON: &str = include_str!("../../data/overrides.json");
+
+/// Parsed overrides, keyed by [`canonical_key`].
+///
+/// Panics on a malformed file. That is deliberate: the file ships inside the
+/// binary, so a parse failure means the build was broken before it left the
+/// machine, and there is no sensible way to serve half of a curated data set.
+/// The validator catches it long before this does.
+fn table() -> &'static std::collections::HashMap<String, SystemOverride> {
+    static TABLE: std::sync::OnceLock<std::collections::HashMap<String, SystemOverride>> =
+        std::sync::OnceLock::new();
+    TABLE.get_or_init(|| {
+        let file: OverrideFile = serde_json::from_str(OVERRIDES_JSON)
+            .expect("data/overrides.json is malformed — run the override validator");
+        file.overrides
+            .into_iter()
+            .map(|o| (canonical_key(&o.sector, &o.hex), o))
+            .collect()
+    })
+}
+
+/// Every override, for validation and tooling.
+pub fn all() -> Vec<&'static SystemOverride> {
+    table().values().collect()
+}
+
+/// The override for one system, if there is one.
+pub fn lookup(sector: &str, hex: &str) -> Option<&'static SystemOverride> {
+    table().get(&canonical_key(sector, hex))
+}
+
+/// Merge the override for `(sector, hex)` into `cs`, if one exists.
+///
+/// The single entry point both the server and the validator go through, so
+/// what the validator checks is exactly what production will generate.
+pub fn apply(
+    sector: &str,
+    hex: &str,
+    cs: crate::systems::constraint::SystemConstraints,
+) -> Result<crate::systems::constraint::SystemConstraints, String> {
+    match lookup(sector, hex) {
+        Some(o) => o.merge_into(cs),
+        None => Ok(cs),
+    }
+}
+
 /// Canonical lookup key for a system.
 ///
 /// Sector names arrive spelled however the caller spells them, and
@@ -626,6 +683,45 @@ mod tests {
             Constraint::Planet { name: Some(n), .. } if n == "Pourne"
         ));
         assert_eq!(count(&merged, 1), 2, "Novastron was added alongside it");
+    }
+
+    /// The shipped file must parse. It's compiled in, so a broken one is a
+    /// broken build — but `table()` only parses on first use, which could be
+    /// deep inside a request. This makes it a test failure instead.
+    #[test]
+    fn the_shipped_override_file_parses() {
+        let file: OverrideFile =
+            serde_json::from_str(OVERRIDES_JSON).expect("data/overrides.json parses");
+        // Every body must lower cleanly too — a parseable file can still
+        // contain an unparseable star class or UWP.
+        for o in &file.overrides {
+            for b in &o.bodies {
+                b.to_constraint()
+                    .unwrap_or_else(|e| panic!("{} {}: {e}", o.sector, o.hex));
+            }
+        }
+    }
+
+    /// Keys must be unique: two entries for one system would mean one of them
+    /// silently never applies, depending on map insertion order.
+    #[test]
+    fn no_two_overrides_claim_the_same_system() {
+        let file: OverrideFile = serde_json::from_str(OVERRIDES_JSON).unwrap();
+        let mut seen = std::collections::HashSet::new();
+        for o in &file.overrides {
+            let k = canonical_key(&o.sector, &o.hex);
+            assert!(seen.insert(k.clone()), "two overrides for {k}");
+        }
+    }
+
+    /// The overwhelmingly common path: no override, constraints untouched.
+    #[test]
+    fn apply_is_a_no_op_for_a_system_with_no_override() {
+        let before = pourne_constraints(2, 1, 3);
+        let n_before = before.bodies.len();
+        let after = apply("Nowhere In Particular", "0000", before).unwrap();
+        assert_eq!(after.bodies.len(), n_before);
+        assert_eq!(after.system_name, None);
     }
 
     #[test]

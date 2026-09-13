@@ -1,0 +1,4 @@
+{
+  "_comment": "Curated per-system facts, merged into generation. See src/systems/overrides.rs for the schema and scripts/ for the validator. Keyed by (sector, hex); 'world' is checked against TravellerMap so a mistyped hex fails loudly.",
+  "overrides": []
+}

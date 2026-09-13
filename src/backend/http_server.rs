@@ -344,6 +344,17 @@ fn parse_system_request(query: &str) -> Result<SystemRequest, HttpError> {
     let constraints = build_constraints(name, uwp, &stars, giants, belts, planets)
         .map_err(|e| (422, "Unprocessable Entity", format!("{e}")))?;
 
+    // Fold in anything we know about this system beyond the upstream data —
+    // a named system, a pinned gas giant, a secondary world's UWP. Keyed by
+    // (sector, hex); usually there is nothing and this is a hash lookup that
+    // misses.
+    //
+    // A merge failure is a 500, not a 422: the override file ships inside
+    // this binary, so a bad one is our deployment being wrong, not the
+    // caller's request.
+    let constraints = crate::systems::overrides::apply(sector, hex, constraints)
+        .map_err(|e| (500, "Internal Server Error", format!("override for {sector} {hex}: {e}")))?;
+
     Ok(SystemRequest {
         seed,
         constraints,
