@@ -8,6 +8,25 @@
 set -e
 set -o pipefail
 
+# Per-machine deploy settings, gitignored. Mirrors the pattern in the
+# travellermap repo: copy scripts/deploy.env.example to scripts/deploy.env and
+# fill it in once.
+#
+# This exists because TRAVELLERMAP_URL is baked in at compile time with no
+# runtime override, so a deploy that forgets it produces an image pointing at
+# the public service and behaves completely normally while talking to the
+# wrong server. Nothing surfaces it — production ran that way undetected. A
+# checked-in default can't fix that without imposing one deployment's private
+# host on everyone who forks the repo, so the value belongs to the machine.
+#
+# The file uses ${VAR:-default} form, so anything already exported in the
+# environment still wins for a one-off deploy.
+DEPLOY_ENV="$(dirname "$0")/deploy.env"
+if [ -f "$DEPLOY_ENV" ]; then
+  echo "Loading deploy settings from $DEPLOY_ENV"
+  source "$DEPLOY_ENV"
+fi
+
 # GCS_BUCKET controls the /world endpoint's planet-PNG cache. Without
 # it (or set to "debug"), every /world request regenerates the planet
 # from scratch (~25 s); with it, subsequent calls are served from the
@@ -61,17 +80,9 @@ fi
 # defaults to https://travellermap.com. Prompt now so a future you (or
 # anyone else who comes back to a private deploy after a while) doesn't
 # silently re-bake the public URL into a private build.
-# Our own TravellerMap instance, not the public site. This is a *deployment*
-# default, distinct from the library's compile-time fallback in
-# src/util.rs::travellermap_base_url, which stays public for anyone building
-# the crate outside this deployment.
-#
-# It lives here because the value is baked in at compile time and there is no
-# runtime override: a deploy that forgets it produces an image pointing at
-# travellermap.com with nothing to indicate anything is wrong. That is not
-# hypothetical — production ran that way, and three deploys in one day each
-# re-confirmed the wrong value by matching what was already there.
-DEFAULT_TRAVELLERMAP_URL=https://travellermap.callistoflight.com
+# The public service — correct for anyone who forks this repo and deploys
+# their own copy. A private instance belongs in scripts/deploy.env, not here.
+DEFAULT_TRAVELLERMAP_URL=https://travellermap.com
 if [ -z "$TRAVELLERMAP_URL" ]; then
   echo ""
   echo "TRAVELLERMAP_URL is not set in your shell environment."
@@ -80,7 +91,7 @@ if [ -z "$TRAVELLERMAP_URL" ]; then
   echo "  It's baked into the build, so you have to pick now — there's"
   echo "  no runtime override."
   echo ""
-  echo "  Enter a custom URL (e.g. https://travellermap.com for the public"
+  echo "  Enter a custom URL (e.g. https://my.tmap.local) or press"
   echo "  enter to use the default ($DEFAULT_TRAVELLERMAP_URL)."
   read "TRAVELLERMAP_URL?TravellerMap URL: "
   if [ -z "$TRAVELLERMAP_URL" ]; then

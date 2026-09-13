@@ -40,3 +40,6 @@ yarn-error.log*
 /trade/target
 /trade/target
 *.json
+
+# Per-machine deploy settings (see scripts/deploy.env.example).
+scripts/deploy.env

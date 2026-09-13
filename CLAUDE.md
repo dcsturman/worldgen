@@ -240,18 +240,22 @@ Same value goes everywhere — no per-call URL params, no two-place setup.
   `./scripts/run-frontend.sh` inherit the shell env, so a single
   `export` works for both terminals.
 - **Production (Docker / Cloud Run):** `./scripts/push_image.sh`
-  forwards the shell var as a `--build-arg`; the Dockerfile re-exports
-  it as `ENV` in both build stages so cargo/trunk see it. Unset → the
-  script's own default, **`https://travellermap.callistoflight.com`**
-  (our instance), which is deliberately *not* the same as the library
-  fallback in `src/util.rs` (`https://travellermap.com`, correct for
-  anyone building the crate outside this deployment).
+  forwards the value as a `--build-arg`; the Dockerfile re-exports it
+  as `ENV` in both build stages so cargo/trunk see it.
+
+  Resolution order is **environment → `scripts/deploy.env` → the
+  script's default (`https://travellermap.com`)**. The checked-in
+  default stays public so a fork deploys against the public service;
+  a private instance goes in `scripts/deploy.env`, which is gitignored
+  and per-machine. Copy `scripts/deploy.env.example` to create it —
+  the same pattern the travellermap repo uses. **This deployment's
+  `deploy.env` sets `https://travellermap.callistoflight.com`.**
 
   Getting this wrong is silent. The value is compile-time with no
-  runtime override, so an image built against the public site behaves
+  runtime override, so an image built against the wrong host behaves
   normally and simply talks to the wrong server — production ran that
-  way undetected, and the way to check a deployed build is to grep the
-  wasm:
+  way undetected for some time, and the way to check a deployed build
+  is to grep the wasm:
 
   ```bash
   W=$(curl -s https://tools.callistoflight.com/ | grep -oE 'main-[a-f0-9]+_bg\.wasm' | head -1)
