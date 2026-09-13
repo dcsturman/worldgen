@@ -306,6 +306,8 @@ pub fn build_constraints(
 
     for (i, spec) in stars.iter().enumerate() {
         cs.bodies.push(Constraint::Star {
+            // Stellar data carries classification, never names.
+            name: None,
             orbit: if i == 0 {
                 Some(StarOrbit::Primary)
             } else {

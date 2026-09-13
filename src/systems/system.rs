@@ -47,12 +47,20 @@ use crate::util::{roll_1d6, roll_2d6, roll_10};
 
 /// Overrides for one star — primary, secondary, or tertiary.
 /// `None` on any field means "roll as today."
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone)]
 pub struct StarOverride {
     pub orbit: Option<StarOrbit>,
     pub spectral: Option<StarType>,
     pub subtype: Option<u8>,
     pub size: Option<StarSize>,
+    /// Names this star's system. Not cosmetic: every body that isn't
+    /// explicitly named derives its own from it — `gen_name` builds
+    /// "<system name> <roman numeral>" — so pinning this renames most of
+    /// the system. That is exactly why it's worth pinning when source
+    /// material gives you the name.
+    ///
+    /// This field is why `StarOverride` isn't `Copy`.
+    pub name: Option<String>,
 }
 
 #[derive(Default, Debug, Clone, Copy)]
@@ -481,7 +489,7 @@ impl System {
         primary_type_roll: i32,
         primary_size_roll: i32,
         orbit: StarOrbit,
-        override_: StarOverride,
+        override_: &StarOverride,
     ) -> System {
         let companion_type_roll = roll_2d6() + primary_type_roll;
         let companion_size_roll = roll_2d6() + primary_size_roll;
@@ -495,6 +503,9 @@ impl System {
             .size
             .unwrap_or_else(|| gen_companion_star_size(companion_size_roll));
         let mut companion: System = System::new(star_type, subtype, star_size, orbit, 0);
+        if let Some(n) = &override_.name {
+            companion.name = n.clone();
+        }
         companion.set_max_orbits(gen_max_orbits(&companion.star));
 
         if companion.orbit == StarOrbit::Far {
@@ -506,7 +517,7 @@ impl System {
                     companion_type_roll,
                     companion_size_roll,
                     orbit,
-                    StarOverride::default(),
+                    &StarOverride::default(),
                 ));
 
                 // If the secondary of the secondary is also in a FAR orbit, then it can have a full range of
@@ -1685,7 +1696,7 @@ fn gen_stars(world_mod: i32, companions_possible: bool, overrides: &SystemOverri
         1
     };
 
-    let primary_override = overrides.stars.first().copied().unwrap_or_default();
+    let primary_override = overrides.stars.first().cloned().unwrap_or_default();
     let primary_type_roll = roll_2d6();
     let primary_size_roll = roll_2d6();
     let star_type = primary_override
@@ -1699,12 +1710,20 @@ fn gen_stars(world_mod: i32, companions_possible: bool, overrides: &SystemOverri
         .unwrap_or_else(|| gen_primary_star_size(primary_size_roll, star_type, star_subtype));
 
     let mut system = System::new(star_type, star_subtype, star_size, StarOrbit::Primary, 0);
+    // Applied *after* System::new, which has already rolled a name from the
+    // name tables. Overwriting the result rather than skipping the roll keeps
+    // the RNG stream identical whether or not a name is pinned — so naming a
+    // star doesn't silently re-roll the rest of the system. Same reasoning as
+    // the reserve-then-release dance for the main world's habitable orbit.
+    if let Some(n) = &primary_override.name {
+        system.name = n.clone();
+    }
     let star = system.star;
     system.set_max_orbits(gen_max_orbits(&star));
 
     // Do this for a secondary, which we have with 2 or 3 stars.
     if num_stars >= 2 {
-        let secondary_override = overrides.stars.get(1).copied().unwrap_or_default();
+        let secondary_override = overrides.stars.get(1).cloned().unwrap_or_default();
         let orbit = secondary_override
             .orbit
             .unwrap_or_else(|| gen_companion_orbit(roll_2d6()));
@@ -1714,7 +1733,7 @@ fn gen_stars(world_mod: i32, companions_possible: bool, overrides: &SystemOverri
                     primary_type_roll,
                     primary_size_roll,
                     orbit,
-                    secondary_override,
+                    &secondary_override,
                 )));
             }
             // If the companion has an orbit, but its inside the primary star, just treat it as the primary orbit.
@@ -1723,7 +1742,7 @@ fn gen_stars(world_mod: i32, companions_possible: bool, overrides: &SystemOverri
                     primary_type_roll,
                     primary_size_roll,
                     StarOrbit::Primary,
-                    secondary_override,
+                    &secondary_override,
                 )));
             }
             StarOrbit::System(position) => {
@@ -1731,7 +1750,7 @@ fn gen_stars(world_mod: i32, companions_possible: bool, overrides: &SystemOverri
                     primary_type_roll,
                     primary_size_roll,
                     orbit,
-                    secondary_override,
+                    &secondary_override,
                 )));
                 system.set_orbit_slot(position, OrbitContent::Secondary);
                 empty_orbits_near_companion(&mut system, position);
@@ -1742,7 +1761,7 @@ fn gen_stars(world_mod: i32, companions_possible: bool, overrides: &SystemOverri
     // Do this for a tertiary, which we have with 3 stars.
     // TODO: This is a blatant copy of the code above; how do I DRY this?
     if num_stars == 3 {
-        let tertiary_override = overrides.stars.get(2).copied().unwrap_or_default();
+        let tertiary_override = overrides.stars.get(2).cloned().unwrap_or_default();
         let orbit = tertiary_override
             .orbit
             .unwrap_or_else(|| gen_companion_orbit(roll_2d6() + 4));
@@ -1752,7 +1771,7 @@ fn gen_stars(world_mod: i32, companions_possible: bool, overrides: &SystemOverri
                     primary_type_roll,
                     primary_size_roll,
                     orbit,
-                    tertiary_override,
+                    &tertiary_override,
                 )));
             }
             StarOrbit::System(position) if position as i32 <= get_zone(&star).inside => {
@@ -1760,7 +1779,7 @@ fn gen_stars(world_mod: i32, companions_possible: bool, overrides: &SystemOverri
                     primary_type_roll,
                     primary_size_roll,
                     StarOrbit::Primary,
-                    tertiary_override,
+                    &tertiary_override,
                 )));
             }
             StarOrbit::System(position) => {
@@ -1768,7 +1787,7 @@ fn gen_stars(world_mod: i32, companions_possible: bool, overrides: &SystemOverri
                     primary_type_roll,
                     primary_size_roll,
                     orbit,
-                    tertiary_override,
+                    &tertiary_override,
                 )));
                 system.set_orbit_slot(position, OrbitContent::Tertiary);
                 empty_orbits_near_companion(&mut system, position);
@@ -1793,11 +1812,13 @@ fn collect_overrides(constraints: &SystemConstraints) -> SystemOverrides {
                 spectral,
                 subtype,
                 size,
+                name,
             } => Some(StarOverride {
                 orbit: *orbit,
                 spectral: *spectral,
                 subtype: *subtype,
                 size: *size,
+                name: name.clone(),
             }),
             _ => None,
         })
@@ -1954,6 +1975,105 @@ mod tests {
     use std::collections::HashMap;
 
     #[test_log::test]
+    /// Naming the star names the system, and through it every body that
+    /// doesn't carry a name of its own — "Merak Mists III" and friends are
+    /// built from it. That's the reason this field exists; a star name that
+    /// only labelled the star would be nearly pointless.
+    #[test]
+    fn star_name_constraint_names_the_derived_bodies() {
+        let mut cs = SystemConstraints::from_main_world("Pourne", "A9B2887-A")
+            .expect("main world constraint parses");
+        cs.bodies.push(Constraint::Star {
+            orbit: Some(StarOrbit::Primary),
+            spectral: Some(StarType::F),
+            subtype: Some(3),
+            size: Some(StarSize::V),
+            name: Some("Merak Mists".to_string()),
+        });
+        // Pin an unnamed gas giant so there is definitely a body that has to
+        // derive its name. Without one, the assertion below depends on the
+        // dice rolling up some auto-placed body, which for many seeds they
+        // don't — the system comes out as just the main world.
+        cs.bodies.push(Constraint::GasGiant {
+            name: None,
+            orbit: Some(4),
+            size: None,
+            num_satellites: None,
+        });
+        let sys = System::generate_from_constraints_seeded(42, cs).expect("generates");
+        assert_eq!(sys.name, "Merak Mists");
+
+        // At least one auto-named body should have inherited it. The main
+        // world keeps its own name, so look for a derived one.
+        let derived = sys
+            .orbit_slots
+            .iter()
+            .flatten()
+            .filter_map(|c| match c {
+                OrbitContent::World(w) => Some(w.name.clone()),
+                OrbitContent::GasGiant(g) => Some(g.name.clone()),
+                _ => None,
+            })
+            .filter(|n| n.starts_with("Merak Mists "))
+            .count();
+        assert!(
+            derived > 0,
+            "no body derived its name from the star; slots were {:?}",
+            sys.orbit_slots
+                .iter()
+                .flatten()
+                .map(|c| format!("{c:?}"))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// Pinning the name must not disturb anything else.
+    ///
+    /// `System::new` rolls a name unconditionally and the override
+    /// overwrites the result, rather than skipping the roll — so the RNG
+    /// stream is identical either way. If that ever changes, naming a star
+    /// would quietly re-roll the whole system, which is precisely the kind
+    /// of action-at-a-distance that makes seeded generation untrustworthy.
+    #[test]
+    fn star_name_does_not_perturb_the_rest_of_generation() {
+        let build = |name: Option<&str>| {
+            let mut cs = SystemConstraints::from_main_world("Pourne", "A9B2887-A").unwrap();
+            cs.bodies.push(Constraint::Star {
+                orbit: Some(StarOrbit::Primary),
+                spectral: Some(StarType::F),
+                subtype: Some(3),
+                size: Some(StarSize::V),
+                name: name.map(str::to_string),
+            });
+            System::generate_from_constraints_seeded(7, cs).unwrap()
+        };
+        let unnamed = build(None);
+        let named = build(Some("Merak Mists"));
+
+        assert_eq!(
+            unnamed.orbit_slots.len(),
+            named.orbit_slots.len(),
+            "orbit count changed"
+        );
+        for (i, (a, b)) in unnamed
+            .orbit_slots
+            .iter()
+            .zip(named.orbit_slots.iter())
+            .enumerate()
+        {
+            let kind = |c: &Option<OrbitContent>| match c {
+                None => "empty",
+                Some(OrbitContent::World(_)) => "world",
+                Some(OrbitContent::GasGiant(_)) => "gas giant",
+                Some(OrbitContent::Blocked) => "blocked",
+                Some(OrbitContent::Secondary) => "secondary",
+                Some(OrbitContent::Tertiary) => "tertiary",
+            };
+            assert_eq!(kind(a), kind(b), "orbit {i} changed contents");
+        }
+    }
+
+    #[test]
     fn test_roman_numerals() {
         assert_eq!(arabic_to_roman(1), "I");
         assert_eq!(arabic_to_roman(2), "II");
@@ -2085,6 +2205,7 @@ mod tests {
                 spectral: Some(StarType::F),
                 subtype: Some(4),
                 size: Some(StarSize::V),
+                name: None,
             });
             for _ in 0..4 {
                 cs.bodies.push(Constraint::GasGiant {
@@ -2177,6 +2298,7 @@ mod tests {
                     } else {
                         StarSize::V
                     }),
+                    name: None,
                 });
                 for _ in 0..giants {
                     cs.bodies.push(Constraint::GasGiant {
@@ -2231,6 +2353,7 @@ mod tests {
             spectral: Some(StarType::G),
             subtype: Some(2),
             size: Some(StarSize::V),
+            name: None,
         });
         for _ in 0..6 {
             cs.bodies.push(Constraint::GasGiant {
@@ -2280,18 +2403,21 @@ mod tests {
             spectral: Some(StarType::G),
             subtype: Some(2),
             size: Some(StarSize::V),
+            name: None,
         });
         cs.bodies.push(Constraint::Star {
             orbit: None,
             spectral: Some(StarType::M),
             subtype: Some(9),
             size: Some(StarSize::V),
+            name: None,
         });
         cs.bodies.push(Constraint::Star {
             orbit: None,
             spectral: Some(StarType::M),
             subtype: Some(6),
             size: Some(StarSize::V),
+            name: None,
         });
         let system = System::generate_from_constraints(cs).expect("three stars must generate");
         assert!(

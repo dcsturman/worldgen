@@ -171,6 +171,12 @@ pub enum Constraint {
         /// Subtype digit 0-9 (e.g. the `4` in `F4 II`). `None` rolls.
         subtype: Option<u8>,
         size: Option<StarSize>,
+        /// Names the star's system, and through it most of the system's
+        /// bodies: anything without an explicit name of its own becomes
+        /// "<this name> <roman numeral>". `None` rolls a name from the
+        /// name tables, which is the behaviour every system had before
+        /// this field existed.
+        name: Option<String>,
     },
     Planet {
         name: Option<String>,

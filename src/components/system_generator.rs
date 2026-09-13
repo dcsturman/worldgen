@@ -148,6 +148,12 @@ fn row_to_constraint(row: &ConstraintRow) -> Result<Option<Constraint>, String> 
                 spectral,
                 subtype,
                 size,
+                // No input for this yet: all four star-row cells are spoken
+                // for (orbit kind, orbit number, class, size), so a name
+                // field needs a layout change. Lands with the override
+                // import/export work, where the editor has to be able to
+                // express everything the override file can.
+                name: None,
             }))
         }
         RowKind::MainWorld | RowKind::Planet => {

@@ -117,12 +117,14 @@ mod tests {
             spectral: Some(StarType::G),
             subtype: Some(2),
             size: Some(StarSize::V),
+            name: None,
         });
         cs.bodies.push(Constraint::Star {
             orbit: Some(StarOrbit::Primary),
             spectral: Some(StarType::K),
             subtype: Some(5),
             size: Some(StarSize::V),
+            name: None,
         });
         let sys = System::generate_from_constraints(cs).expect("generated");
         assert!(sys.secondary.is_some());
@@ -143,6 +145,7 @@ mod tests {
             spectral: Some(StarType::G),
             subtype: Some(2),
             size: Some(StarSize::V),
+            name: None,
         });
         cs.bodies.push(Constraint::Star {
             // Pin secondary to a System orbit so the test isn't flaky on
@@ -151,6 +154,7 @@ mod tests {
             spectral: Some(StarType::M),
             subtype: Some(9),
             size: Some(StarSize::V),
+            name: None,
         });
         cs.bodies.push(Constraint::Star {
             // Force tertiary to Far so we exercise the far-companion slot.
@@ -158,6 +162,7 @@ mod tests {
             spectral: Some(StarType::M),
             subtype: Some(6),
             size: Some(StarSize::V),
+            name: None,
         });
         let sys = System::generate_from_constraints(cs).expect("generated");
         let bytes = render_png(&sys).expect("render");
