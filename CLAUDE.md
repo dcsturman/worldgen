@@ -241,8 +241,22 @@ Same value goes everywhere — no per-call URL params, no two-place setup.
   `export` works for both terminals.
 - **Production (Docker / Cloud Run):** `./scripts/push_image.sh`
   forwards the shell var as a `--build-arg`; the Dockerfile re-exports
-  it as `ENV` in both build stages so cargo/trunk see it. Unset →
-  defaults to `https://travellermap.com`.
+  it as `ENV` in both build stages so cargo/trunk see it. Unset → the
+  script's own default, **`https://travellermap.callistoflight.com`**
+  (our instance), which is deliberately *not* the same as the library
+  fallback in `src/util.rs` (`https://travellermap.com`, correct for
+  anyone building the crate outside this deployment).
+
+  Getting this wrong is silent. The value is compile-time with no
+  runtime override, so an image built against the public site behaves
+  normally and simply talks to the wrong server — production ran that
+  way undetected, and the way to check a deployed build is to grep the
+  wasm:
+
+  ```bash
+  W=$(curl -s https://tools.callistoflight.com/ | grep -oE 'main-[a-f0-9]+_bg\.wasm' | head -1)
+  curl -s "https://tools.callistoflight.com/$W" | strings | grep -oE 'https://[a-zA-Z0-9.-]*travellermap[a-zA-Z0-9.-]*' | sort -u
+  ```
 - **Re-builds:** `build.rs` declares
   `cargo:rerun-if-env-changed=TRAVELLERMAP_URL` so changing the value
   between builds correctly invalidates the cargo cache. Without this,
