@@ -61,7 +61,17 @@ fi
 # defaults to https://travellermap.com. Prompt now so a future you (or
 # anyone else who comes back to a private deploy after a while) doesn't
 # silently re-bake the public URL into a private build.
-DEFAULT_TRAVELLERMAP_URL=https://travellermap.com
+# Our own TravellerMap instance, not the public site. This is a *deployment*
+# default, distinct from the library's compile-time fallback in
+# src/util.rs::travellermap_base_url, which stays public for anyone building
+# the crate outside this deployment.
+#
+# It lives here because the value is baked in at compile time and there is no
+# runtime override: a deploy that forgets it produces an image pointing at
+# travellermap.com with nothing to indicate anything is wrong. That is not
+# hypothetical — production ran that way, and three deploys in one day each
+# re-confirmed the wrong value by matching what was already there.
+DEFAULT_TRAVELLERMAP_URL=https://travellermap.callistoflight.com
 if [ -z "$TRAVELLERMAP_URL" ]; then
   echo ""
   echo "TRAVELLERMAP_URL is not set in your shell environment."
@@ -70,7 +80,7 @@ if [ -z "$TRAVELLERMAP_URL" ]; then
   echo "  It's baked into the build, so you have to pick now — there's"
   echo "  no runtime override."
   echo ""
-  echo "  Enter a custom URL (e.g. https://my.tmap.local) or press"
+  echo "  Enter a custom URL (e.g. https://travellermap.com for the public"
   echo "  enter to use the default ($DEFAULT_TRAVELLERMAP_URL)."
   read "TRAVELLERMAP_URL?TravellerMap URL: "
   if [ -z "$TRAVELLERMAP_URL" ]; then
