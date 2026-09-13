@@ -501,7 +501,10 @@ pub fn World() -> impl IntoView {
         }
         row_errors.set(vec![]);
 
-        let constraints = SystemConstraints { bodies };
+        let constraints = SystemConstraints {
+            bodies,
+            system_name: None,
+        };
         match System::generate_from_constraints(constraints) {
             Ok(sys) => {
                 global_errors.set(vec![]);

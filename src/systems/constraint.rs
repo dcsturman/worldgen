@@ -171,11 +171,14 @@ pub enum Constraint {
         /// Subtype digit 0-9 (e.g. the `4` in `F4 II`). `None` rolls.
         subtype: Option<u8>,
         size: Option<StarSize>,
-        /// Names the star's system, and through it most of the system's
-        /// bodies: anything without an explicit name of its own becomes
-        /// "<this name> <roman numeral>". `None` rolls a name from the
-        /// name tables, which is the behaviour every system had before
-        /// this field existed.
+        /// Names a **companion** star and its sub-system — bodies orbiting
+        /// that companion derive their names from it.
+        ///
+        /// Meaningless on the primary, whose name is the *system's* name:
+        /// see [`SystemConstraints::system_name`]. Setting it on a star
+        /// explicitly pinned to `StarOrbit::Primary` is a validation error
+        /// rather than a silent no-op, since the value would otherwise
+        /// vanish with nothing to show for it.
         name: Option<String>,
     },
     Planet {
@@ -216,6 +219,19 @@ pub enum Constraint {
 #[derive(Debug, Clone, Default)]
 pub struct SystemConstraints {
     pub bodies: Vec<Constraint>,
+    /// Names the system, and through it most of its bodies: anything
+    /// without a name of its own becomes "<this> <roman numeral>".
+    ///
+    /// A system-level field rather than a property of the primary star,
+    /// because that's what it is — the primary's "name" and the system's
+    /// name are the same string, and pretending otherwise would give two
+    /// places to set one value. Companion stars are different: they carry
+    /// their own names on [`Constraint::Star`], since each companion is its
+    /// own sub-system whose bodies derive from it.
+    ///
+    /// `None` rolls from the name tables, as every system did before this
+    /// field existed.
+    pub system_name: Option<String>,
 }
 
 impl SystemConstraints {
@@ -223,6 +239,7 @@ impl SystemConstraints {
     /// UWP" call: a single `Planet` constraint flagged main-world.
     pub fn from_main_world(name: &str, uwp: &str) -> Result<Self, String> {
         Ok(SystemConstraints {
+            system_name: None,
             bodies: vec![Constraint::Planet {
                 name: Some(name.to_string()),
                 orbit: None,
@@ -257,6 +274,17 @@ impl SystemConstraints {
             .count();
         if main_world_count > 1 {
             errors.push(ConstraintError::MultipleMainWorlds(main_world_count));
+        }
+
+        for c in &self.bodies {
+            if let Constraint::Star {
+                orbit: Some(StarOrbit::Primary),
+                name: Some(n),
+                ..
+            } = c
+            {
+                errors.push(ConstraintError::NameOnPrimaryStar(n.clone()));
+            }
         }
 
         let mut seen_orbits = std::collections::BTreeSet::new();
@@ -337,6 +365,12 @@ pub enum ConstraintError {
     IllegalOrbit { orbit: i32, reason: String },
     MoonMissingParent(i32),
     UnsupportedYet(String),
+    /// A `Star` constraint pinned to the primary carries a name. The
+    /// primary's name *is* the system's name, so it belongs in
+    /// `SystemConstraints::system_name`; accepting it here would give one
+    /// value two homes, and silently dropping it would lose the name with
+    /// nothing to show for it.
+    NameOnPrimaryStar(String),
 }
 
 impl std::fmt::Display for ConstraintError {
@@ -359,6 +393,11 @@ impl std::fmt::Display for ConstraintError {
                 )
             }
             ConstraintError::UnsupportedYet(s) => write!(f, "not yet supported: {s}"),
+            ConstraintError::NameOnPrimaryStar(n) => write!(
+                f,
+                "primary star carries the name '{n}' — the primary's name is \
+                 the system's name, so set system_name instead"
+            ),
         }
     }
 }
@@ -452,6 +491,7 @@ mod tests {
                     is_mainworld: true,
                 },
             ],
+            system_name: None,
         };
         let errs = cs.validate();
         assert!(
@@ -478,6 +518,7 @@ mod tests {
                     num_satellites: None,
                 },
             ],
+            system_name: None,
         };
         let errs = cs.validate();
         assert!(
@@ -497,6 +538,7 @@ mod tests {
                 num_satellites: None,
                 is_mainworld: true,
             }],
+            system_name: None,
         };
         let errs = cs.validate();
         assert!(

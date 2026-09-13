@@ -110,6 +110,8 @@ pub struct SystemOverrides {
     /// tertiary. Empty means "roll the count of stars and all their
     /// types as today."
     pub stars: Vec<StarOverride>,
+    /// Names the whole system; see `SystemConstraints::system_name`.
+    pub system_name: Option<String>,
     /// `Some` overrides the random gas-giant count to `gas_giants.len()`
     /// and applies the per-entry size/moon overrides in placement order.
     /// `None` keeps today's random count.
@@ -1713,9 +1715,13 @@ fn gen_stars(world_mod: i32, companions_possible: bool, overrides: &SystemOverri
     // Applied *after* System::new, which has already rolled a name from the
     // name tables. Overwriting the result rather than skipping the roll keeps
     // the RNG stream identical whether or not a name is pinned — so naming a
-    // star doesn't silently re-roll the rest of the system. Same reasoning as
-    // the reserve-then-release dance for the main world's habitable orbit.
-    if let Some(n) = &primary_override.name {
+    // system doesn't silently re-roll the rest of it. Same reasoning as the
+    // reserve-then-release dance for the main world's habitable orbit.
+    //
+    // The primary reads `system_name`, not its own `StarOverride::name`: the
+    // primary's name and the system's name are one value, and validation
+    // rejects a name on an explicitly-primary Star constraint.
+    if let Some(n) = &overrides.system_name {
         system.name = n.clone();
     }
     let star = system.star;
@@ -1803,6 +1809,7 @@ fn gen_stars(world_mod: i32, companions_possible: bool, overrides: &SystemOverri
 /// constraints become a non-empty `Some(Vec)` so the random-count
 /// branch in `gen_gas_giants` is suppressed.
 fn collect_overrides(constraints: &SystemConstraints) -> SystemOverrides {
+    let system_name = constraints.system_name.clone();
     let mut stars: Vec<StarOverride> = constraints
         .bodies
         .iter()
@@ -1940,6 +1947,7 @@ fn collect_overrides(constraints: &SystemConstraints) -> SystemOverrides {
 
     SystemOverrides {
         stars,
+        system_name,
         gas_giants: if any_gg_constraint {
             Some(gg_list)
         } else {
@@ -1975,20 +1983,21 @@ mod tests {
     use std::collections::HashMap;
 
     #[test_log::test]
-    /// Naming the star names the system, and through it every body that
-    /// doesn't carry a name of its own — "Merak Mists III" and friends are
-    /// built from it. That's the reason this field exists; a star name that
-    /// only labelled the star would be nearly pointless.
+    /// Naming the system names every body that doesn't carry a name of its
+    /// own — "Merak Mists III" and friends are built from it. That's the
+    /// reason the field exists; a name that only labelled the star would be
+    /// nearly pointless.
     #[test]
-    fn star_name_constraint_names_the_derived_bodies() {
+    fn system_name_constraint_names_the_derived_bodies() {
         let mut cs = SystemConstraints::from_main_world("Pourne", "A9B2887-A")
             .expect("main world constraint parses");
+        cs.system_name = Some("Merak Mists".to_string());
         cs.bodies.push(Constraint::Star {
             orbit: Some(StarOrbit::Primary),
             spectral: Some(StarType::F),
             subtype: Some(3),
             size: Some(StarSize::V),
-            name: Some("Merak Mists".to_string()),
+            name: None,
         });
         // Pin an unnamed gas giant so there is definitely a body that has to
         // derive its name. Without one, the assertion below depends on the
@@ -2027,23 +2036,76 @@ mod tests {
         );
     }
 
+    /// A companion's name is its own — it names that companion's
+    /// sub-system, whose bodies derive from it — so unlike the primary it
+    /// really does belong on the Star constraint.
+    #[test]
+    fn companion_star_carries_its_own_name() {
+        let mut cs = SystemConstraints::from_main_world("Pourne", "A9B2887-A").unwrap();
+        cs.system_name = Some("Merak Mists".to_string());
+        cs.bodies.push(Constraint::Star {
+            orbit: Some(StarOrbit::Primary),
+            spectral: Some(StarType::F),
+            subtype: Some(3),
+            size: Some(StarSize::V),
+            name: None,
+        });
+        cs.bodies.push(Constraint::Star {
+            orbit: Some(StarOrbit::Far),
+            spectral: Some(StarType::M),
+            subtype: Some(9),
+            size: Some(StarSize::V),
+            name: Some("Kepler's Lantern".to_string()),
+        });
+        let sys = System::generate_from_constraints_seeded(11, cs).expect("generates");
+        assert_eq!(sys.name, "Merak Mists", "primary took the system name");
+        let companion = sys.secondary.as_ref().expect("a companion was generated");
+        assert_eq!(
+            companion.name, "Kepler's Lantern",
+            "companion should keep the name it was given, independent of the system's"
+        );
+    }
+
+    /// Naming the primary star is the same act as naming the system, so the
+    /// constraint set refuses to express it twice. Silently ignoring the
+    /// field would lose a name the author clearly meant to set.
+    #[test]
+    fn name_on_the_primary_star_is_rejected() {
+        let mut cs = SystemConstraints::from_main_world("Pourne", "A9B2887-A").unwrap();
+        cs.bodies.push(Constraint::Star {
+            orbit: Some(StarOrbit::Primary),
+            spectral: None,
+            subtype: None,
+            size: None,
+            name: Some("Merak Mists".to_string()),
+        });
+        let errors = cs.validate();
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ConstraintError::NameOnPrimaryStar(_))),
+            "expected NameOnPrimaryStar, got {errors:?}"
+        );
+    }
+
     /// Pinning the name must not disturb anything else.
     ///
     /// `System::new` rolls a name unconditionally and the override
     /// overwrites the result, rather than skipping the roll — so the RNG
-    /// stream is identical either way. If that ever changes, naming a star
-    /// would quietly re-roll the whole system, which is precisely the kind
-    /// of action-at-a-distance that makes seeded generation untrustworthy.
+    /// stream is identical either way. If that ever changes, naming a system
+    /// would quietly re-roll the whole thing, which is precisely the kind of
+    /// action-at-a-distance that makes seeded generation untrustworthy.
     #[test]
-    fn star_name_does_not_perturb_the_rest_of_generation() {
+    fn system_name_does_not_perturb_the_rest_of_generation() {
         let build = |name: Option<&str>| {
             let mut cs = SystemConstraints::from_main_world("Pourne", "A9B2887-A").unwrap();
+            cs.system_name = name.map(str::to_string);
             cs.bodies.push(Constraint::Star {
                 orbit: Some(StarOrbit::Primary),
                 spectral: Some(StarType::F),
                 subtype: Some(3),
                 size: Some(StarSize::V),
-                name: name.map(str::to_string),
+                name: None,
             });
             System::generate_from_constraints_seeded(7, cs).unwrap()
         };
