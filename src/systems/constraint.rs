@@ -254,6 +254,15 @@ pub struct SystemConstraints {
     /// `generate_from_constraints` entry point stays the only place a
     /// system is built.
     pub post: Vec<crate::systems::overrides::PostSpec>,
+    /// Bodies belonging to the secondary star's own sub-system, with orbit
+    /// numbers in *its* orbits rather than the primary's.
+    ///
+    /// Companions have always generated their own worlds and gas giants —
+    /// `System` is recursive and `fill_system` runs on them — they just
+    /// rolled everything randomly because no constraints reached them.
+    pub secondary_bodies: Vec<Constraint>,
+    /// The same for the tertiary.
+    pub tertiary_bodies: Vec<Constraint>,
 }
 
 impl SystemConstraints {
@@ -263,6 +272,8 @@ impl SystemConstraints {
         Ok(SystemConstraints {
             system_name: None,
             post: Vec::new(),
+            secondary_bodies: Vec::new(),
+            tertiary_bodies: Vec::new(),
             bodies: vec![Constraint::Planet {
                 name: Some(name.to_string()),
                 orbit: None,
@@ -494,6 +505,8 @@ mod tests {
             ],
             system_name: None,
             post: Vec::new(),
+            secondary_bodies: Vec::new(),
+            tertiary_bodies: Vec::new(),
         };
         let errs = cs.validate();
         assert!(
@@ -522,6 +535,8 @@ mod tests {
             ],
             system_name: None,
             post: Vec::new(),
+            secondary_bodies: Vec::new(),
+            tertiary_bodies: Vec::new(),
         };
         let errs = cs.validate();
         assert!(
@@ -543,6 +558,8 @@ mod tests {
             }],
             system_name: None,
             post: Vec::new(),
+            secondary_bodies: Vec::new(),
+            tertiary_bodies: Vec::new(),
         };
         let errs = cs.validate();
         assert!(

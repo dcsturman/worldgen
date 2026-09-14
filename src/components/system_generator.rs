@@ -505,6 +505,8 @@ pub fn World() -> impl IntoView {
             bodies,
             system_name: None,
             post: Vec::new(),
+            secondary_bodies: Vec::new(),
+            tertiary_bodies: Vec::new(),
         };
         match System::generate_from_constraints(constraints) {
             Ok(sys) => {

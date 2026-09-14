@@ -118,6 +118,11 @@ pub struct SystemOverrides {
     pub stars: Vec<StarOverride>,
     /// Names the whole system; see `SystemConstraints::system_name`.
     pub system_name: Option<String>,
+    /// Constraints belonging to the companions' own sub-systems, kept as
+    /// raw constraints because each companion collects its own overrides
+    /// from them — orbit numbers inside are that companion's orbits.
+    pub secondary_bodies: Vec<Constraint>,
+    pub tertiary_bodies: Vec<Constraint>,
     /// `Some` overrides the random gas-giant count to `gas_giants.len()`
     /// and applies the per-entry size/moon overrides in placement order.
     /// `None` keeps today's random count.
@@ -927,10 +932,6 @@ impl System {
         (original_num_giants - num_giants, moon_overrides)
     }
 
-    fn fill_system(&mut self, main_world: World, is_primary: bool) {
-        self.fill_system_with(main_world, is_primary, &SystemOverrides::default());
-    }
-
     fn fill_system_with(
         &mut self,
         main_world: World,
@@ -966,9 +967,14 @@ impl System {
 
         // Empty constraints reserve their orbits first so nothing
         // else can claim them.
-        if is_primary {
-            self.apply_empty_constraints(&overrides.empties);
-        }
+        //
+        // These next few passes used to be gated on `is_primary`, which was
+        // correct while only the primary could carry constraints. Companions
+        // carry their own now, and their orbit numbers are their own, so the
+        // gate has to be "are there constraints" rather than "is this the
+        // primary" — otherwise a companion's bodies are collected and then
+        // silently never placed.
+        self.apply_empty_constraints(&overrides.empties);
 
         // The star's orbit count is rolled at random (`gen_max_orbits`)
         // with no regard for how many bodies the constraints demand. When
@@ -978,9 +984,7 @@ impl System {
         // planets (placed first) fill the few slots and the gas giants
         // and belts (placed afterwards) silently get zero — e.g. a
         // pbg=624 system (2 belts, 4 gas giants) rendering with neither.
-        if is_primary {
-            self.ensure_orbits_for_constraints(overrides);
-        }
+        self.ensure_orbits_for_constraints(overrides);
 
         // Reserve the orbits pinned gas giants asked for, before the planet
         // and belt passes run.
@@ -1010,7 +1014,7 @@ impl System {
                 .filter(|o| *o < slots.len() && slots[*o].is_none())
                 .collect()
         };
-        let (reserved_gg_orbits, reserved_belt_orbits) = if is_primary {
+        let (reserved_gg_orbits, reserved_belt_orbits) = {
             (
                 reserve(
                     &self.orbit_slots,
@@ -1026,8 +1030,6 @@ impl System {
                     overrides.belts.iter().filter_map(|b| b.orbit).collect(),
                 ),
             )
-        } else {
-            (Vec::new(), Vec::new())
         };
         for o in reserved_gg_orbits.iter().chain(reserved_belt_orbits.iter()) {
             self.set_orbit_slot(*o, OrbitContent::Blocked);
@@ -1064,7 +1066,7 @@ impl System {
         // randomly chosen gas giant.
         let mut planet_moon_overrides: std::collections::HashMap<usize, i32> =
             std::collections::HashMap::new();
-        if is_primary {
+        {
             self.place_planet_constraints(
                 &overrides.planets,
                 &main_world_copy,
@@ -1220,21 +1222,26 @@ impl System {
             self.apply_moon_constraints(&overrides.moons, &main_world_copy);
         }
 
-        // Companion stars don't carry their own constraint overrides
-        // through here yet — their internal worlds and gas giants still
-        // roll randomly. The autopop case (single primary system from
-        // Traveller Map) is handled by the override list at the top
-        // level, so this is fine for now.
+        // Companions fill their own sub-systems, now with whatever
+        // constraints were addressed to them. A companion is a `System` in
+        // its own right, so its orbit numbers are its own — "orbit 1 of the
+        // secondary" is not orbit 1 of the primary, which is exactly how
+        // source tables describe them.
+        //
+        // Bodies with no star named still land on the primary, so a system
+        // that never mentions its companions generates as it always did.
         if let Some(secondary) = &mut self.secondary
             && secondary.orbit != StarOrbit::Primary
         {
-            secondary.fill_system(main_world_copy.clone(), false);
+            let sub = companion_overrides(&overrides.secondary_bodies);
+            secondary.fill_system_with(main_world_copy.clone(), false, &sub);
         }
 
         if let Some(tertiary) = &mut self.tertiary
             && tertiary.orbit != StarOrbit::Primary
         {
-            tertiary.fill_system(main_world_copy, false);
+            let sub = companion_overrides(&overrides.tertiary_bodies);
+            tertiary.fill_system_with(main_world_copy, false, &sub);
         }
 
         // In autopop, a star that rolled more orbit slots than the `W` count
@@ -1388,6 +1395,12 @@ impl System {
         main_world: &World,
         moon_overrides_out: &mut std::collections::HashMap<usize, i32>,
     ) {
+        // Pinned bodies first: the unpinned ones take `get_unused_orbits()
+        // .first()`, so in list order a pinned planet at orbit 2 could find
+        // its slot already taken by a planet that had no preference at all.
+        // Same failure as the gas giants and belts, now within a single pass.
+        let mut planets: Vec<&PlanetOverride> = planets.iter().collect();
+        planets.sort_by_key(|p| p.orbit.is_none());
         for p in planets {
             // Choose the orbit. Explicit orbit wins; if it'd land
             // outside the system or be already filled, skip the
@@ -1474,6 +1487,8 @@ impl System {
         main_world: &World,
         moon_overrides_out: &mut std::collections::HashMap<usize, i32>,
     ) {
+        let mut belts: Vec<&BeltOverride> = belts.iter().collect();
+        belts.sort_by_key(|b| b.orbit.is_none());
         for b in belts {
             let orbit = match b.orbit {
                 Some(o) => {
@@ -2165,6 +2180,34 @@ fn gen_stars(world_mod: i32, companions_possible: bool, overrides: &SystemOverri
 /// declaration order (first becomes the primary override). Gas-giant
 /// constraints become a non-empty `Some(Vec)` so the random-count
 /// branch in `gen_gas_giants` is suppressed.
+/// Build the overrides for a companion sub-system from the constraints
+/// addressed to it.
+///
+/// Goes through `collect_overrides` like the primary's do, so a companion's
+/// bodies obey exactly the same rules — pinned orbits reserved, counts
+/// authoritative, the lot. `autopop` stays false: a companion has no PBG
+/// digits of its own, so its gas-giant and belt counts are still rolled
+/// unless constraints say otherwise.
+fn companion_overrides(bodies: &[Constraint]) -> SystemOverrides {
+    if bodies.is_empty() {
+        return SystemOverrides::default();
+    }
+    let mut o = collect_overrides(&SystemConstraints {
+        bodies: bodies.to_vec(),
+        system_name: None,
+        post: Vec::new(),
+        secondary_bodies: Vec::new(),
+        tertiary_bodies: Vec::new(),
+    });
+    // Autopop, despite there being no PBG digits here: it means "this
+    // description is authoritative", which is exactly what a source table
+    // listing a companion's bodies is. Without it the random planetoid pass
+    // runs and overwrites the pinned bodies — Doruc's Khazha came out as a
+    // randomly rolled planetoid belt.
+    o.autopop = true;
+    o
+}
+
 fn collect_overrides(constraints: &SystemConstraints) -> SystemOverrides {
     let system_name = constraints.system_name.clone();
     let mut stars: Vec<StarOverride> = constraints
@@ -2306,6 +2349,8 @@ fn collect_overrides(constraints: &SystemConstraints) -> SystemOverrides {
     SystemOverrides {
         stars,
         system_name,
+        secondary_bodies: constraints.secondary_bodies.clone(),
+        tertiary_bodies: constraints.tertiary_bodies.clone(),
         gas_giants: if any_gg_constraint {
             Some(gg_list)
         } else {

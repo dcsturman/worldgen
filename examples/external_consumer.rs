@@ -37,6 +37,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }],
         system_name: None,
             post: Vec::new(),
+            secondary_bodies: Vec::new(),
+            tertiary_bodies: Vec::new(),
         };
 
     // Generate and write the system map.
