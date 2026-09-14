@@ -36,10 +36,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             is_mainworld: true,
         }],
         system_name: None,
-            post: Vec::new(),
-            secondary_bodies: Vec::new(),
-            tertiary_bodies: Vec::new(),
-        };
+        post: Vec::new(),
+        secondary_bodies: Vec::new(),
+        tertiary_bodies: Vec::new(),
+        main_world_orbit: None,
+    };
 
     // Generate and write the system map.
     let system_png = generate_system_png(sys_seed, constraints)?;

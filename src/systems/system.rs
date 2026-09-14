@@ -118,6 +118,8 @@ pub struct SystemOverrides {
     pub stars: Vec<StarOverride>,
     /// Names the whole system; see `SystemConstraints::system_name`.
     pub system_name: Option<String>,
+    /// Where the main world sits, overriding the habitable-zone default.
+    pub main_world_orbit: Option<i32>,
     /// Constraints belonging to the companions' own sub-systems, kept as
     /// raw constraints because each companion collects its own overrides
     /// from them — orbit numbers inside are that companion's orbits.
@@ -938,8 +940,24 @@ impl System {
         is_primary: bool,
         overrides: &SystemOverrides,
     ) {
-        // First block appropriate orbits (just to have some number of empty orbits)
-        self.gen_blocked_orbits();
+        // First block appropriate orbits (just to have some number of empty
+        // orbits), leaving alone any a constraint has claimed.
+        let claimed: Vec<usize> = overrides
+            .planets
+            .iter()
+            .filter_map(|p| p.orbit)
+            .chain(overrides.belts.iter().filter_map(|b| b.orbit))
+            .chain(
+                overrides
+                    .gas_giants
+                    .iter()
+                    .flat_map(|g| g.iter().filter_map(|g| g.orbit)),
+            )
+            .chain(overrides.main_world_orbit)
+            .filter(|o| *o >= 0)
+            .map(|o| o as usize)
+            .collect();
+        self.gen_blocked_orbits(&claimed);
 
         let main_world_copy = main_world.clone();
         let system_zones = get_zone(&self.star);
@@ -1046,7 +1064,7 @@ impl System {
         // passes draw the same number of random values — only the orbit they
         // map to changes — so the rest of generation is unperturbed.
         let reserved_main_orbit = if is_primary {
-            match self.main_world_habitable_orbit(&main_world_copy) {
+            match self.main_world_habitable_orbit(&main_world_copy, overrides.main_world_orbit) {
                 Some(o) if o < self.orbit_slots.len() && self.orbit_slots[o].is_none() => {
                     self.set_orbit_slot(o, OrbitContent::Blocked);
                     Some(o)
@@ -1115,7 +1133,7 @@ impl System {
         }
 
         if is_primary {
-            self.place_main_world(main_world);
+            self.place_main_world(main_world, overrides.main_world_orbit);
         }
 
         for i in 0..=get_zone(&self.star).hot {
@@ -1267,7 +1285,17 @@ impl System {
     /// to reserve). Mirrors the habitable-orbit selection in
     /// `place_main_world` so the reservation in `fill_system_with` blocks the
     /// exact slot the main world will later claim.
-    fn main_world_habitable_orbit(&self, main_world: &World) -> Option<usize> {
+    fn main_world_habitable_orbit(
+        &self,
+        main_world: &World,
+        pinned: Option<i32>,
+    ) -> Option<usize> {
+        // A stated orbit beats the habitable-zone default. The default is
+        // right knowing nothing; a published system table is knowing
+        // something.
+        if let Some(o) = pinned {
+            return (o >= 0).then_some(o as usize);
+        }
         let requires_habitable =
             main_world.atmosphere > 1 && main_world.atmosphere < 10 && main_world.size > 0;
         if !requires_habitable {
@@ -1282,11 +1310,21 @@ impl System {
         Some(habitable as usize)
     }
 
-    fn place_main_world(&mut self, mut main_world: World) {
-        let requires_habitable =
-            main_world.atmosphere > 1 && main_world.atmosphere < 10 && main_world.size > 0;
-        let mut habitable = get_zone(&self.star).habitable;
-        if (habitable <= 0 || habitable == get_zone(&self.star).inner) && requires_habitable {
+    fn place_main_world(&mut self, mut main_world: World, pinned: Option<i32>) {
+        // A pinned orbit is honoured verbatim, habitable zone or not — which
+        // is the point. Makergod puts Oghma three orbits beyond a K5 V's
+        // habitable zone, and the rules agree: at size 5 the -2 DM for being
+        // outside gives a mean atmosphere of exactly the 3 it has.
+        let requires_habitable = pinned.is_some()
+            || (main_world.atmosphere > 1 && main_world.atmosphere < 10 && main_world.size > 0);
+        let mut habitable = match pinned {
+            Some(o) => o,
+            None => get_zone(&self.star).habitable,
+        };
+        if pinned.is_none()
+            && (habitable <= 0 || habitable == get_zone(&self.star).inner)
+            && requires_habitable
+        {
             warn!(
                 "No habitable zone for main world for system: {:?}. Habitable = {}. Inner = {}. Using orbit 0.",
                 self,
@@ -1321,7 +1359,7 @@ impl System {
                     self.secondary
                         .as_mut()
                         .unwrap()
-                        .place_main_world(main_world);
+                        .place_main_world(main_world, None);
                 }
                 Some(OrbitContent::Tertiary) => {
                     // If there happens to be a star in the habitable zone, place it in orbit there.
@@ -1329,7 +1367,10 @@ impl System {
                     // TODO: Is this correct when we have multiple stars?
                     main_world.position_in_system = habitable as usize;
                     // Safe to unwrap as if the orbital position is tertiary but there is no tertiary, thats bug.
-                    self.tertiary.as_mut().unwrap().place_main_world(main_world);
+                    self.tertiary
+                        .as_mut()
+                        .unwrap()
+                        .place_main_world(main_world, None);
                 }
                 Some(OrbitContent::GasGiant(gas_giant)) => {
                     let orbit = gas_giant.gen_satellite_orbit(main_world.size == 0);
@@ -1740,7 +1781,14 @@ impl System {
         }
     }
 
-    fn gen_blocked_orbits(&mut self) {
+    /// Randomly block a few orbits, skipping any a constraint has claimed.
+    ///
+    /// This runs before every placement pass, so without `claimed` it could
+    /// block an orbit a source explicitly assigned — and did: Makergod gives
+    /// Doruc's orbit 1 to the gas giant Khazha, and a random block landed
+    /// there first. The rolls are unchanged either way, so a system with no
+    /// constraints blocks exactly the orbits it always did.
+    fn gen_blocked_orbits(&mut self, claimed: &[usize]) {
         if roll_1d6() < 5 {
             // No Empty orbits
             return;
@@ -1752,7 +1800,11 @@ impl System {
             _ => 3,
         };
 
-        let valid_orbits = self.get_unused_orbits();
+        let valid_orbits: Vec<usize> = self
+            .get_unused_orbits()
+            .into_iter()
+            .filter(|o| !claimed.contains(o))
+            .collect();
 
         for _ in 0..num_empty {
             if let Some(pos) = crate::util::rng_choose(&valid_orbits) {
@@ -2198,6 +2250,7 @@ fn companion_overrides(bodies: &[Constraint]) -> SystemOverrides {
         post: Vec::new(),
         secondary_bodies: Vec::new(),
         tertiary_bodies: Vec::new(),
+        main_world_orbit: None,
     });
     // Autopop, despite there being no PBG digits here: it means "this
     // description is authoritative", which is exactly what a source table
@@ -2349,6 +2402,7 @@ fn collect_overrides(constraints: &SystemConstraints) -> SystemOverrides {
     SystemOverrides {
         stars,
         system_name,
+        main_world_orbit: constraints.main_world_orbit,
         secondary_bodies: constraints.secondary_bodies.clone(),
         tertiary_bodies: constraints.tertiary_bodies.clone(),
         gas_giants: if any_gg_constraint {

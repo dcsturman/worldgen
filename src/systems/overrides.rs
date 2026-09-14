@@ -239,6 +239,25 @@ pub enum BodySpec {
     },
     /// An orbit known to be empty.
     Empty { orbit: i32 },
+    /// Where the main world sits, when a source states it.
+    ///
+    /// Only the orbit. The main world's UWP and name are upstream data and
+    /// stay unsayable — the guarantee that an override can't contradict the
+    /// map everyone else sees is worth more than the convenience of editing
+    /// them here. Its *orbit* was never upstream data; TravellerMap does not
+    /// carry one.
+    ///
+    /// Generation otherwise places a main world with atmosphere 2-9 and size
+    /// above 0 in the habitable orbit, which is the right default knowing
+    /// nothing else. A published system table is knowing something else:
+    /// Makergod puts Oghma at orbit 3 of a K5 V, three orbits beyond the
+    /// habitable zone, and the rules agree with it — at size 5 the -2 DM for
+    /// being outside gives a mean atmosphere of exactly the 3 it has, and the
+    /// -4 hydrographics DM is why only 40% of it is water and that water is
+    /// frozen. Without this the world is relocated into the habitable orbit,
+    /// which in that system already holds a gas giant, and the main world
+    /// ends up as its moon.
+    MainWorld { orbit: i32 },
 }
 
 /// What a body in an override turns into.
@@ -254,6 +273,9 @@ pub enum Lowered {
     Constraint(Constraint),
     /// Applied to the generated system afterwards.
     Post(PostSpec),
+    /// Pins the main world's orbit. Not a constraint: the main world already
+    /// exists, this only says where it goes.
+    MainWorldOrbit(i32),
 }
 
 /// Which kind of body a [`PostSpec`] is looking for.
@@ -616,6 +638,7 @@ impl BodySpec {
                 }),
             },
             BodySpec::Empty { orbit } => Lowered::Constraint(Constraint::Empty { orbit: *orbit }),
+            BodySpec::MainWorld { orbit } => Lowered::MainWorldOrbit(*orbit),
         })
     }
 
@@ -626,6 +649,9 @@ impl BodySpec {
             Lowered::Constraint(c) => Ok(c),
             Lowered::Post(_) => {
                 Err("this body is positioned relatively and is applied after generation".into())
+            }
+            Lowered::MainWorldOrbit(_) => {
+                Err("this pins the main world's orbit rather than describing a body".into())
             }
         }
     }
@@ -671,6 +697,7 @@ impl SystemOverride {
                     // Post facts resolve against the whole system, companions
                     // included, so they need no routing.
                     (Lowered::Post(p), _) => cs.post.push(p),
+                    (Lowered::MainWorldOrbit(o), _) => cs.main_world_orbit = Some(o),
                 }
             }
         }

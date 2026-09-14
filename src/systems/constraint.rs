@@ -263,6 +263,9 @@ pub struct SystemConstraints {
     pub secondary_bodies: Vec<Constraint>,
     /// The same for the tertiary.
     pub tertiary_bodies: Vec<Constraint>,
+    /// Where the main world sits, when a source states it. `None` uses the
+    /// habitable-zone default.
+    pub main_world_orbit: Option<i32>,
 }
 
 impl SystemConstraints {
@@ -274,6 +277,7 @@ impl SystemConstraints {
             post: Vec::new(),
             secondary_bodies: Vec::new(),
             tertiary_bodies: Vec::new(),
+            main_world_orbit: None,
             bodies: vec![Constraint::Planet {
                 name: Some(name.to_string()),
                 orbit: None,
@@ -507,6 +511,7 @@ mod tests {
             post: Vec::new(),
             secondary_bodies: Vec::new(),
             tertiary_bodies: Vec::new(),
+            main_world_orbit: None,
         };
         let errs = cs.validate();
         assert!(
@@ -537,6 +542,7 @@ mod tests {
             post: Vec::new(),
             secondary_bodies: Vec::new(),
             tertiary_bodies: Vec::new(),
+            main_world_orbit: None,
         };
         let errs = cs.validate();
         assert!(
@@ -560,6 +566,7 @@ mod tests {
             post: Vec::new(),
             secondary_bodies: Vec::new(),
             tertiary_bodies: Vec::new(),
+            main_world_orbit: None,
         };
         let errs = cs.validate();
         assert!(
