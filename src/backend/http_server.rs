@@ -39,8 +39,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
 use crate::api::{
-    build_constraints, generate_globe_apng, generate_globe_png, generate_globe_texture,
-    generate_planet_png_scaled, generate_system_png_scaled, generate_system_svg, parse_stellar,
+    generate_globe_apng, generate_globe_png, generate_globe_texture, generate_planet_png_scaled,
+    generate_system_png_scaled, generate_system_svg, parse_hex_quad,
 };
 use crate::backend::gcs::GcsClient;
 use crate::worldmap::{ApngTiming, TexSize};
@@ -303,46 +303,37 @@ fn parse_system_request(query: &str) -> Result<SystemRequest, HttpError> {
         .filter(|s| !s.is_empty())
         .ok_or_else(|| missing("uwp"))?;
 
-    // `hex` is a 4-character "CCRR" sub-sector hex location. We treat each
-    // pair as a u8 — Traveller hexes run up to 32×40 per sector, within u8.
-    let (hex_x, hex_y) = parse_hex_quad(hex).ok_or((
-        400,
-        "Bad Request",
-        "hex must be a 4-digit string like \"2018\"".to_string(),
-    ))?;
-
     let pbg = params.get("pbg").cloned().unwrap_or_default();
-    let belts = digit_at(&pbg, 1).unwrap_or(0) as usize;
-    let giants = digit_at(&pbg, 2).unwrap_or(0) as usize;
-
     let stellar = params.get("stellar").map(|s| s.as_str()).unwrap_or("");
-    let stars = parse_stellar(stellar);
-
-    // `worlds` is the system's `W` digit (total body count) from Traveller
-    // Map. We back out the main world, the belts and the gas giants to leave
-    // just the extra rocky planets the caller wants placed. The generator
-    // grows its orbit list to fit every requested body, so clamp this
-    // untrusted query param to a generous ceiling — real Traveller systems
-    // top out around two dozen bodies — to keep a bogus `worlds=99999` from
-    // allocating a giant orbit vector and generating that many worlds.
-    const MAX_WORLDS: i32 = 64;
-    let worlds = params
-        .get("worlds")
-        .and_then(|s| s.trim().parse::<i32>().ok())
-        .map(|w| w.min(MAX_WORLDS));
-    let planets = match worlds {
-        Some(w) => (w - 1 - belts as i32 - giants as i32).max(0) as usize,
-        None => 0,
-    };
+    let worlds = params.get("worlds").and_then(|s| s.trim().parse::<i32>().ok());
 
     let scale = params
         .get("scale")
         .and_then(|s| s.trim().parse::<f32>().ok())
         .unwrap_or(2.0);
 
-    let seed = system_seed(sector, hex_x, hex_y);
-    let constraints = build_constraints(name, uwp, &stars, giants, belts, planets)
-        .map_err(|e| (422, "Unprocessable Entity", format!("{e}")))?;
+    // One shared path, in the library: the override validator calls exactly
+    // this, so what it checks is what this endpoint will generate rather
+    // than a parallel implementation that happens to agree today.
+    let (seed, constraints) = crate::api::system_from_upstream(&crate::api::UpstreamSystem {
+        sector,
+        hex,
+        name,
+        uwp,
+        pbg: &pbg,
+        stellar,
+        worlds,
+    })
+    .map_err(|e| match e {
+        crate::api::UpstreamError::BadHex(_) => (400, "Bad Request", e.to_string()),
+        crate::api::UpstreamError::Constraints(_) => {
+            (422, "Unprocessable Entity", e.to_string())
+        }
+        // Our data, not the caller's request.
+        crate::api::UpstreamError::Override(_) => {
+            (500, "Internal Server Error", e.to_string())
+        }
+    })?;
 
     Ok(SystemRequest {
         seed,
@@ -939,23 +930,6 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-fn parse_hex_quad(s: &str) -> Option<(u8, u8)> {
-    if s.len() != 4 {
-        return None;
-    }
-    let bytes = s.as_bytes();
-    if !bytes.iter().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    let x: u8 = s[0..2].parse().ok()?;
-    let y: u8 = s[2..4].parse().ok()?;
-    Some((x, y))
-}
-
-fn digit_at(s: &str, idx: usize) -> Option<u32> {
-    s.chars().nth(idx).and_then(|c| c.to_digit(10))
-}
-
 // ---------------------------------------------------------------------------
 // Response writers
 // ---------------------------------------------------------------------------
@@ -1188,11 +1162,11 @@ mod tests {
     #[test]
     fn digit_at_extracts_pbg_digits() {
         // Noricum PBG is "804" — pop=8, belts=0, giants=4.
-        assert_eq!(digit_at("804", 0), Some(8));
-        assert_eq!(digit_at("804", 1), Some(0));
-        assert_eq!(digit_at("804", 2), Some(4));
-        assert_eq!(digit_at("804", 3), None);
+        assert_eq!(crate::api::digit_at("804", 0), Some(8));
+        assert_eq!(crate::api::digit_at("804", 1), Some(0));
+        assert_eq!(crate::api::digit_at("804", 2), Some(4));
+        assert_eq!(crate::api::digit_at("804", 3), None);
         // Non-digit char yields None.
-        assert_eq!(digit_at("8X4", 1), None);
+        assert_eq!(crate::api::digit_at("8X4", 1), None);
     }
 }

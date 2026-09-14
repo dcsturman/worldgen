@@ -20,6 +20,10 @@
 !public
 !src
 !assets
+# Curated system overrides, compiled into the binary with include_str!.
+# Without this the image build fails at compile time — the allowlist above
+# is exhaustive, so anything the source reads has to be named here.
+!data
 
 # Re-exclude build artifacts that the broad re-includes above would pull
 # back in (e.g. a stray target/ inside src/ tooling, editor scratch).

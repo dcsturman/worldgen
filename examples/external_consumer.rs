@@ -35,6 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             num_satellites: None,
             is_mainworld: true,
         }],
+        system_name: None,
     };
 
     // Generate and write the system map.

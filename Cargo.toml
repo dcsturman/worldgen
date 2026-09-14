@@ -150,3 +150,12 @@ required-features = ["frontend"]
 name = "server"
 path = "src/bin/server.rs"
 required-features = ["backend"]
+
+# Validates data/overrides.json against live TravellerMap data. Its own
+# binary rather than a `server --validate` flag: the server's job is to
+# serve, and a separate bin also stays out of the Docker image, which only
+# builds `--bin server`.
+[[bin]]
+name = "validate-overrides"
+path = "src/bin/validate_overrides.rs"
+required-features = ["backend"]

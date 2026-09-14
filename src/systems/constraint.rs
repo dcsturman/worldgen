@@ -103,10 +103,13 @@ impl PartialUwp {
                 None => 'X',
             }
         }
+        // A wild port renders as `?`, not `X` — `X` is the literal "no
+        // starport" code, so emitting it here would turn "unknown" into a
+        // definite statement on the way back out.
         let port = self
             .port
             .map(|p| p.to_string())
-            .unwrap_or_else(|| "X".to_string());
+            .unwrap_or_else(|| "?".to_string());
         format!(
             "{}{}{}{}{}{}{}-{}",
             port,
@@ -139,6 +142,16 @@ fn parse_port(c: char) -> Result<Option<PortCode>, String> {
     // `X` as wild; see the module-level docs.) Without this, every X-port
     // world parsed to a wild port, leaving the main-world UWP "incomplete"
     // and rejected at generation.
+    //
+    // Which leaves no way to write "this world has a starport and I don't
+    // know its class" — a distinction the type has always supported
+    // (`Option<PortCode>`) and the string format didn't. `?` fills that gap.
+    // It matters for curated data: the Drinaxian Companion says Traefar has
+    // "a small commercial spaceport" without giving a class, and spelling
+    // that `X` would assert the opposite of what the source says.
+    if c == '?' {
+        return Ok(None);
+    }
     Ok(Some(match c {
         'A' => PortCode::A,
         'B' => PortCode::B,
@@ -171,6 +184,15 @@ pub enum Constraint {
         /// Subtype digit 0-9 (e.g. the `4` in `F4 II`). `None` rolls.
         subtype: Option<u8>,
         size: Option<StarSize>,
+        /// Names a **companion** star and its sub-system — bodies orbiting
+        /// that companion derive their names from it.
+        ///
+        /// Meaningless on the primary, whose name is the *system's* name:
+        /// see [`SystemConstraints::system_name`]. Setting it on a star
+        /// explicitly pinned to `StarOrbit::Primary` is a validation error
+        /// rather than a silent no-op, since the value would otherwise
+        /// vanish with nothing to show for it.
+        name: Option<String>,
     },
     Planet {
         name: Option<String>,
@@ -210,6 +232,19 @@ pub enum Constraint {
 #[derive(Debug, Clone, Default)]
 pub struct SystemConstraints {
     pub bodies: Vec<Constraint>,
+    /// Names the system, and through it most of its bodies: anything
+    /// without a name of its own becomes "<this> <roman numeral>".
+    ///
+    /// A system-level field rather than a property of the primary star,
+    /// because that's what it is — the primary's "name" and the system's
+    /// name are the same string, and pretending otherwise would give two
+    /// places to set one value. Companion stars are different: they carry
+    /// their own names on [`Constraint::Star`], since each companion is its
+    /// own sub-system whose bodies derive from it.
+    ///
+    /// `None` rolls from the name tables, as every system did before this
+    /// field existed.
+    pub system_name: Option<String>,
 }
 
 impl SystemConstraints {
@@ -217,6 +252,7 @@ impl SystemConstraints {
     /// UWP" call: a single `Planet` constraint flagged main-world.
     pub fn from_main_world(name: &str, uwp: &str) -> Result<Self, String> {
         Ok(SystemConstraints {
+            system_name: None,
             bodies: vec![Constraint::Planet {
                 name: Some(name.to_string()),
                 orbit: None,
@@ -251,6 +287,17 @@ impl SystemConstraints {
             .count();
         if main_world_count > 1 {
             errors.push(ConstraintError::MultipleMainWorlds(main_world_count));
+        }
+
+        for c in &self.bodies {
+            if let Constraint::Star {
+                orbit: Some(StarOrbit::Primary),
+                name: Some(n),
+                ..
+            } = c
+            {
+                errors.push(ConstraintError::NameOnPrimaryStar(n.clone()));
+            }
         }
 
         let mut seen_orbits = std::collections::BTreeSet::new();
@@ -331,6 +378,12 @@ pub enum ConstraintError {
     IllegalOrbit { orbit: i32, reason: String },
     MoonMissingParent(i32),
     UnsupportedYet(String),
+    /// A `Star` constraint pinned to the primary carries a name. The
+    /// primary's name *is* the system's name, so it belongs in
+    /// `SystemConstraints::system_name`; accepting it here would give one
+    /// value two homes, and silently dropping it would lose the name with
+    /// nothing to show for it.
+    NameOnPrimaryStar(String),
 }
 
 impl std::fmt::Display for ConstraintError {
@@ -353,6 +406,11 @@ impl std::fmt::Display for ConstraintError {
                 )
             }
             ConstraintError::UnsupportedYet(s) => write!(f, "not yet supported: {s}"),
+            ConstraintError::NameOnPrimaryStar(n) => write!(
+                f,
+                "primary star carries the name '{n}' — the primary's name is \
+                 the system's name, so set system_name instead"
+            ),
         }
     }
 }
@@ -446,6 +504,7 @@ mod tests {
                     is_mainworld: true,
                 },
             ],
+            system_name: None,
         };
         let errs = cs.validate();
         assert!(
@@ -472,6 +531,7 @@ mod tests {
                     num_satellites: None,
                 },
             ],
+            system_name: None,
         };
         let errs = cs.validate();
         assert!(
@@ -491,6 +551,7 @@ mod tests {
                 num_satellites: None,
                 is_mainworld: true,
             }],
+            system_name: None,
         };
         let errs = cs.validate();
         assert!(

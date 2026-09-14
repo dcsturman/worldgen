@@ -1,0 +1,51 @@
+{
+  "_comment": "Curated per-system facts, merged into generation. Keyed by (sector, hex); 'world' is checked against TravellerMap so a mistyped hex fails loudly. Validate with: cargo run --bin validate-overrides --features backend",
+  "overrides": [
+    {
+      "sector": "Trojan Reach",
+      "hex": "2221",
+      "world": "Torpol",
+      "note": "Drinaxian Companion ch.5. Star (F4 V), 2 belts, 4 gas giants and 10 rocky worlds already match TravellerMap's stellar/PBG/W data, so only the named body is recorded. Traefar is 'the next world out from Torpol'; the schema can't say that relatively, so it is pinned to orbit 6 \u2014 Torpol generates at its habitable orbit 5. Deterministic, and the validator fails if that ever shifts.",
+      "bodies": [
+        {
+          "type": "planet",
+          "name": "Traefar",
+          "uwp": "?X106XX-X",
+          "orbit": 6
+        }
+      ]
+    },
+    {
+      "sector": "Trojan Reach",
+      "hex": "2421",
+      "world": "Blue",
+      "note": "Drinaxian Companion ch.7. Star (F9 V) and 2 gas giants match TravellerMap. Bulhai is 'the system's outer gas giant' and hosts Bulhai Freeport on one of its moons; the schema can't say 'outer', so it is pinned to orbit 14, the outer of the two the generator places. The validator fails if that changes. Bulhai Freeport sits on one of Bulhai's moons, pop ~20,000 (code 4). Port class C is inference, not statement: the book has it fitting starship electronics and weaponry (so a starport, not an F/G/H spaceport) while saying it 'may come to rival the main starport at Blue' (so below Blue's B).",
+      "bodies": [
+        {
+          "type": "gas_giant",
+          "name": "Bulhai",
+          "orbit": 14
+        },
+        {
+          "type": "moon",
+          "parent_orbit": 14,
+          "name": "Bulhai Freeport",
+          "uwp": "CXXX4XX-X"
+        }
+      ]
+    },
+    {
+      "sector": "Trojan Reach",
+      "hex": "2216",
+      "world": "Palindrome",
+      "note": "Drinaxian Companion ch.11: 'Palindrome's primary is a K7 V, an orange main sequence star.' TravellerMap has K9 V. The companion (M1 V, distant, no planetary bodies of its own) and the 2 gas giants / 3 rocky worlds both match, so only the primary's class is corrected.",
+      "bodies": [
+        {
+          "type": "star",
+          "orbit": "primary",
+          "class": "K7 V"
+        }
+      ]
+    }
+  ]
+}
