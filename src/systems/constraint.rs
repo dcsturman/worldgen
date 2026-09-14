@@ -103,10 +103,13 @@ impl PartialUwp {
                 None => 'X',
             }
         }
+        // A wild port renders as `?`, not `X` — `X` is the literal "no
+        // starport" code, so emitting it here would turn "unknown" into a
+        // definite statement on the way back out.
         let port = self
             .port
             .map(|p| p.to_string())
-            .unwrap_or_else(|| "X".to_string());
+            .unwrap_or_else(|| "?".to_string());
         format!(
             "{}{}{}{}{}{}{}-{}",
             port,
@@ -139,6 +142,16 @@ fn parse_port(c: char) -> Result<Option<PortCode>, String> {
     // `X` as wild; see the module-level docs.) Without this, every X-port
     // world parsed to a wild port, leaving the main-world UWP "incomplete"
     // and rejected at generation.
+    //
+    // Which leaves no way to write "this world has a starport and I don't
+    // know its class" — a distinction the type has always supported
+    // (`Option<PortCode>`) and the string format didn't. `?` fills that gap.
+    // It matters for curated data: the Drinaxian Companion says Traefar has
+    // "a small commercial spaceport" without giving a class, and spelling
+    // that `X` would assert the opposite of what the source says.
+    if c == '?' {
+        return Ok(None);
+    }
     Ok(Some(match c {
         'A' => PortCode::A,
         'B' => PortCode::B,

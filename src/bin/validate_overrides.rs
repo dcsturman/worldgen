@@ -40,9 +40,11 @@ use std::process::ExitCode;
 
 use serde::Deserialize;
 
-use worldgen::api::{UpstreamSystem, system_from_upstream};
+use worldgen::api::{
+    UpstreamSystem, build_constraints, digit_at, parse_stellar, system_from_upstream,
+};
 use worldgen::systems::overrides::{self, SystemOverride};
-use worldgen::systems::system::{DroppedConstraint, System};
+use worldgen::systems::system::{DroppedConstraint, OrbitContent, System};
 
 #[derive(Debug, Deserialize)]
 struct Envelope {
@@ -151,6 +153,38 @@ fn check(o: &SystemOverride, up: &Entry, verbose: bool) -> Vec<Failure> {
         }
     };
 
+    // Did a pinned orbit stretch the system to reach it?
+    //
+    // `ensure_orbits_for_constraints` grows the orbit list until every pinned
+    // body fits, which is what makes a high pin work at all — but it also
+    // means a typo'd orbit silently invents orbits that the star would never
+    // have had. Pinning to 14 in a system with 10 is not an error the
+    // generator can refuse; it's a fact about the source that needs a human
+    // to look at it. So compare against what the system would have been
+    // without the override.
+    let baseline = {
+        let stars = parse_stellar(&up.stellar);
+        let belts = digit_at(&up.pbg, 1).unwrap_or(0) as usize;
+        let giants = digit_at(&up.pbg, 2).unwrap_or(0) as usize;
+        let planets = match up.worlds.map(|w| w.min(64)) {
+            Some(w) => (w - 1 - belts as i32 - giants as i32).max(0) as usize,
+            None => 0,
+        };
+        build_constraints(&up.name, &up.uwp, &stars, giants, belts, planets)
+            .ok()
+            .and_then(|cs| System::generate_from_constraints_seeded(seed, cs).ok())
+            .map(|s| s.orbit_slots.len())
+    };
+    if let Some(natural) = baseline
+        && system.orbit_slots.len() > natural
+    {
+        out.push(Failure::Author(format!(
+            "this override stretches the system from {natural} orbits to {} — check the \
+             pinned orbits are real and not a typo",
+            system.orbit_slots.len()
+        )));
+    }
+
     for d in system.dropped_constraints() {
         // The diagnostic variant already carries the distinction, so there's
         // no need for a separate solvability pass: a constraint that was
@@ -165,10 +199,34 @@ fn check(o: &SystemOverride, up: &Entry, verbose: bool) -> Vec<Failure> {
     }
 
     if verbose && out.is_empty() {
-        println!("  {} {} — {} ok", o.sector, o.hex, up.name);
+        println!(
+            "  {} {} — {} ok  [{}]",
+            o.sector, o.hex, up.name, up.stellar
+        );
         for (i, slot) in system.orbit_slots.iter().enumerate() {
-            if let Some(c) = slot {
-                println!("    orbit {i:>2}: {c:?}");
+            // One line per body. The full Debug of a World runs to a
+            // paragraph, which at a dozen bodies a system buries the thing
+            // you opened the output to look at.
+            let line = match slot {
+                Some(OrbitContent::World(w)) => {
+                    format!("{:<22} {}", w.name, w.to_uwp())
+                }
+                Some(OrbitContent::GasGiant(g)) => format!("{:<22} gas giant", g.name),
+                Some(OrbitContent::Secondary) => "companion star".to_string(),
+                Some(OrbitContent::Tertiary) => "companion star (tertiary)".to_string(),
+                Some(OrbitContent::Blocked) => continue,
+                None => continue,
+            };
+            println!("    orbit {i:>2}: {line}");
+            // Moons too: an override can attach one, and without showing it
+            // there is no way to see that the thing you just wrote landed.
+            let sats: &[_] = match slot {
+                Some(OrbitContent::World(w)) => &w.satellites.sats,
+                Some(OrbitContent::GasGiant(g)) => g.satellites(),
+                _ => &[],
+            };
+            for m in sats {
+                println!("             moon: {:<15} {}", m.name, m.to_uwp());
             }
         }
     }

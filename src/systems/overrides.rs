@@ -273,10 +273,60 @@ impl SystemOverride {
             .map(|b| b.to_constraint())
             .collect::<Result<_, _>>()?;
 
-        // --- stars: patch companions positionally ---
+        // --- stars ---
         let (my_stars, my_bodies): (Vec<_>, Vec<_>) = mine
             .into_iter()
             .partition(|c| matches!(c, Constraint::Star { .. }));
+        // A star override aimed at the primary patches the primary; everything
+        // else queues up against the companions in order.
+        //
+        // Splitting these matters: without it an override correcting the
+        // primary's spectral class was matched against the first companion
+        // instead, rewriting the wrong star. Real case — the Drinaxian
+        // Companion gives Palindrome's primary as K7 V where TravellerMap has
+        // K9 V, and the system also has an M1 V companion that would have
+        // silently become K7 V.
+        let (primary_patch, companion_patches): (Vec<_>, Vec<_>) = my_stars
+            .into_iter()
+            .partition(|c| matches!(c, Constraint::Star { orbit: Some(StarOrbit::Primary), .. }));
+
+        if let Some(Constraint::Star {
+            spectral: sp2,
+            subtype: st2,
+            size: sz2,
+            ..
+        }) = primary_patch.first()
+        {
+            for c in cs.bodies.iter_mut() {
+                let Constraint::Star {
+                    orbit,
+                    spectral,
+                    subtype,
+                    size,
+                    ..
+                } = c
+                else {
+                    continue;
+                };
+                if !matches!(orbit, Some(StarOrbit::Primary)) {
+                    continue;
+                }
+                if sp2.is_some() {
+                    *spectral = *sp2;
+                }
+                if st2.is_some() {
+                    *subtype = *st2;
+                }
+                if sz2.is_some() {
+                    *size = *sz2;
+                }
+                // Not the name: the primary's name is the system's, and
+                // validation rejects a name here.
+                break;
+            }
+        }
+
+        let my_stars = companion_patches;
         let mut companion_idx = 0usize;
         let mut patched = 0usize;
         for c in cs.bodies.iter_mut() {
@@ -290,8 +340,7 @@ impl SystemOverride {
             else {
                 continue;
             };
-            // The primary is not a companion and is never patched here; its
-            // name is the system's name.
+            // The primary was handled above.
             if matches!(orbit, Some(StarOrbit::Primary)) {
                 continue;
             }
@@ -651,6 +700,61 @@ mod tests {
             spectral.is_some(),
             "class came from the stellar column, which the override didn't contradict"
         );
+    }
+
+    /// An override correcting the *primary's* class must patch the primary,
+    /// not the first companion.
+    ///
+    /// Real case: the Drinaxian Companion gives Palindrome's primary as K7 V
+    /// where TravellerMap has K9 V, and Palindrome also has an M1 V
+    /// companion. Matching star overrides against companions in blind order
+    /// rewrote the companion as K7 V and left the primary wrong — two errors
+    /// from one fix, neither of them visible.
+    #[test]
+    fn a_primary_class_override_patches_the_primary_not_the_companion() {
+        // K9 V primary with an M1 V companion, as Palindrome comes in.
+        let stars = parse_stellar("K9 V M1 V");
+        let cs = build_constraints("Palindrome", "B433334-B", &stars, 2, 0, 3).unwrap();
+
+        let ov = SystemOverride {
+            sector: "Trojan Reach".into(),
+            hex: "2216".into(),
+            world: "Palindrome".into(),
+            note: None,
+            system_name: None,
+            bodies: vec![BodySpec::Star {
+                name: None,
+                orbit: Some(StarOrbitSpec::Named("primary".into())),
+                class: Some("K7 V".into()),
+            }],
+        };
+        let merged = ov.merge_into(cs).unwrap();
+        assert_eq!(count(&merged, 0), 2, "still two stars");
+
+        let mut primary = None;
+        let mut companion = None;
+        for c in &merged.bodies {
+            if let Constraint::Star {
+                orbit,
+                spectral,
+                subtype,
+                ..
+            } = c
+            {
+                if matches!(orbit, Some(StarOrbit::Primary)) {
+                    primary = Some((*spectral, *subtype));
+                } else {
+                    companion = Some((*spectral, *subtype));
+                }
+            }
+        }
+        let (p_spec, p_sub) = primary.expect("a primary");
+        assert_eq!(p_sub, Some(7), "primary corrected to K7");
+        assert!(p_spec.is_some());
+
+        let (c_spec, c_sub) = companion.expect("a companion");
+        assert_eq!(c_sub, Some(1), "companion left as M1, untouched");
+        assert!(c_spec.is_some());
     }
 
     /// The main world is upstream data. A merge must not be able to touch it,

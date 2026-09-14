@@ -63,8 +63,14 @@ pub struct StarOverride {
     pub name: Option<String>,
 }
 
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone)]
 pub struct GasGiantOverride {
+    /// Names this giant. Without it a constraint's name was collected away
+    /// and the giant took the generated "<system> <numeral>" instead —
+    /// silently, since nothing failed to *place*. That is a shape of failure
+    /// the dropped-constraint diagnostics can't see, because the constraint
+    /// was honoured; only one of its fields wasn't.
+    pub name: Option<String>,
     pub size: Option<GasGiantSize>,
     pub num_satellites: Option<i32>,
     /// `Some(o)` pins this giant to orbit `o` (skipped with a warn if
@@ -845,7 +851,7 @@ impl System {
 
             let (size, moon_override) = match overrides {
                 Some(list) => {
-                    let o = list.get(placed_idx).copied().unwrap_or_default();
+                    let o = list.get(placed_idx).cloned().unwrap_or_default();
                     let size = o.size.unwrap_or_else(|| {
                         if roll_1d6() <= 3 {
                             GasGiantSize::Small
@@ -867,7 +873,14 @@ impl System {
             if let Some(m) = moon_override {
                 moon_overrides.insert(orbit, m);
             }
-            self.set_orbit_slot(orbit, OrbitContent::GasGiant(GasGiant::new(size, orbit)));
+            let mut giant = GasGiant::new(size, orbit);
+            if let Some(n) = overrides
+                .and_then(|list| list.get(placed_idx))
+                .and_then(|o| o.name.as_deref())
+            {
+                giant.name = n.to_string();
+            }
+            self.set_orbit_slot(orbit, OrbitContent::GasGiant(giant));
             num_giants -= 1;
             placed_idx += 1;
         }
@@ -1115,7 +1128,11 @@ impl System {
                         gas_giant.gen_satellite(&system_zones, &main_world_copy, &self.star);
                     }
                     gas_giant.clean_satellites();
-                    gas_giant.gen_name(&self.name, i);
+                    // Only when it hasn't already been named by a
+                    // constraint — gen_name overwrites unconditionally.
+                    if gas_giant.name.is_empty() {
+                        gas_giant.gen_name(&self.name, i);
+                    }
                 }
                 _ => continue,
             }
@@ -2119,11 +2136,12 @@ fn collect_overrides(constraints: &SystemConstraints) -> SystemOverrides {
         .iter()
         .filter_map(|c| match c {
             Constraint::GasGiant {
+                name,
                 orbit,
                 size,
                 num_satellites,
-                ..
             } => Some(GasGiantOverride {
+                name: name.clone(),
                 size: *size,
                 num_satellites: *num_satellites,
                 orbit: *orbit,
