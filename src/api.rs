@@ -350,6 +350,98 @@ pub fn build_constraints(
     Ok(cs)
 }
 
+/// The fields TravellerMap gives us about one system.
+///
+/// Exists so there is exactly one definition of "how upstream data becomes
+/// constraints". The server and the override validator both go through
+/// [`system_from_upstream`], which is the whole reason the validator's
+/// verdict means anything: it checks the system production will generate,
+/// not a reimplementation that agrees with it today.
+#[derive(Debug, Clone)]
+pub struct UpstreamSystem<'a> {
+    pub sector: &'a str,
+    /// Four-digit sub-sector hex, e.g. `"2324"`.
+    pub hex: &'a str,
+    pub name: &'a str,
+    pub uwp: &'a str,
+    /// Population/Belts/Gas-giants digits, e.g. `"902"`.
+    pub pbg: &'a str,
+    /// Stellar column, e.g. `"F3 V M9 V"`.
+    pub stellar: &'a str,
+    /// Total worlds in the system, if the source states it.
+    pub worlds: Option<i32>,
+}
+
+/// Why upstream data couldn't be turned into constraints.
+#[derive(Debug)]
+pub enum UpstreamError {
+    /// The hex isn't four digits.
+    BadHex(String),
+    /// The UWP is invalid, partial or contradictory.
+    Constraints(WorldgenError),
+    /// A curated override for this system couldn't be merged. Distinct from
+    /// the others because it is *our* data being wrong, not the caller's.
+    Override(String),
+}
+
+impl std::fmt::Display for UpstreamError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UpstreamError::BadHex(h) => {
+                write!(f, "hex must be a 4-digit string like \"2018\"; got \"{h}\"")
+            }
+            UpstreamError::Constraints(e) => write!(f, "{e}"),
+            UpstreamError::Override(e) => write!(f, "override merge failed: {e}"),
+        }
+    }
+}
+
+/// Turn one system's upstream data into a `(seed, constraints)` pair, with
+/// any curated override folded in.
+pub fn system_from_upstream(
+    u: &UpstreamSystem<'_>,
+) -> Result<(u64, SystemConstraints), UpstreamError> {
+    let (hex_x, hex_y) =
+        parse_hex_quad(u.hex).ok_or_else(|| UpstreamError::BadHex(u.hex.to_string()))?;
+    let seed = crate::seed::system_seed(u.sector, hex_x, hex_y);
+
+    let belts = digit_at(u.pbg, 1).unwrap_or(0) as usize;
+    let giants = digit_at(u.pbg, 2).unwrap_or(0) as usize;
+    let stars = parse_stellar(u.stellar);
+
+    // Cap the world count so a bogus `worlds=99999` can't allocate a giant
+    // orbit vector and generate that many bodies.
+    const MAX_WORLDS: i32 = 64;
+    let planets = match u.worlds.map(|w| w.min(MAX_WORLDS)) {
+        Some(w) => (w - 1 - belts as i32 - giants as i32).max(0) as usize,
+        None => 0,
+    };
+
+    let cs = build_constraints(u.name, u.uwp, &stars, giants, belts, planets)
+        .map_err(UpstreamError::Constraints)?;
+    let cs = crate::systems::overrides::apply(u.sector, u.hex, cs)
+        .map_err(UpstreamError::Override)?;
+    Ok((seed, cs))
+}
+
+/// `"2018"` → `(20, 18)`. Traveller hexes run to 32x40 per sector, inside a
+/// `u8` either way.
+pub fn parse_hex_quad(s: &str) -> Option<(u8, u8)> {
+    if s.len() != 4 {
+        return None;
+    }
+    let bytes = s.as_bytes();
+    if !bytes.iter().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some((s[0..2].parse().ok()?, s[2..4].parse().ok()?))
+}
+
+/// The digit at `idx` of a string like a PBG code.
+pub fn digit_at(s: &str, idx: usize) -> Option<u32> {
+    s.chars().nth(idx).and_then(|c| c.to_digit(10))
+}
+
 /// Parse a Traveller-Map style "Stellar" string into a list of
 /// [`StarSpec`]s suitable for passing to [`build_constraints`].
 ///
