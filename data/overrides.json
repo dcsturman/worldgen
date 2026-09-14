@@ -5,13 +5,15 @@
       "sector": "Trojan Reach",
       "hex": "2221",
       "world": "Torpol",
-      "note": "Drinaxian Companion ch.5. Star (F4 V), 2 belts, 4 gas giants and 10 rocky worlds already match TravellerMap's stellar/PBG/W data, so only the named body is recorded. Traefar is 'the next world out from Torpol'; the schema can't say that relatively, so it is pinned to orbit 6 \u2014 Torpol generates at its habitable orbit 5. Deterministic, and the validator fails if that ever shifts.",
+      "note": "Drinaxian Companion ch.5. Star (F4 V), 2 belts, 4 gas giants and 10 rocky worlds already match TravellerMap's stellar/PBG/W data, so only the named body is recorded. Traefar is 'the next world out from Torpol', said relatively because that is what the book says \u2014 the absolute orbit is a derived fact that would go stale if generation shifted.",
       "bodies": [
         {
           "type": "planet",
           "name": "Traefar",
-          "uwp": "?X106XX-X",
-          "orbit": 6
+          "position": {
+            "after": "Torpol"
+          },
+          "uwp": "?X106XX-X"
         }
       ]
     },
@@ -19,18 +21,18 @@
       "sector": "Trojan Reach",
       "hex": "2421",
       "world": "Blue",
-      "note": "Drinaxian Companion ch.7. Star (F9 V) and 2 gas giants match TravellerMap. Bulhai is 'the system's outer gas giant' and hosts Bulhai Freeport on one of its moons; the schema can't say 'outer', so it is pinned to orbit 14, the outer of the two the generator places. The validator fails if that changes. Bulhai Freeport sits on one of Bulhai's moons, pop ~20,000 (code 4). Port class C is inference, not statement: the book has it fitting starship electronics and weaponry (so a starport, not an F/G/H spaceport) while saying it 'may come to rival the main starport at Blue' (so below Blue's B).",
+      "note": "Drinaxian Companion ch.7. Star (F9 V) and 2 gas giants match TravellerMap. Bulhai is 'the system's outer gas giant'; Bulhai Freeport sits on one of its moons, pop ~20,000 (code 4). Port class F (the spaceport equivalent of C): it builds small craft and does minor refits - electronics and weaponry - but the book has it 'may come to rival the main starport at Blue', so it sits below Blue's B today.",
       "bodies": [
         {
           "type": "gas_giant",
           "name": "Bulhai",
-          "orbit": 14
+          "position": "outermost"
         },
         {
           "type": "moon",
-          "parent_orbit": 14,
+          "parent": "Bulhai",
           "name": "Bulhai Freeport",
-          "uwp": "CXXX4XX-X"
+          "uwp": "FXXX4XX-X"
         }
       ]
     },

@@ -504,6 +504,7 @@ pub fn World() -> impl IntoView {
         let constraints = SystemConstraints {
             bodies,
             system_name: None,
+            post: Vec::new(),
         };
         match System::generate_from_constraints(constraints) {
             Ok(sys) => {

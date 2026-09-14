@@ -65,6 +65,24 @@ pub struct SystemOverride {
     pub bodies: Vec<BodySpec>,
 }
 
+/// Where a body sits, said the way a source says it.
+///
+/// Books describe position relatively — "the next world out from Torpol",
+/// "the system's outer gas giant" — and an absolute orbit number is a
+/// *derived* fact that has to be re-derived whenever generation shifts.
+/// Recording the relationship instead keeps the file saying what the page
+/// says.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum PositionSpec {
+    /// The outermost body of this kind in the system.
+    Outermost,
+    /// The innermost body of this kind.
+    Innermost,
+    /// The first body of this kind orbiting beyond the named one.
+    After(String),
+}
+
 /// A star's orbit, spelled the way a person would: `"primary"`, `"far"`, or
 /// an orbit number.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,6 +117,10 @@ pub enum BodySpec {
         name: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         orbit: Option<i32>,
+        /// Relative position, for when the source says "the next world out"
+        /// rather than a number. Mutually exclusive with `orbit`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        position: Option<PositionSpec>,
         /// UWP with `X` for any column you don't know.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         uwp: Option<String>,
@@ -111,6 +133,8 @@ pub enum BodySpec {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         orbit: Option<i32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        position: Option<PositionSpec>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         uwp: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         moons: Option<i32>,
@@ -120,6 +144,8 @@ pub enum BodySpec {
         name: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         orbit: Option<i32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        position: Option<PositionSpec>,
         /// `"small"` or `"large"`; omit to let the generator roll it.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         size: Option<String>,
@@ -129,7 +155,14 @@ pub enum BodySpec {
     Moon {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         name: Option<String>,
-        parent_orbit: i32,
+        /// The parent's orbit number. Use `parent` instead when the source
+        /// names the body rather than numbering it — "a moon of Bulhai".
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_orbit: Option<i32>,
+        /// The parent body's name. Resolved after generation, so it works
+        /// for bodies whose orbit nothing pinned.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         uwp: Option<String>,
     },
@@ -137,12 +170,65 @@ pub enum BodySpec {
     Empty { orbit: i32 },
 }
 
+/// What a body in an override turns into.
+///
+/// Two kinds, split by *when the fact can be known*. An absolute orbit or a
+/// UWP steers generation and has to be in hand before it runs. A relative
+/// position — "the outermost gas giant" — cannot be resolved until the
+/// system exists, and neither can "a moon of Bulhai" when nothing pinned
+/// Bulhai's orbit. Those are applied to the finished system instead.
+#[derive(Debug)]
+pub enum Lowered {
+    /// Feeds the generator.
+    Constraint(Constraint),
+    /// Applied to the generated system afterwards.
+    Post(PostSpec),
+}
+
+/// Which kind of body a [`PostSpec`] is looking for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PostKind {
+    Planet,
+    Belt,
+    GasGiant,
+}
+
+/// How a [`PostSpec`] finds the body it describes.
+#[derive(Debug, Clone)]
+pub enum Target {
+    /// The outermost body of this kind.
+    Outermost(PostKind),
+    /// The innermost body of this kind.
+    Innermost(PostKind),
+    /// The first body of this kind beyond the named one.
+    After { kind: PostKind, body: String },
+    /// A satellite of the named body.
+    MoonOf(String),
+}
+
+/// A fact applied to the finished system rather than steering generation.
+#[derive(Debug, Clone)]
+pub struct PostSpec {
+    pub target: Target,
+    pub name: Option<String>,
+    pub uwp: Option<PartialUwp>,
+}
+
 impl BodySpec {
-    /// Lower one body to the generator's own constraint type.
-    pub fn to_constraint(&self) -> Result<Constraint, String> {
+    /// Lower one body, routing it to generation or to the post-pass.
+    pub fn lower(&self) -> Result<Lowered, String> {
         let uwp = |u: &Option<String>| -> Result<Option<PartialUwp>, String> {
             u.as_deref().map(PartialUwp::parse).transpose()
         };
+        let target = |pos: &PositionSpec, kind: PostKind| match pos {
+            PositionSpec::Outermost => Target::Outermost(kind),
+            PositionSpec::Innermost => Target::Innermost(kind),
+            PositionSpec::After(b) => Target::After {
+                kind,
+                body: b.clone(),
+            },
+        };
+
         Ok(match self {
             BodySpec::Star { name, orbit, class } => {
                 let orbit = match orbit {
@@ -166,49 +252,80 @@ impl BodySpec {
                 let spec = class
                     .as_deref()
                     .map(|c| {
-                        crate::api::parse_stellar(c).into_iter().next().ok_or_else(|| {
-                            format!("could not parse star class \"{c}\"")
-                        })
+                        crate::api::parse_stellar(c)
+                            .into_iter()
+                            .next()
+                            .ok_or_else(|| format!("could not parse star class \"{c}\""))
                     })
                     .transpose()?;
-                Constraint::Star {
+                Lowered::Constraint(Constraint::Star {
                     orbit,
                     spectral: spec.as_ref().map(|s| s.spectral),
                     subtype: spec.as_ref().and_then(|s| s.subtype),
                     size: spec.as_ref().map(|s| s.size),
                     name: name.clone(),
-                }
+                })
             }
             BodySpec::Planet {
                 name,
                 orbit,
+                position,
                 uwp: u,
                 moons,
-            } => Constraint::Planet {
-                name: name.clone(),
-                orbit: *orbit,
-                uwp: uwp(u)?,
-                num_satellites: *moons,
-                // Never settable from an override; see the module docs.
-                is_mainworld: false,
-            },
+            } => {
+                if orbit.is_some() && position.is_some() {
+                    return Err("a body has both an orbit and a position; pick one".into());
+                }
+                match position {
+                    Some(p) => Lowered::Post(PostSpec {
+                        target: target(p, PostKind::Planet),
+                        name: name.clone(),
+                        uwp: uwp(u)?,
+                    }),
+                    None => Lowered::Constraint(Constraint::Planet {
+                        name: name.clone(),
+                        orbit: *orbit,
+                        uwp: uwp(u)?,
+                        num_satellites: *moons,
+                        // Never settable from an override; see the module docs.
+                        is_mainworld: false,
+                    }),
+                }
+            }
             BodySpec::Belt {
                 name,
                 orbit,
+                position,
                 uwp: u,
                 moons,
-            } => Constraint::Belt {
-                name: name.clone(),
-                orbit: *orbit,
-                uwp: uwp(u)?,
-                num_satellites: *moons,
-            },
+            } => {
+                if orbit.is_some() && position.is_some() {
+                    return Err("a body has both an orbit and a position; pick one".into());
+                }
+                match position {
+                    Some(p) => Lowered::Post(PostSpec {
+                        target: target(p, PostKind::Belt),
+                        name: name.clone(),
+                        uwp: uwp(u)?,
+                    }),
+                    None => Lowered::Constraint(Constraint::Belt {
+                        name: name.clone(),
+                        orbit: *orbit,
+                        uwp: uwp(u)?,
+                        num_satellites: *moons,
+                    }),
+                }
+            }
             BodySpec::GasGiant {
                 name,
                 orbit,
+                position,
                 size,
                 moons,
             } => {
+                if orbit.is_some() && position.is_some() {
+                    return Err("a body has both an orbit and a position; pick one".into());
+                }
                 let size = match size.as_deref() {
                     None => None,
                     Some(s) if s.eq_ignore_ascii_case("small") => Some(GasGiantSize::Small),
@@ -219,24 +336,56 @@ impl BodySpec {
                         ));
                     }
                 };
-                Constraint::GasGiant {
-                    name: name.clone(),
-                    orbit: *orbit,
-                    size,
-                    num_satellites: *moons,
+                match position {
+                    Some(p) => Lowered::Post(PostSpec {
+                        target: target(p, PostKind::GasGiant),
+                        name: name.clone(),
+                        uwp: None,
+                    }),
+                    None => Lowered::Constraint(Constraint::GasGiant {
+                        name: name.clone(),
+                        orbit: *orbit,
+                        size,
+                        num_satellites: *moons,
+                    }),
                 }
             }
             BodySpec::Moon {
                 name,
                 parent_orbit,
+                parent,
                 uwp: u,
-            } => Constraint::Moon {
-                name: name.clone(),
-                parent_orbit: *parent_orbit,
-                uwp: uwp(u)?,
+            } => match (parent_orbit, parent) {
+                (Some(_), Some(_)) => {
+                    return Err("a moon has both parent_orbit and parent; pick one".into());
+                }
+                (None, None) => {
+                    return Err("a moon needs either parent_orbit or parent".into());
+                }
+                (Some(o), None) => Lowered::Constraint(Constraint::Moon {
+                    name: name.clone(),
+                    parent_orbit: *o,
+                    uwp: uwp(u)?,
+                }),
+                (None, Some(p)) => Lowered::Post(PostSpec {
+                    target: Target::MoonOf(p.clone()),
+                    name: name.clone(),
+                    uwp: uwp(u)?,
+                }),
             },
-            BodySpec::Empty { orbit } => Constraint::Empty { orbit: *orbit },
+            BodySpec::Empty { orbit } => Lowered::Constraint(Constraint::Empty { orbit: *orbit }),
         })
+    }
+
+    /// Lower to a plain constraint, erroring if this body is a post-pass
+    /// fact. Kept for callers that only deal in generation input.
+    pub fn to_constraint(&self) -> Result<Constraint, String> {
+        match self.lower()? {
+            Lowered::Constraint(c) => Ok(c),
+            Lowered::Post(_) => {
+                Err("this body is positioned relatively and is applied after generation".into())
+            }
+        }
     }
 }
 
@@ -267,11 +416,14 @@ impl SystemOverride {
             cs.system_name = Some(n.clone());
         }
 
-        let mine: Vec<Constraint> = self
-            .bodies
-            .iter()
-            .map(|b| b.to_constraint())
-            .collect::<Result<_, _>>()?;
+        let mut mine: Vec<Constraint> = Vec::new();
+        for b in &self.bodies {
+            match b.lower()? {
+                Lowered::Constraint(c) => mine.push(c),
+                // Held for after generation; see `Lowered`.
+                Lowered::Post(p) => cs.post.push(p),
+            }
+        }
 
         // --- stars ---
         let (my_stars, my_bodies): (Vec<_>, Vec<_>) = mine
@@ -496,6 +648,182 @@ pub fn apply(
     }
 }
 
+/// Apply post-generation facts to a finished system.
+///
+/// Returns the ones that couldn't be resolved, as
+/// [`DroppedConstraint`]s, so an override naming "the outermost gas giant"
+/// in a system with no gas giants fails loudly rather than doing nothing.
+pub fn apply_post(
+    system: &mut crate::systems::system::System,
+    specs: &[PostSpec],
+) -> Vec<crate::systems::system::DroppedConstraint> {
+    use crate::systems::system::{BodyKind, DroppedConstraint, OrbitContent};
+
+    let mut dropped = Vec::new();
+
+    for spec in specs {
+        // Resolve the target to an orbit index, given what actually got
+        // generated.
+        // Belts and planets are both `OrbitContent::World`, so "the outermost
+        // planet" needs to tell them apart. Size alone doesn't: `World::to_uwp`
+        // renders a size-0 body as "S" (a rockball) unless it is *named* as a
+        // planetoid, in which case it renders "0". Plenty of ordinary outer
+        // worlds are size 0 — treating those as belts found no planets at all
+        // in Torpol beyond the main world.
+        //
+        // So follow the same rule `to_uwp` uses, name and all. It is a
+        // heuristic, but it is *the* heuristic this codebase already relies on
+        // to draw the map, and a second, disagreeing one would be worse.
+        fn is_belt(w: &crate::systems::world::World) -> bool {
+            w.size <= 0 && w.name.to_lowercase().contains("planetoid")
+        }
+        let matches_kind = |c: &OrbitContent, kind: PostKind| match (c, kind) {
+            (OrbitContent::World(w), PostKind::Planet) => !is_belt(w),
+            (OrbitContent::World(w), PostKind::Belt) => is_belt(w),
+            (OrbitContent::GasGiant(_), PostKind::GasGiant) => true,
+            _ => false,
+        };
+        let of_kind = |system: &crate::systems::system::System, kind: PostKind| -> Vec<usize> {
+            system
+                .orbit_slots
+                .iter()
+                .enumerate()
+                .filter_map(|(i, slot)| {
+                    slot.as_ref()
+                        .filter(|c| matches_kind(c, kind))
+                        .map(|_| i)
+                })
+                .collect()
+        };
+        let orbit_of_named = |system: &crate::systems::system::System, name: &str| -> Option<usize> {
+            system.orbit_slots.iter().position(|slot| match slot {
+                Some(OrbitContent::World(w)) => w.name.eq_ignore_ascii_case(name),
+                Some(OrbitContent::GasGiant(g)) => g.name.eq_ignore_ascii_case(name),
+                _ => false,
+            })
+        };
+
+        let body_kind = |k: PostKind| match k {
+            PostKind::Planet => BodyKind::Planet,
+            PostKind::Belt => BodyKind::Belt,
+            PostKind::GasGiant => BodyKind::GasGiant,
+        };
+
+        let target_orbit: Option<usize> = match &spec.target {
+            Target::Outermost(kind) => of_kind(system, *kind).last().copied(),
+            Target::Innermost(kind) => of_kind(system, *kind).first().copied(),
+            Target::After { kind, body } => match orbit_of_named(system, body) {
+                Some(after) => of_kind(system, *kind).into_iter().find(|o| *o > after),
+                None => {
+                    dropped.push(DroppedConstraint::RelativeBodyNotFound {
+                        body: body_kind(*kind),
+                        reference: body.clone(),
+                    });
+                    continue;
+                }
+            },
+            Target::MoonOf(parent) => {
+                match orbit_of_named(system, parent) {
+                    Some(o) => {
+                        // Build the moon and hang it off its parent.
+                        let star = system.star;
+                        let mainworld = system
+                            .orbit_slots
+                            .iter()
+                            .flatten()
+                            .find_map(|c| match c {
+                                OrbitContent::World(w) if w.is_mainworld() => Some(w.clone()),
+                                _ => None,
+                            })
+                            .unwrap_or_default();
+                        let moon = crate::systems::world::World::generate_with_partial(
+                            &star,
+                            o,
+                            &mainworld,
+                            spec.uwp.as_ref(),
+                            spec.name.as_deref(),
+                            true,
+                            false,
+                        );
+                        match system.orbit_slots.get_mut(o).and_then(|s| s.as_mut()) {
+                            Some(OrbitContent::GasGiant(g)) => {
+                                use crate::systems::has_satellites::HasSatellites;
+                                g.push_satellite(moon);
+                            }
+                            Some(OrbitContent::World(w)) => w.satellites.sats.push(moon),
+                            _ => dropped.push(DroppedConstraint::MoonParentCannotHoldMoons {
+                                parent_orbit: o as i32,
+                            }),
+                        }
+                        continue;
+                    }
+                    None => {
+                        dropped.push(DroppedConstraint::RelativeBodyNotFound {
+                            body: BodyKind::Moon,
+                            reference: parent.clone(),
+                        });
+                        continue;
+                    }
+                }
+            }
+        };
+
+        let Some(orbit) = target_orbit else {
+            let kind = match &spec.target {
+                Target::Outermost(k) | Target::Innermost(k) => body_kind(*k),
+                Target::After { kind, .. } => body_kind(*kind),
+                Target::MoonOf(_) => BodyKind::Moon,
+            };
+            dropped.push(DroppedConstraint::NoBodyAtRelativePosition { body: kind });
+            continue;
+        };
+
+        // Apply the fact. A UWP means rebuilding the world at that orbit
+        // from the pinned columns — it has already been generated, and
+        // editing its digits in place would leave the derived fields (trade
+        // classes, astro data) describing the world it used to be.
+        let star = system.star;
+        let mainworld = system
+            .orbit_slots
+            .iter()
+            .flatten()
+            .find_map(|c| match c {
+                OrbitContent::World(w) if w.is_mainworld() => Some(w.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
+
+        match system.orbit_slots.get_mut(orbit).and_then(|s| s.as_mut()) {
+            Some(OrbitContent::World(w)) => {
+                if let Some(partial) = &spec.uwp {
+                    let mut rebuilt = crate::systems::world::World::generate_with_partial(
+                        &star,
+                        orbit,
+                        &mainworld,
+                        Some(partial),
+                        spec.name.as_deref().or(Some(w.name.as_str())),
+                        false,
+                        false,
+                    );
+                    rebuilt.orbit = orbit;
+                    rebuilt.compute_astro_data(&star);
+                    *w = rebuilt;
+                } else if let Some(n) = &spec.name {
+                    w.name = n.clone();
+                }
+            }
+            Some(OrbitContent::GasGiant(g)) => {
+                if let Some(n) = &spec.name {
+                    g.name = n.clone();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    dropped
+}
+
 /// Canonical lookup key for a system.
 ///
 /// Sector names arrive spelled however the caller spells them, and
@@ -537,7 +865,7 @@ mod tests {
         assert_eq!(o.system_name.as_deref(), Some("Merak Mists"));
         assert_eq!(o.bodies.len(), 6);
         for b in &o.bodies {
-            b.to_constraint().expect("lowers to a constraint");
+            b.lower().expect("lowers");
         }
     }
 
@@ -557,7 +885,8 @@ mod tests {
     fn overrides_can_never_set_the_main_world() {
         let f: OverrideFile = serde_json::from_str(SAMPLE).unwrap();
         for b in &f.overrides[0].bodies {
-            if let Constraint::Planet { is_mainworld, .. } = b.to_constraint().unwrap() {
+            if let Lowered::Constraint(Constraint::Planet { is_mainworld, .. }) = b.lower().unwrap()
+            {
                 assert!(!is_mainworld);
             }
         }
@@ -590,6 +919,7 @@ mod tests {
     #[test]
     fn bad_values_are_reported_not_swallowed() {
         let bad_size = BodySpec::GasGiant {
+            position: None,
             name: None,
             orbit: None,
             size: Some("enormous".into()),
@@ -630,6 +960,7 @@ mod tests {
             note: None,
             system_name: None,
             bodies: vec![BodySpec::GasGiant {
+                position: None,
                 name: None,
                 orbit: Some(5),
                 size: Some("large".into()),
@@ -658,8 +989,8 @@ mod tests {
             note: None,
             system_name: None,
             bodies: vec![
-                BodySpec::GasGiant { name: None, orbit: Some(5), size: None, moons: None },
-                BodySpec::GasGiant { name: None, orbit: Some(9), size: None, moons: None },
+                BodySpec::GasGiant { name: None, orbit: Some(5), position: None, size: None, moons: None },
+                BodySpec::GasGiant { name: None, orbit: Some(9), position: None, size: None, moons: None },
             ],
         };
         let merged = ov.merge_into(cs).unwrap();
@@ -769,6 +1100,7 @@ mod tests {
             note: None,
             system_name: None,
             bodies: vec![BodySpec::Planet {
+                position: None,
                 name: Some("Novastron".into()),
                 orbit: Some(2),
                 uwp: Some("X4A0000-0".into()),
@@ -800,7 +1132,9 @@ mod tests {
         // contain an unparseable star class or UWP.
         for o in &file.overrides {
             for b in &o.bodies {
-                b.to_constraint()
+                // `lower`, not `to_constraint`: a relatively-positioned body
+                // is a valid override that simply isn't a constraint.
+                b.lower()
                     .unwrap_or_else(|e| panic!("{} {}: {e}", o.sector, o.hex));
             }
         }
@@ -826,6 +1160,164 @@ mod tests {
         let after = apply("Nowhere In Particular", "0000", before).unwrap();
         assert_eq!(after.bodies.len(), n_before);
         assert_eq!(after.system_name, None);
+    }
+
+    fn ov(bodies: Vec<BodySpec>) -> SystemOverride {
+        SystemOverride {
+            sector: "Trojan Reach".into(),
+            hex: "2221".into(),
+            world: "Torpol".into(),
+            note: None,
+            system_name: None,
+            bodies,
+        }
+    }
+
+    fn generate(bodies: Vec<BodySpec>) -> crate::systems::system::System {
+        let stars = parse_stellar("F4 V");
+        let cs = build_constraints("Torpol", "B55A77A-8", &stars, 4, 2, 9).unwrap();
+        let merged = ov(bodies).merge_into(cs).unwrap();
+        crate::systems::system::System::generate_from_constraints_seeded(77, merged).unwrap()
+    }
+
+    /// "The outermost gas giant is Bulhai" — the name lands on whichever
+    /// giant actually ended up outermost, not on an orbit guessed in advance.
+    #[test]
+    fn outermost_resolves_against_the_generated_system() {
+        let sys = generate(vec![BodySpec::GasGiant {
+            name: Some("Bulhai".into()),
+            orbit: None,
+            position: Some(PositionSpec::Outermost),
+            size: None,
+            moons: None,
+        }]);
+        assert_eq!(sys.dropped_constraints(), Vec::new());
+
+        let giants: Vec<(usize, String)> = sys
+            .orbit_slots
+            .iter()
+            .enumerate()
+            .filter_map(|(i, c)| match c {
+                Some(crate::systems::system::OrbitContent::GasGiant(g)) => {
+                    Some((i, g.name.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(giants.len() > 1, "need several giants for this to mean anything");
+        assert_eq!(
+            giants.last().unwrap().1,
+            "Bulhai",
+            "the outermost giant should be the named one; giants were {giants:?}"
+        );
+        assert!(
+            giants[..giants.len() - 1].iter().all(|(_, n)| n != "Bulhai"),
+            "only the outermost should be renamed"
+        );
+    }
+
+    /// "The next world out from Torpol" — resolved against the main world's
+    /// actual orbit, with the UWP applied to whichever world that is.
+    #[test]
+    fn after_resolves_to_the_next_body_beyond_the_named_one() {
+        let sys = generate(vec![BodySpec::Planet {
+            name: Some("Traefar".into()),
+            orbit: None,
+            position: Some(PositionSpec::After("Torpol".into())),
+            uwp: Some("?X106XX-X".into()),
+            moons: None,
+        }]);
+        assert_eq!(sys.dropped_constraints(), Vec::new());
+
+        let main_orbit = sys
+            .orbit_slots
+            .iter()
+            .position(|c| matches!(c, Some(crate::systems::system::OrbitContent::World(w)) if w.is_mainworld()))
+            .expect("a main world");
+        let traefar = sys
+            .orbit_slots
+            .iter()
+            .enumerate()
+            .find_map(|(i, c)| match c {
+                Some(crate::systems::system::OrbitContent::World(w)) if w.name == "Traefar" => {
+                    Some((i, w.clone()))
+                }
+                _ => None,
+            })
+            .expect("Traefar was placed");
+        assert!(
+            traefar.0 > main_orbit,
+            "Traefar at {} should be beyond Torpol at {main_orbit}",
+            traefar.0
+        );
+        // The pinned columns survived the rebuild.
+        assert_eq!(traefar.1.atmosphere, 1);
+        assert_eq!(traefar.1.hydro, 0);
+        assert_eq!(traefar.1.get_population(), 6);
+    }
+
+    /// A moon can name its parent instead of numbering it, which is what a
+    /// source does — and works even when nothing pinned the parent's orbit.
+    #[test]
+    fn a_moon_can_find_its_parent_by_name() {
+        let sys = generate(vec![
+            BodySpec::GasGiant {
+                name: Some("Bulhai".into()),
+                orbit: None,
+                position: Some(PositionSpec::Outermost),
+                size: None,
+                moons: None,
+            },
+            BodySpec::Moon {
+                name: Some("Bulhai Freeport".into()),
+                parent_orbit: None,
+                parent: Some("Bulhai".into()),
+                uwp: Some("FXXX4XX-X".into()),
+            },
+        ]);
+        assert_eq!(sys.dropped_constraints(), Vec::new());
+
+        let found = sys.orbit_slots.iter().flatten().any(|c| match c {
+            crate::systems::system::OrbitContent::GasGiant(g) => {
+                g.name == "Bulhai" && g.satellites().iter().any(|m| m.name == "Bulhai Freeport")
+            }
+            _ => false,
+        });
+        assert!(found, "the freeport should hang off Bulhai");
+    }
+
+    /// A relative position that matches nothing must fail loudly. Doing
+    /// nothing quietly is the failure this whole effort exists to remove.
+    #[test]
+    fn an_unresolvable_position_is_reported() {
+        let sys = generate(vec![BodySpec::Planet {
+            name: Some("Ghost".into()),
+            orbit: None,
+            position: Some(PositionSpec::After("Nowhere".into())),
+            uwp: None,
+            moons: None,
+        }]);
+        let dropped = sys.dropped_constraints();
+        assert!(
+            dropped.iter().any(|d| matches!(
+                d,
+                crate::systems::system::DroppedConstraint::RelativeBodyNotFound { .. }
+            )),
+            "expected RelativeBodyNotFound, got {dropped:?}"
+        );
+    }
+
+    /// An orbit and a position say two different things about one body.
+    #[test]
+    fn orbit_and_position_together_are_rejected() {
+        let b = BodySpec::GasGiant {
+            name: None,
+            orbit: Some(5),
+            position: Some(PositionSpec::Outermost),
+            size: None,
+            moons: None,
+        };
+        assert!(b.lower().unwrap_err().contains("pick one"));
     }
 
     #[test]

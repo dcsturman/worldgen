@@ -342,6 +342,13 @@ pub enum DroppedConstraint {
     MoonParentOutOfRange { parent_orbit: i32 },
     /// A moon's parent orbit holds something that can't have moons.
     MoonParentCannotHoldMoons { parent_orbit: i32 },
+    /// A relatively-positioned body referenced a body that isn't there —
+    /// "the first world beyond Torpol" in a system with no Torpol. Usually a
+    /// misspelling, since the referent is normally a name from the source.
+    RelativeBodyNotFound { body: BodyKind, reference: String },
+    /// Nothing of the required kind exists to be outermost/innermost/after —
+    /// "the outermost gas giant" in a system with no gas giants.
+    NoBodyAtRelativePosition { body: BodyKind },
 }
 
 impl std::fmt::Display for DroppedConstraint {
@@ -372,6 +379,13 @@ impl std::fmt::Display for DroppedConstraint {
                 f,
                 "moon references parent orbit {parent_orbit}, which holds nothing that can have moons"
             ),
+            DroppedConstraint::RelativeBodyNotFound { body, reference } => write!(
+                f,
+                "{body} is positioned relative to \"{reference}\", which isn't in this system"
+            ),
+            DroppedConstraint::NoBodyAtRelativePosition { body } => {
+                write!(f, "no {body} exists at the position this override describes")
+            }
         }
     }
 }
@@ -569,6 +583,17 @@ impl System {
         let mut system = gen_stars(star_mod, true, &overrides);
         main_world.gen_trade_classes();
         system.fill_system_with(main_world, true, &overrides);
+
+        // Facts that could only be known once the system existed: a body
+        // identified by relative position, a moon of a body whose orbit
+        // nothing pinned. Anything that can't be resolved joins the dropped
+        // constraints, so "the outermost gas giant" in a system with no gas
+        // giants fails as loudly as a misplaced pin.
+        if !constraints.post.is_empty() {
+            let unresolved =
+                crate::systems::overrides::apply_post(&mut system, &constraints.post);
+            system.dropped.extend(unresolved);
+        }
         Ok(system)
     }
 
@@ -908,6 +933,27 @@ impl System {
 
         let main_world_copy = main_world.clone();
         let system_zones = get_zone(&self.star);
+
+        // A system takes its main world's name unless an override says
+        // otherwise. "The Torpol system", "the Regina system" — that is how
+        // Traveller refers to them and how every published source writes
+        // them, so every body without a name of its own becomes "Torpol VII"
+        // rather than the name tables' invention.
+        //
+        // Deliberately not applied to companions: a companion sub-system has
+        // no main world of its own, so it keeps the rolled name unless a
+        // `Constraint::Star` names it.
+        //
+        // The main world keeps its own name rather than becoming "Torpol I" —
+        // it is the name every other tool and the map itself use for it. The
+        // numeral tracks orbit, so its slot is simply named instead of
+        // numbered and the sequence shows a gap where it sits.
+        //
+        // Overwrites the name `System::new` already rolled rather than
+        // skipping the roll, so the RNG stream is identical either way.
+        if is_primary && overrides.system_name.is_none() && !main_world.name.trim().is_empty() {
+            self.name = main_world.name.trim().to_string();
+        }
 
         // Empty constraints reserve their orbits first so nothing
         // else can claim them.
@@ -2466,6 +2512,49 @@ mod tests {
                 .map(|c| format!("{c:?}"))
                 .collect::<Vec<_>>()
         );
+    }
+
+    /// A system takes its main world's name, so derived bodies read as
+    /// "Torpol VII" rather than an invented "Canis Corridor VII".
+    #[test]
+    fn a_system_is_named_after_its_main_world() {
+        let mut cs = SystemConstraints::from_main_world("Torpol", "B55A77A-8").unwrap();
+        cs.bodies.push(Constraint::GasGiant {
+            name: None,
+            orbit: Some(6),
+            size: None,
+            num_satellites: None,
+        });
+        let sys = System::generate_from_constraints_seeded(31, cs).expect("generates");
+        assert_eq!(sys.name, "Torpol");
+
+        // The main world keeps its own name...
+        assert!(
+            sys.orbit_slots.iter().flatten().any(|c| matches!(
+                c,
+                OrbitContent::World(w) if w.name == "Torpol"
+            )),
+            "main world should still be called Torpol"
+        );
+        // ...and the unnamed bodies derive from it.
+        assert!(
+            sys.orbit_slots.iter().flatten().any(|c| match c {
+                OrbitContent::World(w) => w.name.starts_with("Torpol "),
+                OrbitContent::GasGiant(g) => g.name.starts_with("Torpol "),
+                _ => false,
+            }),
+            "no body derived its name from the system"
+        );
+    }
+
+    /// An explicit system_name still wins — the main world is only the
+    /// default.
+    #[test]
+    fn an_explicit_system_name_beats_the_main_world_default() {
+        let mut cs = SystemConstraints::from_main_world("Torpol", "B55A77A-8").unwrap();
+        cs.system_name = Some("Merak Mists".to_string());
+        let sys = System::generate_from_constraints_seeded(31, cs).expect("generates");
+        assert_eq!(sys.name, "Merak Mists");
     }
 
     /// A companion's name is its own — it names that companion's

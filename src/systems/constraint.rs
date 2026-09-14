@@ -245,6 +245,16 @@ pub struct SystemConstraints {
     /// `None` rolls from the name tables, as every system did before this
     /// field existed.
     pub system_name: Option<String>,
+    /// Facts applied to the finished system rather than steering its
+    /// generation — a body identified by relative position, a moon of a
+    /// body whose orbit nothing pinned. See `systems::overrides::PostSpec`.
+    ///
+    /// They ride along here so every existing caller
+    /// (`generate_system_png`, the SVG path, the validator) picks them up
+    /// without changing its signature, and so the single
+    /// `generate_from_constraints` entry point stays the only place a
+    /// system is built.
+    pub post: Vec<crate::systems::overrides::PostSpec>,
 }
 
 impl SystemConstraints {
@@ -253,6 +263,7 @@ impl SystemConstraints {
     pub fn from_main_world(name: &str, uwp: &str) -> Result<Self, String> {
         Ok(SystemConstraints {
             system_name: None,
+            post: Vec::new(),
             bodies: vec![Constraint::Planet {
                 name: Some(name.to_string()),
                 orbit: None,
@@ -505,6 +516,7 @@ mod tests {
                 },
             ],
             system_name: None,
+            post: Vec::new(),
         };
         let errs = cs.validate();
         assert!(
@@ -532,6 +544,7 @@ mod tests {
                 },
             ],
             system_name: None,
+            post: Vec::new(),
         };
         let errs = cs.validate();
         assert!(
@@ -552,6 +565,7 @@ mod tests {
                 is_mainworld: true,
             }],
             system_name: None,
+            post: Vec::new(),
         };
         let errs = cs.validate();
         assert!(
