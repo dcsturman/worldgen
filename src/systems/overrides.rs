@@ -185,6 +185,13 @@ pub enum BodySpec {
         /// for bodies whose orbit nothing pinned.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         parent: Option<String>,
+        /// This moon's own orbit around its parent, in the satellite
+        /// numbering the generator already uses (close orbits are small
+        /// numbers, far orbits multiples of five, extreme ones multiples of
+        /// twenty-five). Source tables give these — Ra-La-Lantra's moons sit
+        /// at 0, 8, 11, 27 and 34 — and without it the roll picks.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        satellite_orbit: Option<usize>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         uwp: Option<String>,
         /// Bases and installations: naval, scout, farming, mining, colony,
@@ -247,6 +254,8 @@ pub enum Target {
 #[derive(Debug, Clone)]
 pub struct PostSpec {
     pub target: Target,
+    /// For a moon, its orbit around its parent.
+    pub satellite_orbit: Option<usize>,
     pub name: Option<String>,
     pub uwp: Option<PartialUwp>,
     pub facilities: Vec<crate::systems::world::Facility>,
@@ -326,6 +335,7 @@ impl BodySpec {
         };
         Ok(Some(PostSpec {
             target,
+            satellite_orbit: None,
             name: None,
             uwp: None,
             facilities: self.parse_facilities()?,
@@ -451,6 +461,7 @@ impl BodySpec {
                 match position {
                     Some(p) => Lowered::Post(PostSpec {
                         target: target(p, PostKind::Planet),
+                        satellite_orbit: None,
                         name: name.clone(),
                         uwp: uwp(u)?,
                     facilities: Vec::new(),
@@ -480,6 +491,7 @@ impl BodySpec {
                 match position {
                     Some(p) => Lowered::Post(PostSpec {
                         target: target(p, PostKind::Belt),
+                        satellite_orbit: None,
                         name: name.clone(),
                         uwp: uwp(u)?,
                     facilities: Vec::new(),
@@ -516,6 +528,7 @@ impl BodySpec {
                 match position {
                     Some(p) => Lowered::Post(PostSpec {
                         target: target(p, PostKind::GasGiant),
+                        satellite_orbit: None,
                         name: name.clone(),
                         uwp: None,
                     facilities: Vec::new(),
@@ -533,6 +546,7 @@ impl BodySpec {
                 name,
                 parent_orbit,
                 parent,
+                satellite_orbit,
                 uwp: u,
                 ..
             } => match (parent_orbit, parent) {
@@ -549,6 +563,7 @@ impl BodySpec {
                 }),
                 (None, Some(p)) => Lowered::Post(PostSpec {
                     target: Target::MoonOf(p.clone()),
+                    satellite_orbit: *satellite_orbit,
                     name: name.clone(),
                     uwp: uwp(u)?,
                 facilities: Vec::new(),
@@ -942,6 +957,12 @@ pub fn apply_post(
                         }
                         if let Some(z) = spec.zone {
                             moon.travel_zone = z;
+                        }
+                        // The satellite's own orbit around its parent. The
+                        // generator already rolls one from the standard table;
+                        // this pins it when a source gives the number.
+                        if let Some(so) = spec.satellite_orbit {
+                            moon.orbit = so;
                         }
                         match system.orbit_slots.get_mut(o).and_then(|s| s.as_mut()) {
                             Some(OrbitContent::GasGiant(g)) => {
@@ -1480,6 +1501,7 @@ mod tests {
                 moons: None,
             },
             BodySpec::Moon {
+                satellite_orbit: None,
                 facilities: Vec::new(),
                 zone: None,
                 name: Some("Bulhai Freeport".into()),
@@ -1497,6 +1519,45 @@ mod tests {
             _ => false,
         });
         assert!(found, "the freeport should hang off Bulhai");
+    }
+
+    /// A source table gives satellite orbits — Ra-La-Lantra's moons sit at
+    /// 0, 8, 11, 27 and 34 — and pinning one must stick rather than being
+    /// re-rolled from the standard satellite table.
+    #[test]
+    fn a_moon_can_pin_its_orbit_around_its_parent() {
+        let sys = generate(vec![
+            BodySpec::GasGiant {
+                name: Some("Ra-La-Lantra".into()),
+                orbit: None,
+                position: Some(PositionSpec::Outermost),
+                size: Some("large".into()),
+                moons: None,
+            },
+            BodySpec::Moon {
+                satellite_orbit: Some(27),
+                facilities: Vec::new(),
+                zone: None,
+                name: Some("Daliant".into()),
+                parent_orbit: None,
+                parent: Some("Ra-La-Lantra".into()),
+                uwp: Some("X100000-0".into()),
+            },
+        ]);
+        assert_eq!(sys.dropped_constraints(), Vec::new());
+
+        let moon = sys
+            .orbit_slots
+            .iter()
+            .flatten()
+            .find_map(|c| match c {
+                crate::systems::system::OrbitContent::GasGiant(g) => {
+                    g.satellites().iter().find(|m| m.name == "Daliant").cloned()
+                }
+                _ => None,
+            })
+            .expect("Daliant should orbit Ra-La-Lantra");
+        assert_eq!(moon.orbit, 27, "the pinned satellite orbit should stick");
     }
 
     /// A relative position that matches nothing must fail loudly. Doing

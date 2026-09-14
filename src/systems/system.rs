@@ -173,6 +173,14 @@ pub struct SystemOverrides {
 #[cfg_attr(feature = "frontend", derive(Store))]
 pub struct System {
     pub name: String,
+    /// The primary star's own name, when it has one distinct from the
+    /// system's.
+    ///
+    /// Usually they are the same — "the Regina system" orbits a star nobody
+    /// names separately — so this defaults to `name`. But sources do name
+    /// stars in their own right: Makergod's Oghma orbits *Fijari*, exactly
+    /// as Terra orbits Sol. Conflating the two loses that.
+    pub star_name: Option<String>,
     /// Constraints this system couldn't honour. Populated during placement;
     /// read via [`System::dropped_constraints`], which walks companions too.
     pub dropped: Vec<DroppedConstraint>,
@@ -429,6 +437,7 @@ impl System {
     ) -> System {
         System {
             name: gen_star_system_name(),
+            star_name: None,
             dropped: Vec::new(),
             star: Star {
                 star_type,
@@ -1739,6 +1748,11 @@ impl System {
 }
 
 impl System {
+    /// The primary star's name, falling back to the system's.
+    pub fn star_name(&self) -> &str {
+        self.star_name.as_deref().unwrap_or(&self.name)
+    }
+
     /// Every constraint this system and its companions failed to honour.
     ///
     /// Walks the tree because companions are `System`s in their own right
@@ -1761,6 +1775,7 @@ impl Default for System {
     fn default() -> Self {
         Self {
             name: "Unknown".to_string(),
+            star_name: None,
             dropped: Vec::new(),
             star: Star {
                 star_type: StarType::G,
@@ -2058,12 +2073,13 @@ fn gen_stars(world_mod: i32, companions_possible: bool, overrides: &SystemOverri
     // the RNG stream identical whether or not a name is pinned — so naming a
     // system doesn't silently re-roll the rest of it. Same reasoning as the
     // reserve-then-release dance for the main world's habitable orbit.
-    //
-    // The primary reads `system_name`, not its own `StarOverride::name`: the
-    // primary's name and the system's name are one value, and validation
-    // rejects a name on an explicitly-primary Star constraint.
     if let Some(n) = &overrides.system_name {
         system.name = n.clone();
+    }
+    // The primary star's own name, when the source gives it one distinct
+    // from the system's. Defaults to the system name via `star_name()`.
+    if let Some(n) = &primary_override.name {
+        system.star_name = Some(n.clone());
     }
     let star = system.star;
     system.set_max_orbits(gen_max_orbits(&star));
@@ -2608,26 +2624,34 @@ mod tests {
         );
     }
 
-    /// Naming the primary star is the same act as naming the system, so the
-    /// constraint set refuses to express it twice. Silently ignoring the
-    /// field would lose a name the author clearly meant to set.
+    /// The primary star can carry its own name, distinct from the system's.
+    ///
+    /// Usually they are the same string and nobody names the star
+    /// separately. But sources do: Makergod's Oghma orbits *Fijari*, as
+    /// Terra orbits Sol. `star_name()` falls back to the system name so the
+    /// common case needs nothing.
     #[test]
-    fn name_on_the_primary_star_is_rejected() {
-        let mut cs = SystemConstraints::from_main_world("Pourne", "A9B2887-A").unwrap();
+    fn the_primary_star_can_be_named_apart_from_the_system() {
+        let mut cs = SystemConstraints::from_main_world("Oghma", "B534754-9").unwrap();
         cs.bodies.push(Constraint::Star {
             orbit: Some(StarOrbit::Primary),
-            spectral: None,
-            subtype: None,
-            size: None,
-            name: Some("Merak Mists".to_string()),
+            spectral: Some(StarType::K),
+            subtype: Some(5),
+            size: Some(StarSize::V),
+            name: Some("Fijari".to_string()),
         });
-        let errors = cs.validate();
-        assert!(
-            errors
-                .iter()
-                .any(|e| matches!(e, ConstraintError::NameOnPrimaryStar(_))),
-            "expected NameOnPrimaryStar, got {errors:?}"
-        );
+        let sys = System::generate_from_constraints_seeded(5, cs).expect("generates");
+        assert_eq!(sys.name, "Oghma", "the system is named after its main world");
+        assert_eq!(sys.star_name(), "Fijari", "the star has its own name");
+    }
+
+    /// With no star name given, the star answers to the system's name.
+    #[test]
+    fn an_unnamed_star_falls_back_to_the_system_name() {
+        let cs = SystemConstraints::from_main_world("Regina", "A788899-A").unwrap();
+        let sys = System::generate_from_constraints_seeded(5, cs).expect("generates");
+        assert_eq!(sys.star_name(), sys.name);
+        assert_eq!(sys.star_name(), "Regina");
     }
 
     /// Pinning the name must not disturb anything else.
