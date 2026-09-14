@@ -989,20 +989,38 @@ impl System {
         // nothing is pinned this list is empty and generation is unchanged,
         // which is why systems without a gas-giant override still come out
         // exactly as they did.
-        let reserved_gg_orbits: Vec<usize> = if is_primary {
-            overrides
-                .gas_giants
-                .iter()
-                .flatten()
-                .filter_map(|g| g.orbit)
+        // Belts have the same problem and are placed in their own pass after
+        // the planets, so reserve theirs too. Only gas giants were reserved
+        // originally, which left a pinned belt losing its orbit to a planet
+        // that had no preference — the identical failure, one body kind over.
+        let reserve = |slots: &Vec<Option<OrbitContent>>, orbits: Vec<i32>| -> Vec<usize> {
+            orbits
+                .into_iter()
                 .filter(|o| *o >= 0)
                 .map(|o| o as usize)
-                .filter(|o| *o < self.orbit_slots.len() && self.orbit_slots[*o].is_none())
+                .filter(|o| *o < slots.len() && slots[*o].is_none())
                 .collect()
-        } else {
-            Vec::new()
         };
-        for o in &reserved_gg_orbits {
+        let (reserved_gg_orbits, reserved_belt_orbits) = if is_primary {
+            (
+                reserve(
+                    &self.orbit_slots,
+                    overrides
+                        .gas_giants
+                        .iter()
+                        .flatten()
+                        .filter_map(|g| g.orbit)
+                        .collect(),
+                ),
+                reserve(
+                    &self.orbit_slots,
+                    overrides.belts.iter().filter_map(|b| b.orbit).collect(),
+                ),
+            )
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        for o in reserved_gg_orbits.iter().chain(reserved_belt_orbits.iter()) {
             self.set_orbit_slot(*o, OrbitContent::Blocked);
         }
 
@@ -1043,6 +1061,9 @@ impl System {
                 &main_world_copy,
                 &mut planet_moon_overrides,
             );
+            for o in &reserved_belt_orbits {
+                self.orbit_slots[*o] = None;
+            }
             self.place_belt_constraints(
                 &overrides.belts,
                 &main_world_copy,
