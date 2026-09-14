@@ -239,6 +239,40 @@
           "uwp": "X400000-0"
         }
       ]
+    },
+    {
+      "sector": "Trojan Reach",
+      "hex": "2425",
+      "world": "Paal",
+      "note": "Shadows of Sindal ch.2, 'The World of Paal': 'a type F3 V (yellow-white main sequence) star... three gas giant planets and six terrestrial (rocky) worlds, of which Paal itself is second out from the sun. There are no planetoid belts.' Star and all three counts already match TravellerMap (PBG=603, W=9), so the only new fact is Paal's position.",
+      "bodies": [
+        {
+          "type": "main_world",
+          "orbit": 1
+        }
+      ]
+    },
+    {
+      "sector": "Trojan Reach",
+      "hex": "1317",
+      "world": "Caldos",
+      "note": "Shadows of Sindal ch.6: 'several mining centres in the system's two asteroid belts. These feed into a modest processing facility.' Both belts already exist upstream (PBG=824); what is added is the mining on them, which a UWP cannot carry. Identified by position because the text names neither.",
+      "bodies": [
+        {
+          "type": "belt",
+          "position": "innermost",
+          "facilities": [
+            "mining"
+          ]
+        },
+        {
+          "type": "belt",
+          "position": "outermost",
+          "facilities": [
+            "mining"
+          ]
+        }
+      ]
     }
   ]
 }

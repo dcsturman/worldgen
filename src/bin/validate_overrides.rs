@@ -213,7 +213,13 @@ fn check(o: &SystemOverride, up: &Entry, verbose: bool) -> Vec<Failure> {
             let line = match slot {
                 Some(OrbitContent::World(w)) => {
                     let main = if w.is_mainworld() { " [main]" } else { "" };
-                    format!("{:<22} {}{}", w.name, w.to_uwp(), main)
+                    let f = w.facilities_string();
+                    let f = if f.trim().is_empty() {
+                        String::new()
+                    } else {
+                        format!("  [{}]", f.trim())
+                    };
+                    format!("{:<22} {}{}{}", w.name, w.to_uwp(), main, f)
                 }
                 Some(OrbitContent::GasGiant(g)) => format!("{:<22} gas giant", g.name),
                 Some(OrbitContent::Secondary) => "companion star".to_string(),
