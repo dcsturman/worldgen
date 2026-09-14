@@ -914,6 +914,39 @@ impl System {
             self.ensure_orbits_for_constraints(overrides);
         }
 
+        // Reserve the orbits pinned gas giants asked for, before the planet
+        // and belt passes run.
+        //
+        // Those passes hand every *unpinned* body `get_unused_orbits().first()`
+        // — the lowest free orbit — and gas giants aren't placed until after
+        // them. So with eight don't-care planets from a PBG digit, orbits 0-7
+        // were gone before a gas giant pinned to orbit 6 ever got to ask, and
+        // its constraint was dropped. The planets had no preference; the gas
+        // giant did, and lost anyway.
+        //
+        // Reserving mirrors what the main world already does with its
+        // habitable orbit: mark the slot Blocked so the auto passes route
+        // around it, release it again just before the real placement. When
+        // nothing is pinned this list is empty and generation is unchanged,
+        // which is why systems without a gas-giant override still come out
+        // exactly as they did.
+        let reserved_gg_orbits: Vec<usize> = if is_primary {
+            overrides
+                .gas_giants
+                .iter()
+                .flatten()
+                .filter_map(|g| g.orbit)
+                .filter(|o| *o >= 0)
+                .map(|o| o as usize)
+                .filter(|o| *o < self.orbit_slots.len() && self.orbit_slots[*o].is_none())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        for o in &reserved_gg_orbits {
+            self.set_orbit_slot(*o, OrbitContent::Blocked);
+        }
+
         // The main world is placed LAST (after the planet / belt / gas-giant
         // passes), but a habitable-zone main world has a fixed target orbit
         // and must not lose it to an auto-placed body. In a system with many
@@ -962,6 +995,12 @@ impl System {
         // there means the pbg gas-giant digit was 0, so force exactly zero
         // rather than letting gen_gas_giants roll a random count (which
         // would add bodies the `W` count never accounted for).
+        // Release the gas-giant reservations so gen_gas_giants sees those
+        // slots as the free orbits they were always meant to be.
+        for o in &reserved_gg_orbits {
+            self.orbit_slots[*o] = None;
+        }
+
         let gg_spec: Option<&[GasGiantOverride]> =
             match (overrides.autopop, overrides.gas_giants.as_deref()) {
                 (true, None) => Some(&[]),
@@ -2230,6 +2269,95 @@ mod tests {
             ),
             "orbit 12 holds {:?}",
             sys.orbit_slots.get(12)
+        );
+    }
+
+    /// A gas giant pinned to a low orbit must beat the don't-care planets
+    /// that would otherwise have taken it.
+    ///
+    /// The PBG world count contributes planets with no orbit preference, and
+    /// they used to claim the lowest free orbits before gas giants were
+    /// placed at all — so "the gas giant is at orbit 4", with a handful of
+    /// filler planets in the system, was dropped despite being perfectly
+    /// satisfiable. Found by the override validator on its first real run.
+    #[test]
+    fn a_pinned_gas_giant_beats_unpinned_filler_planets() {
+        let mut cs = SystemConstraints::from_main_world("Pourne", "A9B2887-A").unwrap();
+        // Eight planets with no orbit of their own, as a PBG world count
+        // produces.
+        for _ in 0..8 {
+            cs.bodies.push(Constraint::Planet {
+                name: None,
+                orbit: None,
+                uwp: None,
+                num_satellites: None,
+                is_mainworld: false,
+            });
+        }
+        cs.bodies.push(Constraint::GasGiant {
+            name: None,
+            orbit: Some(4),
+            size: None,
+            num_satellites: None,
+        });
+        let sys = System::generate_from_constraints_seeded(19, cs).expect("generates");
+        assert_eq!(
+            sys.dropped_constraints(),
+            Vec::new(),
+            "the pinned giant lost to a planet that had no preference"
+        );
+        assert!(
+            matches!(
+                sys.orbit_slots.get(4),
+                Some(Some(OrbitContent::GasGiant(_)))
+            ),
+            "orbit 4 holds {:?}",
+            sys.orbit_slots.get(4)
+        );
+    }
+
+    /// Option A's whole justification: a system with nothing pinned must
+    /// generate exactly as it did before the reservation existed.
+    #[test]
+    fn reserving_changes_nothing_when_no_gas_giant_is_pinned() {
+        let build = || {
+            let mut cs = SystemConstraints::from_main_world("Pourne", "A9B2887-A").unwrap();
+            for _ in 0..6 {
+                cs.bodies.push(Constraint::Planet {
+                    name: None,
+                    orbit: None,
+                    uwp: None,
+                    num_satellites: None,
+                    is_mainworld: false,
+                });
+            }
+            cs.bodies.push(Constraint::GasGiant {
+                name: None,
+                orbit: None,
+                size: None,
+                num_satellites: None,
+            });
+            System::generate_from_constraints_seeded(23, cs).unwrap()
+        };
+        let a = build();
+        let b = build();
+        let kinds = |s: &System| {
+            s.orbit_slots
+                .iter()
+                .map(|c| match c {
+                    None => "empty",
+                    Some(OrbitContent::World(_)) => "world",
+                    Some(OrbitContent::GasGiant(_)) => "gas giant",
+                    Some(OrbitContent::Blocked) => "blocked",
+                    Some(OrbitContent::Secondary) => "secondary",
+                    Some(OrbitContent::Tertiary) => "tertiary",
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(kinds(&a), kinds(&b));
+        assert!(
+            a.orbit_slots.iter().flatten().count() > 1,
+            "test is vacuous if the system is empty"
         );
     }
 
