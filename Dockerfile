@@ -30,6 +30,13 @@ ENV TRAVELLERMAP_URL=${TRAVELLERMAP_URL}
 # exist in the build context for the WASM crate to compile.
 COPY src ./src/
 COPY assets ./assets/
+# Curated system overrides, compiled into the lib with include_str!. Like the
+# bundled font above, the macro resolves the path relative to the source file,
+# so the data has to be present in the build context or the crate will not
+# compile. `.dockerignore` re-including it is necessary but not sufficient —
+# the COPY steps here are an explicit allowlist, so anything the source reads
+# at compile time has to be named in both places.
+COPY data ./data/
 
 # Release build is required: Cloud Run caps responses at 32 MiB per request,
 # and a debug-mode wasm easily exceeds that with debug symbols (~36 MB →
@@ -80,6 +87,13 @@ ENV TRAVELLERMAP_URL=${TRAVELLERMAP_URL}
 # include_bytes! at compile time.
 COPY src ./src/
 COPY assets ./assets/
+# Curated system overrides, compiled into the lib with include_str!. Like the
+# bundled font above, the macro resolves the path relative to the source file,
+# so the data has to be present in the build context or the crate will not
+# compile. `.dockerignore` re-including it is necessary but not sufficient —
+# the COPY steps here are an explicit allowlist, so anything the source reads
+# at compile time has to be named in both places.
+COPY data ./data/
 
 # Build the server binary. Same cache-mount story as the wasm stage —
 # /server/target holds cargo's incremental cache; the cargo registry +
