@@ -5,7 +5,7 @@
       "sector": "Trojan Reach",
       "hex": "2221",
       "world": "Torpol",
-      "note": "Drinaxian Companion ch.5. Star (F4 V), 2 belts, 4 gas giants and 10 rocky worlds already match TravellerMap's stellar/PBG/W data, so only the named body is recorded. Traefar is 'the next world out from Torpol', said relatively because that is what the book says \u2014 the absolute orbit is a derived fact that would go stale if generation shifted.",
+      "note": "Drinaxian Companion ch.5. Star (F4 V), 2 belts, 4 gas giants and 10 rocky worlds already match TravellerMap's stellar/PBG/W data, so only the named body is recorded. Traefar is 'the next world out from Torpol', said relatively because that is what the book says — the absolute orbit is a derived fact that would go stale if generation shifted.",
       "bodies": [
         {
           "type": "planet",
@@ -271,6 +271,24 @@
           "facilities": [
             "mining"
           ]
+        }
+      ]
+    },
+    {
+      "sector": "Trojan Reach",
+      "hex": "1919",
+      "world": "Thebus",
+      "note": "Pirates of Drinax bk.1 ch.3 (\"Thebus\") and the Proactive Recycling Corporation entry. TravellerMap already gives M3 V, PBG 823 (2 belts, 3 gas giants) and W=15, which Shadows of Sindal corroborates (\"three gas giants, two planetoid belts and several terrestrial planets, most of which are rockballs\"), so only the named bodies are recorded. Olo is \"the third planet in the system, a gas giant according to the old charts\" — orbit 2 is that count in the generator's 0-based numbering, with Thebus itself innermost. Pinned rather than said relatively only because the schema's relative positions run in the post-generation pass, which renames an existing body but cannot create one: gen_gas_giants picks uniformly at random from the empty orbits beyond the habitable index (0 for an M3 V, so every orbit from 1 out), and this system's seed simply put all three at orbits 12-14. The pin is squarely within what the generator would produce on another draw, not a fight with it. The PRC's base is \"in orbit of Olo\", a junkyard of spare parts and wrecks that their six ships fly out of; the book gives it no name of its own and no UWP, so only its existence and its parent are recorded.",
+      "bodies": [
+        {
+          "type": "gas_giant",
+          "name": "Olo",
+          "orbit": 2
+        },
+        {
+          "type": "moon",
+          "name": "PRC Base",
+          "parent": "Olo"
         }
       ]
     }
