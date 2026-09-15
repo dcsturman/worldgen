@@ -192,6 +192,17 @@ all three are load-bearing:
 These live in the script rather than being set by hand, because a hand-set
 value is exactly what a later scripted deploy silently reverts.
 
+`push_image.sh` finishes by comparing the running revision's image digest
+before and after, and exits non-zero if it didn't change. `set -e` already
+covers a *failed* build — it aborts before `gcloud run deploy` runs at all —
+so this covers the other case: a deploy that succeeds while serving the same
+bits, which is what a dead buildx builder produced on 2026-07-21.
+
+**Check the exit status directly, not through a pipe.** `./scripts/push_image.sh
+| tail -20` reports `tail`'s status, not the script's, so a failed deploy looks
+like a successful one. This has caused three false "deployed" reports; the
+script itself was correct every time.
+
 ### The startup probe must hit `/api/health`, not port 80
 
 The image runs nginx and the render server under supervisord. Cloud Run's
