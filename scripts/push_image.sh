@@ -108,6 +108,22 @@ echo "  TRAVELLERMAP_URL = $TRAVELLERMAP_URL"
 echo "  GCS_BUCKET       = $GCS_BUCKET"
 echo ""
 
+# Record what is running now, so the deploy can prove it changed something.
+#
+# `set -e` already aborts on a failed build, and does so correctly — the
+# deploy step never runs. This checks the other thing: that the revision now
+# serving is built from a *different image* than the one that was serving
+# before. That is the failure from 2026-07-21, where a dead buildx builder let
+# a stale `:latest` be re-deployed as a brand-new revision — a successful
+# deploy of the wrong bits, which no exit code can express.
+#
+# Comparing digests is an assertion about the artifact rather than about the
+# process, and the artifact is what people actually use.
+PREV_DIGEST=$(gcloud run revisions describe \
+  "$(gcloud run services describe worldgen --region us-central1 \
+      --format='value(status.latestReadyRevisionName)' 2>/dev/null)" \
+  --region us-central1 --format='value(status.imageDigest)' 2>/dev/null || true)
+
 # Ensure we're using the docker-container builder (supports caching)
 docker buildx create --name worldgen-builder --driver docker-container --use 2>/dev/null || \
   docker buildx use worldgen-builder
@@ -151,3 +167,28 @@ gcloud run deploy worldgen \
   --memory 2Gi \
   --max-instances 50 \
   --set-env-vars GCP_PROJECT=$GCP_PROJECT,FIRESTORE_DATABASE_ID=worldgen,GCS_BUCKET=$GCS_BUCKET,RUST_LOG=info
+
+# Verify the deploy actually changed the running image.
+NEW_DIGEST=$(gcloud run revisions describe \
+  "$(gcloud run services describe worldgen --region us-central1 \
+      --format='value(status.latestReadyRevisionName)')" \
+  --region us-central1 --format='value(status.imageDigest)')
+
+echo ""
+if [ -z "$PREV_DIGEST" ]; then
+  echo "Deployed $NEW_DIGEST (no previous revision to compare against)."
+elif [ "$PREV_DIGEST" = "$NEW_DIGEST" ]; then
+  echo "WARNING: the running image did not change."
+  echo "  before: $PREV_DIGEST"
+  echo "  after:  $NEW_DIGEST"
+  echo ""
+  echo "  A deploy reported success while serving the same bits. Either the"
+  echo "  source really is unchanged since the last deploy — in which case"
+  echo "  this is fine — or the build produced nothing new and the old image"
+  echo "  was re-deployed. Check the build output above before trusting it."
+  exit 1
+else
+  echo "Deployed. Image digest changed:"
+  echo "  before: $PREV_DIGEST"
+  echo "  after:  $NEW_DIGEST"
+fi
