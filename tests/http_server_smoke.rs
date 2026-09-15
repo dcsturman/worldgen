@@ -252,6 +252,90 @@ async fn health_endpoint_returns_200_without_touching_anything() {
     assert_eq!(String::from_utf8_lossy(&body), "ok");
 }
 
+/// The canonical system query the cache tests share.
+const NORICUM: &str = "sector=Trojan+Reach&hex=2018&name=Noricum&uwp=D8867BB-1&pbg=804&stellar=G2+V+M9+V+M6+V&worlds=14";
+
+/// The system endpoints must not claim `immutable`.
+///
+/// They did, on the grounds that output was a pure function of the query
+/// string. Curated overrides ended that: the same URL renders differently
+/// once data for that system ships. `immutable` tells browsers never to
+/// revalidate — not even on a hard reload, which is exactly its purpose — so
+/// the claim bought a year in which no change could reach anyone who had
+/// already looked. Including the user who deployed it.
+#[tokio::test]
+async fn system_responses_are_validated_not_immutable() {
+    let addr = spawn_http_server().await;
+    for path in ["/api/system", "/api/system_svg"] {
+        let req = format!(
+            "GET {path}?{NORICUM} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
+        );
+        let buf = send_request(addr, &req).await;
+        let head = split_response(&buf).0;
+        assert!(head.starts_with("HTTP/1.1 200 OK"), "head:\n{head}");
+        assert!(
+            !head.to_lowercase().contains("immutable"),
+            "{path} still claims immutable:\n{head}"
+        );
+        assert!(
+            head.to_lowercase().contains("etag:"),
+            "{path} has no ETag to revalidate against:\n{head}"
+        );
+    }
+}
+
+/// A client holding the current response gets a 304 — and gets it without the
+/// system being generated, since the ETag is built from the request's inputs.
+#[tokio::test]
+async fn a_matching_etag_is_answered_with_304() {
+    let addr = spawn_http_server().await;
+    let get = format!(
+        "GET /api/system_svg?{NORICUM} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
+    );
+    let head = split_response(&send_request(addr, &get).await).0;
+    let etag = head
+        .lines()
+        .find_map(|l| l.strip_prefix("ETag: ").or_else(|| l.strip_prefix("etag: ")))
+        .expect("an ETag")
+        .trim()
+        .to_string();
+
+    let conditional = format!(
+        "GET /api/system_svg?{NORICUM} HTTP/1.1\r\nHost: {addr}\r\n\
+         If-None-Match: {etag}\r\nConnection: close\r\n\r\n"
+    );
+    let (head2, body2) = split_response(&send_request(addr, &conditional).await);
+    assert!(
+        head2.starts_with("HTTP/1.1 304 Not Modified"),
+        "head:\n{head2}"
+    );
+    assert!(body2.is_empty(), "a 304 must carry no body");
+
+    // A stale one must not be honoured.
+    let stale = format!(
+        "GET /api/system_svg?{NORICUM} HTTP/1.1\r\nHost: {addr}\r\n\
+         If-None-Match: \"0000000000000000\"\r\nConnection: close\r\n\r\n"
+    );
+    let head3 = split_response(&send_request(addr, &stale).await).0;
+    assert!(head3.starts_with("HTTP/1.1 200 OK"), "head:\n{head3}");
+}
+
+/// The planet endpoints keep `immutable`, and should: their URL carries the
+/// name, UWP and orbit, so the content really is fixed per URL.
+#[tokio::test]
+async fn planet_responses_stay_immutable() {
+    let addr = spawn_http_server().await;
+    let req = format!(
+        "GET /api/world?sector=Trojan+Reach&hex=2018&name=Noricum&uwp=D8867BB-1 HTTP/1.1\r\n\
+         Host: {addr}\r\nConnection: close\r\n\r\n"
+    );
+    let head = split_response(&send_request(addr, &req).await).0;
+    assert!(
+        head.to_lowercase().contains("immutable"),
+        "planet renders should stay immutable:\n{head}"
+    );
+}
+
 #[tokio::test]
 async fn unknown_path_returns_404() {
     let addr = spawn_http_server().await;

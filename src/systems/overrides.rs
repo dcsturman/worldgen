@@ -913,6 +913,24 @@ fn table() -> &'static std::collections::HashMap<String, SystemOverride> {
     })
 }
 
+/// A stable fingerprint of the curated data.
+///
+/// Used in HTTP ETags so a response identifies the data that produced it:
+/// ship new overrides and every affected ETag changes, so clients revalidate
+/// once and pick them up instead of holding a stale copy.
+///
+/// Hashes the raw file rather than the parsed table — the bytes are what
+/// changed, and it costs nothing at startup.
+pub fn fingerprint() -> &'static str {
+    static FP: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    FP.get_or_init(|| {
+        use std::hash::Hasher;
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        h.write(OVERRIDES_JSON.as_bytes());
+        format!("{:016x}", h.finish())
+    })
+}
+
 /// Every override, for validation and tooling.
 pub fn all() -> Vec<&'static SystemOverride> {
     table().values().collect()
