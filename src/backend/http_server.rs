@@ -124,13 +124,23 @@ pub async fn handle_http(
         }
     };
 
-    // Drain headers (we don't need their values for these routes).
+    // Drain headers, keeping the one we act on.
+    //
+    // `If-None-Match` matters for the system endpoints: their ETag is built
+    // from the request's *inputs* rather than its output, so a match can be
+    // answered with a 304 without generating or rendering anything.
     let mut consumed = request_line.len();
+    let mut if_none_match: Option<String> = None;
     loop {
         let line = read_line(&mut reader, MAX_HEADER_BYTES - consumed).await?;
         consumed += line.len();
         if line == "\r\n" || line == "\n" || line.is_empty() {
             break;
+        }
+        if let Some((name, value)) = line.split_once(':')
+            && name.trim().eq_ignore_ascii_case("if-none-match")
+        {
+            if_none_match = Some(value.trim().to_string());
         }
     }
 
@@ -185,8 +195,12 @@ pub async fn handle_http(
         // instance being able to serve. Point the Cloud Run startup probe at
         // it (httpGet /api/health) — a TCP probe on 80 cannot express this.
         "/api/health" => write_simple(reader.get_mut(), 200, "OK", "ok").await,
-        "/api/system" => handle_system(reader.get_mut(), query, head_only).await,
-        "/api/system_svg" => handle_system_svg(reader.get_mut(), query, head_only).await,
+        "/api/system" => {
+            handle_system(reader.get_mut(), query, head_only, if_none_match.as_deref()).await
+        }
+        "/api/system_svg" => {
+            handle_system_svg(reader.get_mut(), query, head_only, if_none_match.as_deref()).await
+        }
         "/api/world" => handle_world(reader.get_mut(), query, head_only, gcs).await,
         _ => write_simple(reader.get_mut(), 404, "Not Found", "Unknown endpoint").await,
     }
@@ -350,7 +364,14 @@ async fn handle_system(
     stream: &mut TcpStream,
     query: &str,
     head_only: bool,
+    if_none_match: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Answered before parsing or rendering: the ETag comes from the inputs,
+    // so a client that already holds this response costs nothing to serve.
+    let etag = system_etag(query);
+    if etag_matches(if_none_match, &etag) {
+        return write_not_modified(stream, &etag).await;
+    }
     let req = match parse_system_request(query) {
         Ok(r) => r,
         Err((code, reason, body)) => return write_simple(stream, code, reason, &body).await,
@@ -365,7 +386,7 @@ async fn handle_system(
         Err(panic_msg) => return render_panic_500(stream, "/api/system", &panic_msg).await,
     };
 
-    write_png(stream, &png, head_only, None).await
+    write_system_png(stream, &png, head_only, &etag).await
 }
 
 /// Handler for `GET /api/system_svg`. The vector parallel to
@@ -378,7 +399,12 @@ async fn handle_system_svg(
     stream: &mut TcpStream,
     query: &str,
     head_only: bool,
+    if_none_match: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let etag = system_etag(query);
+    if etag_matches(if_none_match, &etag) {
+        return write_not_modified(stream, &etag).await;
+    }
     let req = match parse_system_request(query) {
         Ok(r) => r,
         Err((code, reason, body)) => return write_simple(stream, code, reason, &body).await,
@@ -392,7 +418,7 @@ async fn handle_system_svg(
         Err(panic_msg) => return render_panic_500(stream, "/api/system_svg", &panic_msg).await,
     };
 
-    write_svg(stream, svg.as_bytes(), head_only).await
+    write_svg(stream, svg.as_bytes(), head_only, &etag).await
 }
 
 /// Handler for `GET /api/world`. Renders a planet surface PNG, caching the
@@ -1046,6 +1072,108 @@ async fn write_texture(
     Ok(())
 }
 
+/// Write an `image/png` 200 for a *system* render: validated by ETag rather
+/// than declared immutable, since curated data can change what it shows.
+async fn write_system_png(
+    stream: &mut TcpStream,
+    bytes: &[u8],
+    head_only: bool,
+    etag: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let headers = format!(
+        "HTTP/1.1 200 OK\r\n\
+         Content-Type: image/png\r\n\
+         Content-Length: {len}\r\n\
+         ETag: {etag}\r\n\
+         {cache}\
+         Connection: close\r\n\
+         {cors}\
+         \r\n",
+        len = bytes.len(),
+        cache = SYSTEM_CACHE_CONTROL,
+        cors = CORS_HEADERS,
+    );
+    stream.write_all(headers.as_bytes()).await?;
+    if !head_only {
+        stream.write_all(bytes).await?;
+    }
+    stream.shutdown().await.ok();
+    Ok(())
+}
+
+/// Fingerprint of everything a system render depends on besides the query
+/// string.
+///
+/// The system endpoints used to advertise `immutable` on the grounds that
+/// their output was a pure function of the query parameters. Overrides ended
+/// that: the same URL legitimately renders differently once curated data for
+/// that system ships, and `immutable` tells every browser never to revalidate
+/// — not even on a hard reload, which is precisely what it is for. The result
+/// was a year-long window in which a change could not reach anyone who had
+/// already looked.
+///
+/// Mixing the override file and a generator version into the ETag makes the
+/// response identify what produced it. Deploying new curated data changes
+/// every affected ETag, so clients revalidate once and pick it up.
+///
+/// Bump `SYSTEM_RENDER_VERSION` when a change alters what a system looks like
+/// without changing the override file — a placement rule, the renderer.
+const SYSTEM_RENDER_VERSION: u32 = 1;
+
+fn system_etag(query: &str) -> String {
+    let mut h = SipHasher24::new_with_keys(CACHE_SIP_KEY_0, CACHE_SIP_KEY_1);
+    h.write(b"system_etag\0");
+    h.write_u32(SYSTEM_RENDER_VERSION);
+    h.write(query.as_bytes());
+    h.write_u8(0);
+    // The curated data itself: its content decides the output just as much as
+    // the query does.
+    h.write(crate::systems::overrides::fingerprint().as_bytes());
+    format!("\"{:016x}\"", h.finish())
+}
+
+/// True when the client already holds this exact response.
+///
+/// `If-None-Match` is a comma-separated list and may be `*`.
+fn etag_matches(if_none_match: Option<&str>, etag: &str) -> bool {
+    let Some(header) = if_none_match else {
+        return false;
+    };
+    header.split(',').any(|candidate| {
+        let c = candidate.trim();
+        c == "*" || c == etag || c.strip_prefix("W/").is_some_and(|w| w == etag)
+    })
+}
+
+/// Write a `304 Not Modified`. No body, by definition.
+async fn write_not_modified(
+    stream: &mut TcpStream,
+    etag: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let headers = format!(
+        "HTTP/1.1 304 Not Modified\r\n\
+         ETag: {etag}\r\n\
+         {cache}\
+         Connection: close\r\n\
+         {cors}\
+         \r\n",
+        cache = SYSTEM_CACHE_CONTROL,
+        cors = CORS_HEADERS,
+    );
+    stream.write_all(headers.as_bytes()).await?;
+    stream.shutdown().await.ok();
+    Ok(())
+}
+
+/// Cache policy for the system endpoints.
+///
+/// Deliberately not `immutable`: see [`system_etag`]. An hour of freshness
+/// keeps repeat views off the network entirely, and after that a conditional
+/// request costs a 304 — which, because the ETag comes from the inputs, is
+/// answered without rendering the system at all. Cheaper than today's cache
+/// hit was, not more expensive.
+const SYSTEM_CACHE_CONTROL: &str = "Cache-Control: public, max-age=3600, must-revalidate\r\n";
+
 /// Write an `image/svg+xml` 200 response. Mirrors [`write_png`] but with the
 /// SVG content type; `charset=utf-8` since the body is text. Same long
 /// immutable cache headers — the output is a deterministic function of the
@@ -1054,16 +1182,19 @@ async fn write_svg(
     stream: &mut TcpStream,
     bytes: &[u8],
     head_only: bool,
+    etag: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let headers = format!(
         "HTTP/1.1 200 OK\r\n\
          Content-Type: image/svg+xml; charset=utf-8\r\n\
          Content-Length: {len}\r\n\
-         Cache-Control: public, max-age=31536000, immutable\r\n\
+         ETag: {etag}\r\n\
+         {cache}\
          Connection: close\r\n\
          {cors}\
          \r\n",
         len = bytes.len(),
+        cache = SYSTEM_CACHE_CONTROL,
         cors = CORS_HEADERS,
     );
     stream.write_all(headers.as_bytes()).await?;
