@@ -883,10 +883,23 @@ const OVERRIDES_JSON: &str = include_str!("../../data/overrides.json");
 
 /// Parsed overrides, keyed by [`canonical_key`].
 ///
-/// Panics on a malformed file. That is deliberate: the file ships inside the
-/// binary, so a parse failure means the build was broken before it left the
-/// machine, and there is no sensible way to serve half of a curated data set.
-/// The validator catches it long before this does.
+/// Parsed once, lazily, on the first system request — not at startup — and
+/// held for the life of the process. Per request this is one hash lookup,
+/// which for almost every system misses.
+///
+/// **Panics on a malformed file, deliberately.** Serving a system silently
+/// stripped of its curated data is the exact failure this whole effort exists
+/// to remove: it would look entirely normal and simply be wrong, in a way
+/// nobody would notice for months. A dead endpoint gets fixed the same day.
+///
+/// Note what does *not* protect against that, despite appearances:
+/// `include_str!` embeds the file's bytes without understanding them, so a
+/// malformed file compiles perfectly happily and only fails here, at the
+/// first request. And because a panic inside `get_or_init` leaves the
+/// `OnceLock` uninitialised, every later request re-runs it and panics again
+/// — the endpoint stays down rather than recovering.
+///
+/// What actually catches it is `the_shipped_override_file_parses`, in CI.
 fn table() -> &'static std::collections::HashMap<String, SystemOverride> {
     static TABLE: std::sync::OnceLock<std::collections::HashMap<String, SystemOverride>> =
         std::sync::OnceLock::new();
