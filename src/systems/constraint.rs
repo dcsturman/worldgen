@@ -184,14 +184,13 @@ pub enum Constraint {
         /// Subtype digit 0-9 (e.g. the `4` in `F4 II`). `None` rolls.
         subtype: Option<u8>,
         size: Option<StarSize>,
-        /// Names a **companion** star and its sub-system — bodies orbiting
-        /// that companion derive their names from it.
+        /// The star's own name.
         ///
-        /// Meaningless on the primary, whose name is the *system's* name:
-        /// see [`SystemConstraints::system_name`]. Setting it on a star
-        /// explicitly pinned to `StarOrbit::Primary` is a validation error
-        /// rather than a silent no-op, since the value would otherwise
-        /// vanish with nothing to show for it.
+        /// On a **companion** it also names that companion's sub-system, so
+        /// bodies orbiting it derive their names from it. On the **primary**
+        /// it is the star's name alone — the *system* is named separately
+        /// (after its main world by default), because the two are usually
+        /// but not always the same string. Sol and Terra; Fijari and Oghma.
         name: Option<String>,
     },
     Planet {
@@ -245,6 +244,28 @@ pub struct SystemConstraints {
     /// `None` rolls from the name tables, as every system did before this
     /// field existed.
     pub system_name: Option<String>,
+    /// Facts applied to the finished system rather than steering its
+    /// generation — a body identified by relative position, a moon of a
+    /// body whose orbit nothing pinned. See `systems::overrides::PostSpec`.
+    ///
+    /// They ride along here so every existing caller
+    /// (`generate_system_png`, the SVG path, the validator) picks them up
+    /// without changing its signature, and so the single
+    /// `generate_from_constraints` entry point stays the only place a
+    /// system is built.
+    pub post: Vec<crate::systems::overrides::PostSpec>,
+    /// Bodies belonging to the secondary star's own sub-system, with orbit
+    /// numbers in *its* orbits rather than the primary's.
+    ///
+    /// Companions have always generated their own worlds and gas giants —
+    /// `System` is recursive and `fill_system` runs on them — they just
+    /// rolled everything randomly because no constraints reached them.
+    pub secondary_bodies: Vec<Constraint>,
+    /// The same for the tertiary.
+    pub tertiary_bodies: Vec<Constraint>,
+    /// Where the main world sits, when a source states it. `None` uses the
+    /// habitable-zone default.
+    pub main_world_orbit: Option<i32>,
 }
 
 impl SystemConstraints {
@@ -253,6 +274,10 @@ impl SystemConstraints {
     pub fn from_main_world(name: &str, uwp: &str) -> Result<Self, String> {
         Ok(SystemConstraints {
             system_name: None,
+            post: Vec::new(),
+            secondary_bodies: Vec::new(),
+            tertiary_bodies: Vec::new(),
+            main_world_orbit: None,
             bodies: vec![Constraint::Planet {
                 name: Some(name.to_string()),
                 orbit: None,
@@ -287,17 +312,6 @@ impl SystemConstraints {
             .count();
         if main_world_count > 1 {
             errors.push(ConstraintError::MultipleMainWorlds(main_world_count));
-        }
-
-        for c in &self.bodies {
-            if let Constraint::Star {
-                orbit: Some(StarOrbit::Primary),
-                name: Some(n),
-                ..
-            } = c
-            {
-                errors.push(ConstraintError::NameOnPrimaryStar(n.clone()));
-            }
         }
 
         let mut seen_orbits = std::collections::BTreeSet::new();
@@ -378,12 +392,6 @@ pub enum ConstraintError {
     IllegalOrbit { orbit: i32, reason: String },
     MoonMissingParent(i32),
     UnsupportedYet(String),
-    /// A `Star` constraint pinned to the primary carries a name. The
-    /// primary's name *is* the system's name, so it belongs in
-    /// `SystemConstraints::system_name`; accepting it here would give one
-    /// value two homes, and silently dropping it would lose the name with
-    /// nothing to show for it.
-    NameOnPrimaryStar(String),
 }
 
 impl std::fmt::Display for ConstraintError {
@@ -406,11 +414,6 @@ impl std::fmt::Display for ConstraintError {
                 )
             }
             ConstraintError::UnsupportedYet(s) => write!(f, "not yet supported: {s}"),
-            ConstraintError::NameOnPrimaryStar(n) => write!(
-                f,
-                "primary star carries the name '{n}' — the primary's name is \
-                 the system's name, so set system_name instead"
-            ),
         }
     }
 }
@@ -505,6 +508,10 @@ mod tests {
                 },
             ],
             system_name: None,
+            post: Vec::new(),
+            secondary_bodies: Vec::new(),
+            tertiary_bodies: Vec::new(),
+            main_world_orbit: None,
         };
         let errs = cs.validate();
         assert!(
@@ -532,6 +539,10 @@ mod tests {
                 },
             ],
             system_name: None,
+            post: Vec::new(),
+            secondary_bodies: Vec::new(),
+            tertiary_bodies: Vec::new(),
+            main_world_orbit: None,
         };
         let errs = cs.validate();
         assert!(
@@ -552,6 +563,10 @@ mod tests {
                 is_mainworld: true,
             }],
             system_name: None,
+            post: Vec::new(),
+            secondary_bodies: Vec::new(),
+            tertiary_bodies: Vec::new(),
+            main_world_orbit: None,
         };
         let errs = cs.validate();
         assert!(

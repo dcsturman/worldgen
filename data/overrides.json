@@ -5,13 +5,15 @@
       "sector": "Trojan Reach",
       "hex": "2221",
       "world": "Torpol",
-      "note": "Drinaxian Companion ch.5. Star (F4 V), 2 belts, 4 gas giants and 10 rocky worlds already match TravellerMap's stellar/PBG/W data, so only the named body is recorded. Traefar is 'the next world out from Torpol'; the schema can't say that relatively, so it is pinned to orbit 6 \u2014 Torpol generates at its habitable orbit 5. Deterministic, and the validator fails if that ever shifts.",
+      "note": "Drinaxian Companion ch.5. Star (F4 V), 2 belts, 4 gas giants and 10 rocky worlds already match TravellerMap's stellar/PBG/W data, so only the named body is recorded. Traefar is 'the next world out from Torpol', said relatively because that is what the book says \u2014 the absolute orbit is a derived fact that would go stale if generation shifted.",
       "bodies": [
         {
           "type": "planet",
           "name": "Traefar",
-          "uwp": "?X106XX-X",
-          "orbit": 6
+          "position": {
+            "after": "Torpol"
+          },
+          "uwp": "?X106XX-X"
         }
       ]
     },
@@ -19,18 +21,18 @@
       "sector": "Trojan Reach",
       "hex": "2421",
       "world": "Blue",
-      "note": "Drinaxian Companion ch.7. Star (F9 V) and 2 gas giants match TravellerMap. Bulhai is 'the system's outer gas giant' and hosts Bulhai Freeport on one of its moons; the schema can't say 'outer', so it is pinned to orbit 14, the outer of the two the generator places. The validator fails if that changes. Bulhai Freeport sits on one of Bulhai's moons, pop ~20,000 (code 4). Port class C is inference, not statement: the book has it fitting starship electronics and weaponry (so a starport, not an F/G/H spaceport) while saying it 'may come to rival the main starport at Blue' (so below Blue's B).",
+      "note": "Drinaxian Companion ch.7. Star (F9 V) and 2 gas giants match TravellerMap. Bulhai is 'the system's outer gas giant'; Bulhai Freeport sits on one of its moons, pop ~20,000 (code 4). Port class F (the spaceport equivalent of C): it builds small craft and does minor refits - electronics and weaponry - but the book has it 'may come to rival the main starport at Blue', so it sits below Blue's B today.",
       "bodies": [
         {
           "type": "gas_giant",
           "name": "Bulhai",
-          "orbit": 14
+          "position": "outermost"
         },
         {
           "type": "moon",
-          "parent_orbit": 14,
+          "parent": "Bulhai",
           "name": "Bulhai Freeport",
-          "uwp": "CXXX4XX-X"
+          "uwp": "FXXX4XX-X"
         }
       ]
     },
@@ -44,6 +46,231 @@
           "type": "star",
           "orbit": "primary",
           "class": "K7 V"
+        }
+      ]
+    },
+    {
+      "sector": "Trojan Reach",
+      "hex": "2020",
+      "world": "Oghma",
+      "note": "Reach Adventure 8: Makergod, Library Data p.31 - full system table. Counts already match TravellerMap (PBG=404 gives 4 gas giants, W=11 the non-satellite count), so what is recorded is the names, UWPs and structure upstream has no room for. Oghma's orbit is pinned because the book puts it three orbits beyond a K5 V's habitable zone and the rules agree: at size 5 the -2 DM for being outside gives a mean atmosphere of exactly the 3 it has, and the -4 hydrographics DM is why only 40% is water and that water is frozen. The book gives the tertiary as M3 V where TravellerMap has M4 V.",
+      "bodies": [
+        {
+          "type": "star",
+          "orbit": "primary",
+          "name": "Fijari",
+          "class": "K5 V"
+        },
+        {
+          "type": "main_world",
+          "orbit": 3
+        },
+        {
+          "type": "gas_giant",
+          "orbit": 0,
+          "name": "Keetle",
+          "size": "small"
+        },
+        {
+          "type": "empty",
+          "orbit": 1
+        },
+        {
+          "type": "planet",
+          "orbit": 2,
+          "name": "Vordor",
+          "uwp": "X200000-0"
+        },
+        {
+          "type": "planet",
+          "orbit": 4,
+          "name": "Drinn",
+          "uwp": "X6A8000-0"
+        },
+        {
+          "type": "gas_giant",
+          "orbit": 5,
+          "name": "Ra-La-Lantra",
+          "size": "large"
+        },
+        {
+          "type": "moon",
+          "parent": "Ra-La-Lantra",
+          "name": "Ring System",
+          "satellite_orbit": 0,
+          "uwp": "YR00000-0"
+        },
+        {
+          "type": "moon",
+          "parent": "Ra-La-Lantra",
+          "name": "B'kolior",
+          "satellite_orbit": 8,
+          "uwp": "X621000-0"
+        },
+        {
+          "type": "moon",
+          "parent": "Ra-La-Lantra",
+          "name": "Hye-Livven",
+          "satellite_orbit": 11,
+          "uwp": "X300000-0"
+        },
+        {
+          "type": "moon",
+          "parent": "Ra-La-Lantra",
+          "name": "Daliant",
+          "satellite_orbit": 27,
+          "uwp": "X100000-0"
+        },
+        {
+          "type": "moon",
+          "parent": "Ra-La-Lantra",
+          "name": "Quarren",
+          "satellite_orbit": 34,
+          "uwp": "X200000-0"
+        },
+        {
+          "type": "star",
+          "name": "Doruc",
+          "class": "M5 V",
+          "orbit": "far"
+        },
+        {
+          "type": "gas_giant",
+          "star": "secondary",
+          "orbit": 1,
+          "name": "Khazha",
+          "size": "small"
+        },
+        {
+          "type": "planet",
+          "star": "secondary",
+          "orbit": 2,
+          "name": "Norwhon",
+          "uwp": "X711000-0"
+        },
+        {
+          "type": "planet",
+          "star": "secondary",
+          "orbit": 7,
+          "name": "Hodi",
+          "uwp": "X300000-0"
+        },
+        {
+          "type": "moon",
+          "parent": "Khazha",
+          "name": "Khazha Orbital",
+          "satellite_orbit": 1,
+          "uwp": "BS00514-B"
+        },
+        {
+          "type": "moon",
+          "parent": "Khazha",
+          "name": "Kletter",
+          "satellite_orbit": 4,
+          "uwp": "X100000-0"
+        },
+        {
+          "type": "moon",
+          "parent": "Khazha",
+          "name": "ER-016",
+          "satellite_orbit": 8,
+          "uwp": "X311000-0"
+        },
+        {
+          "type": "moon",
+          "parent": "Khazha",
+          "name": "Bouro",
+          "satellite_orbit": 12,
+          "uwp": "XS00000-0"
+        },
+        {
+          "type": "moon",
+          "parent": "Norwhon",
+          "name": "Tilili",
+          "satellite_orbit": 1,
+          "uwp": "X200000-0"
+        },
+        {
+          "type": "star",
+          "name": "Ailya",
+          "class": "M3 V",
+          "orbit": "far"
+        },
+        {
+          "type": "planet",
+          "star": "tertiary",
+          "orbit": 0,
+          "name": "Treamer",
+          "uwp": "X200000-0"
+        },
+        {
+          "type": "gas_giant",
+          "star": "tertiary",
+          "orbit": 1,
+          "name": "Kholio",
+          "size": "small"
+        },
+        {
+          "type": "planet",
+          "star": "tertiary",
+          "orbit": 2,
+          "name": "Bealyup",
+          "uwp": "X200000-0"
+        },
+        {
+          "type": "moon",
+          "parent": "Kholio",
+          "name": "Houloubit",
+          "satellite_orbit": 6,
+          "uwp": "X500000-0"
+        },
+        {
+          "type": "moon",
+          "parent": "Kholio",
+          "name": "Farenor",
+          "satellite_orbit": 16,
+          "uwp": "X300000-0"
+        },
+        {
+          "type": "moon",
+          "parent": "Kholio",
+          "name": "Gerben-Dar",
+          "satellite_orbit": 23,
+          "uwp": "X400000-0"
+        }
+      ]
+    },
+    {
+      "sector": "Trojan Reach",
+      "hex": "2425",
+      "world": "Paal",
+      "note": "Shadows of Sindal ch.2, 'The World of Paal': 'a type F3 V (yellow-white main sequence) star... three gas giant planets and six terrestrial (rocky) worlds, of which Paal itself is second out from the sun. There are no planetoid belts.' Star and all three counts already match TravellerMap (PBG=603, W=9), so the only new fact is Paal's position.",
+      "bodies": [
+        {
+          "type": "main_world",
+          "orbit": 1
+        }
+      ]
+    },
+    {
+      "sector": "Trojan Reach",
+      "hex": "1317",
+      "world": "Caldos",
+      "note": "Shadows of Sindal ch.6: 'several mining centres in the system's two asteroid belts. These feed into a modest processing facility.' Both belts already exist upstream (PBG=824); what is added is the mining on them, which a UWP cannot carry. Identified by position because the text names neither.",
+      "bodies": [
+        {
+          "type": "belt",
+          "position": "innermost",
+          "facilities": [
+            "mining"
+          ]
+        },
+        {
+          "type": "belt",
+          "position": "outermost",
+          "facilities": [
+            "mining"
+          ]
         }
       ]
     }

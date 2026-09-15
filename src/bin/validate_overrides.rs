@@ -198,7 +198,10 @@ fn check(o: &SystemOverride, up: &Entry, verbose: bool) -> Vec<Failure> {
         }
     }
 
-    if verbose && out.is_empty() {
+    // Printed whether or not it passed. A failure is precisely when you want
+    // to see the system that produced it — the first version only printed on
+    // success, which is backwards.
+    if verbose {
         println!(
             "  {} {} — {} ok  [{}]",
             o.sector, o.hex, up.name, up.stellar
@@ -209,7 +212,14 @@ fn check(o: &SystemOverride, up: &Entry, verbose: bool) -> Vec<Failure> {
             // you opened the output to look at.
             let line = match slot {
                 Some(OrbitContent::World(w)) => {
-                    format!("{:<22} {}", w.name, w.to_uwp())
+                    let main = if w.is_mainworld() { " [main]" } else { "" };
+                    let f = w.facilities_string();
+                    let f = if f.trim().is_empty() {
+                        String::new()
+                    } else {
+                        format!("  [{}]", f.trim())
+                    };
+                    format!("{:<22} {}{}{}", w.name, w.to_uwp(), main, f)
                 }
                 Some(OrbitContent::GasGiant(g)) => format!("{:<22} gas giant", g.name),
                 Some(OrbitContent::Secondary) => "companion star".to_string(),
@@ -226,7 +236,32 @@ fn check(o: &SystemOverride, up: &Entry, verbose: bool) -> Vec<Failure> {
                 _ => &[],
             };
             for m in sats {
-                println!("             moon: {:<15} {}", m.name, m.to_uwp());
+                println!("             moon: {:<15} {} (sat orbit {})", m.name, m.to_uwp(), m.orbit);
+            }
+        }
+        // Companions are systems in their own right; their bodies are
+        // invisible from the primary's slots.
+        for (label, child) in [
+            ("secondary", system.secondary.as_deref()),
+            ("tertiary", system.tertiary.as_deref()),
+        ] {
+            let Some(child) = child else { continue };
+            println!("    -- {label}: {} --", child.star_name());
+            for (i, slot) in child.orbit_slots.iter().enumerate() {
+                let line = match slot {
+                    Some(OrbitContent::World(w)) => format!("{:<22} {}", w.name, w.to_uwp()),
+                    Some(OrbitContent::GasGiant(g)) => format!("{:<22} gas giant", g.name),
+                    _ => continue,
+                };
+                println!("       orbit {i:>2}: {line}");
+                let sats: &[_] = match slot {
+                    Some(OrbitContent::World(w)) => &w.satellites.sats,
+                    Some(OrbitContent::GasGiant(g)) => g.satellites(),
+                    _ => &[],
+                };
+                for m in sats {
+                    println!("                moon: {:<15} {} (sat orbit {})", m.name, m.to_uwp(), m.orbit);
+                }
             }
         }
     }

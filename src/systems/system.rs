@@ -118,6 +118,13 @@ pub struct SystemOverrides {
     pub stars: Vec<StarOverride>,
     /// Names the whole system; see `SystemConstraints::system_name`.
     pub system_name: Option<String>,
+    /// Where the main world sits, overriding the habitable-zone default.
+    pub main_world_orbit: Option<i32>,
+    /// Constraints belonging to the companions' own sub-systems, kept as
+    /// raw constraints because each companion collects its own overrides
+    /// from them — orbit numbers inside are that companion's orbits.
+    pub secondary_bodies: Vec<Constraint>,
+    pub tertiary_bodies: Vec<Constraint>,
     /// `Some` overrides the random gas-giant count to `gas_giants.len()`
     /// and applies the per-entry size/moon overrides in placement order.
     /// `None` keeps today's random count.
@@ -173,6 +180,14 @@ pub struct SystemOverrides {
 #[cfg_attr(feature = "frontend", derive(Store))]
 pub struct System {
     pub name: String,
+    /// The primary star's own name, when it has one distinct from the
+    /// system's.
+    ///
+    /// Usually they are the same — "the Regina system" orbits a star nobody
+    /// names separately — so this defaults to `name`. But sources do name
+    /// stars in their own right: Makergod's Oghma orbits *Fijari*, exactly
+    /// as Terra orbits Sol. Conflating the two loses that.
+    pub star_name: Option<String>,
     /// Constraints this system couldn't honour. Populated during placement;
     /// read via [`System::dropped_constraints`], which walks companions too.
     pub dropped: Vec<DroppedConstraint>,
@@ -342,6 +357,13 @@ pub enum DroppedConstraint {
     MoonParentOutOfRange { parent_orbit: i32 },
     /// A moon's parent orbit holds something that can't have moons.
     MoonParentCannotHoldMoons { parent_orbit: i32 },
+    /// A relatively-positioned body referenced a body that isn't there —
+    /// "the first world beyond Torpol" in a system with no Torpol. Usually a
+    /// misspelling, since the referent is normally a name from the source.
+    RelativeBodyNotFound { body: BodyKind, reference: String },
+    /// Nothing of the required kind exists to be outermost/innermost/after —
+    /// "the outermost gas giant" in a system with no gas giants.
+    NoBodyAtRelativePosition { body: BodyKind },
 }
 
 impl std::fmt::Display for DroppedConstraint {
@@ -372,6 +394,13 @@ impl std::fmt::Display for DroppedConstraint {
                 f,
                 "moon references parent orbit {parent_orbit}, which holds nothing that can have moons"
             ),
+            DroppedConstraint::RelativeBodyNotFound { body, reference } => write!(
+                f,
+                "{body} is positioned relative to \"{reference}\", which isn't in this system"
+            ),
+            DroppedConstraint::NoBodyAtRelativePosition { body } => {
+                write!(f, "no {body} exists at the position this override describes")
+            }
         }
     }
 }
@@ -415,6 +444,7 @@ impl System {
     ) -> System {
         System {
             name: gen_star_system_name(),
+            star_name: None,
             dropped: Vec::new(),
             star: Star {
                 star_type,
@@ -569,6 +599,17 @@ impl System {
         let mut system = gen_stars(star_mod, true, &overrides);
         main_world.gen_trade_classes();
         system.fill_system_with(main_world, true, &overrides);
+
+        // Facts that could only be known once the system existed: a body
+        // identified by relative position, a moon of a body whose orbit
+        // nothing pinned. Anything that can't be resolved joins the dropped
+        // constraints, so "the outermost gas giant" in a system with no gas
+        // giants fails as loudly as a misplaced pin.
+        if !constraints.post.is_empty() {
+            let unresolved =
+                crate::systems::overrides::apply_post(&mut system, &constraints.post);
+            system.dropped.extend(unresolved);
+        }
         Ok(system)
     }
 
@@ -893,27 +934,65 @@ impl System {
         (original_num_giants - num_giants, moon_overrides)
     }
 
-    fn fill_system(&mut self, main_world: World, is_primary: bool) {
-        self.fill_system_with(main_world, is_primary, &SystemOverrides::default());
-    }
-
     fn fill_system_with(
         &mut self,
         main_world: World,
         is_primary: bool,
         overrides: &SystemOverrides,
     ) {
-        // First block appropriate orbits (just to have some number of empty orbits)
-        self.gen_blocked_orbits();
+        // First block appropriate orbits (just to have some number of empty
+        // orbits), leaving alone any a constraint has claimed.
+        let claimed: Vec<usize> = overrides
+            .planets
+            .iter()
+            .filter_map(|p| p.orbit)
+            .chain(overrides.belts.iter().filter_map(|b| b.orbit))
+            .chain(
+                overrides
+                    .gas_giants
+                    .iter()
+                    .flat_map(|g| g.iter().filter_map(|g| g.orbit)),
+            )
+            .chain(overrides.main_world_orbit)
+            .filter(|o| *o >= 0)
+            .map(|o| o as usize)
+            .collect();
+        self.gen_blocked_orbits(&claimed);
 
         let main_world_copy = main_world.clone();
         let system_zones = get_zone(&self.star);
 
+        // A system takes its main world's name unless an override says
+        // otherwise. "The Torpol system", "the Regina system" — that is how
+        // Traveller refers to them and how every published source writes
+        // them, so every body without a name of its own becomes "Torpol VII"
+        // rather than the name tables' invention.
+        //
+        // Deliberately not applied to companions: a companion sub-system has
+        // no main world of its own, so it keeps the rolled name unless a
+        // `Constraint::Star` names it.
+        //
+        // The main world keeps its own name rather than becoming "Torpol I" —
+        // it is the name every other tool and the map itself use for it. The
+        // numeral tracks orbit, so its slot is simply named instead of
+        // numbered and the sequence shows a gap where it sits.
+        //
+        // Overwrites the name `System::new` already rolled rather than
+        // skipping the roll, so the RNG stream is identical either way.
+        if is_primary && overrides.system_name.is_none() && !main_world.name.trim().is_empty() {
+            self.name = main_world.name.trim().to_string();
+        }
+
         // Empty constraints reserve their orbits first so nothing
         // else can claim them.
-        if is_primary {
-            self.apply_empty_constraints(&overrides.empties);
-        }
+        //
+        // These next few passes used to be gated on `is_primary`, which was
+        // correct while only the primary could carry constraints. Companions
+        // carry their own now, and their orbit numbers are their own, so the
+        // gate has to be "are there constraints" rather than "is this the
+        // primary" — otherwise a companion's bodies are collected and then
+        // silently never placed.
+        self.apply_empty_constraints(&overrides.empties);
 
         // The star's orbit count is rolled at random (`gen_max_orbits`)
         // with no regard for how many bodies the constraints demand. When
@@ -923,9 +1002,7 @@ impl System {
         // planets (placed first) fill the few slots and the gas giants
         // and belts (placed afterwards) silently get zero — e.g. a
         // pbg=624 system (2 belts, 4 gas giants) rendering with neither.
-        if is_primary {
-            self.ensure_orbits_for_constraints(overrides);
-        }
+        self.ensure_orbits_for_constraints(overrides);
 
         // Reserve the orbits pinned gas giants asked for, before the planet
         // and belt passes run.
@@ -943,20 +1020,36 @@ impl System {
         // nothing is pinned this list is empty and generation is unchanged,
         // which is why systems without a gas-giant override still come out
         // exactly as they did.
-        let reserved_gg_orbits: Vec<usize> = if is_primary {
-            overrides
-                .gas_giants
-                .iter()
-                .flatten()
-                .filter_map(|g| g.orbit)
+        // Belts have the same problem and are placed in their own pass after
+        // the planets, so reserve theirs too. Only gas giants were reserved
+        // originally, which left a pinned belt losing its orbit to a planet
+        // that had no preference — the identical failure, one body kind over.
+        let reserve = |slots: &Vec<Option<OrbitContent>>, orbits: Vec<i32>| -> Vec<usize> {
+            orbits
+                .into_iter()
                 .filter(|o| *o >= 0)
                 .map(|o| o as usize)
-                .filter(|o| *o < self.orbit_slots.len() && self.orbit_slots[*o].is_none())
+                .filter(|o| *o < slots.len() && slots[*o].is_none())
                 .collect()
-        } else {
-            Vec::new()
         };
-        for o in &reserved_gg_orbits {
+        let (reserved_gg_orbits, reserved_belt_orbits) = {
+            (
+                reserve(
+                    &self.orbit_slots,
+                    overrides
+                        .gas_giants
+                        .iter()
+                        .flatten()
+                        .filter_map(|g| g.orbit)
+                        .collect(),
+                ),
+                reserve(
+                    &self.orbit_slots,
+                    overrides.belts.iter().filter_map(|b| b.orbit).collect(),
+                ),
+            )
+        };
+        for o in reserved_gg_orbits.iter().chain(reserved_belt_orbits.iter()) {
             self.set_orbit_slot(*o, OrbitContent::Blocked);
         }
 
@@ -971,7 +1064,7 @@ impl System {
         // passes draw the same number of random values — only the orbit they
         // map to changes — so the rest of generation is unperturbed.
         let reserved_main_orbit = if is_primary {
-            match self.main_world_habitable_orbit(&main_world_copy) {
+            match self.main_world_habitable_orbit(&main_world_copy, overrides.main_world_orbit) {
                 Some(o) if o < self.orbit_slots.len() && self.orbit_slots[o].is_none() => {
                     self.set_orbit_slot(o, OrbitContent::Blocked);
                     Some(o)
@@ -991,12 +1084,15 @@ impl System {
         // randomly chosen gas giant.
         let mut planet_moon_overrides: std::collections::HashMap<usize, i32> =
             std::collections::HashMap::new();
-        if is_primary {
+        {
             self.place_planet_constraints(
                 &overrides.planets,
                 &main_world_copy,
                 &mut planet_moon_overrides,
             );
+            for o in &reserved_belt_orbits {
+                self.orbit_slots[*o] = None;
+            }
             self.place_belt_constraints(
                 &overrides.belts,
                 &main_world_copy,
@@ -1037,7 +1133,7 @@ impl System {
         }
 
         if is_primary {
-            self.place_main_world(main_world);
+            self.place_main_world(main_world, overrides.main_world_orbit);
         }
 
         for i in 0..=get_zone(&self.star).hot {
@@ -1144,21 +1240,26 @@ impl System {
             self.apply_moon_constraints(&overrides.moons, &main_world_copy);
         }
 
-        // Companion stars don't carry their own constraint overrides
-        // through here yet — their internal worlds and gas giants still
-        // roll randomly. The autopop case (single primary system from
-        // Traveller Map) is handled by the override list at the top
-        // level, so this is fine for now.
+        // Companions fill their own sub-systems, now with whatever
+        // constraints were addressed to them. A companion is a `System` in
+        // its own right, so its orbit numbers are its own — "orbit 1 of the
+        // secondary" is not orbit 1 of the primary, which is exactly how
+        // source tables describe them.
+        //
+        // Bodies with no star named still land on the primary, so a system
+        // that never mentions its companions generates as it always did.
         if let Some(secondary) = &mut self.secondary
             && secondary.orbit != StarOrbit::Primary
         {
-            secondary.fill_system(main_world_copy.clone(), false);
+            let sub = companion_overrides(&overrides.secondary_bodies);
+            secondary.fill_system_with(main_world_copy.clone(), false, &sub);
         }
 
         if let Some(tertiary) = &mut self.tertiary
             && tertiary.orbit != StarOrbit::Primary
         {
-            tertiary.fill_system(main_world_copy, false);
+            let sub = companion_overrides(&overrides.tertiary_bodies);
+            tertiary.fill_system_with(main_world_copy, false, &sub);
         }
 
         // In autopop, a star that rolled more orbit slots than the `W` count
@@ -1184,7 +1285,17 @@ impl System {
     /// to reserve). Mirrors the habitable-orbit selection in
     /// `place_main_world` so the reservation in `fill_system_with` blocks the
     /// exact slot the main world will later claim.
-    fn main_world_habitable_orbit(&self, main_world: &World) -> Option<usize> {
+    fn main_world_habitable_orbit(
+        &self,
+        main_world: &World,
+        pinned: Option<i32>,
+    ) -> Option<usize> {
+        // A stated orbit beats the habitable-zone default. The default is
+        // right knowing nothing; a published system table is knowing
+        // something.
+        if let Some(o) = pinned {
+            return (o >= 0).then_some(o as usize);
+        }
         let requires_habitable =
             main_world.atmosphere > 1 && main_world.atmosphere < 10 && main_world.size > 0;
         if !requires_habitable {
@@ -1199,11 +1310,21 @@ impl System {
         Some(habitable as usize)
     }
 
-    fn place_main_world(&mut self, mut main_world: World) {
-        let requires_habitable =
-            main_world.atmosphere > 1 && main_world.atmosphere < 10 && main_world.size > 0;
-        let mut habitable = get_zone(&self.star).habitable;
-        if (habitable <= 0 || habitable == get_zone(&self.star).inner) && requires_habitable {
+    fn place_main_world(&mut self, mut main_world: World, pinned: Option<i32>) {
+        // A pinned orbit is honoured verbatim, habitable zone or not — which
+        // is the point. Makergod puts Oghma three orbits beyond a K5 V's
+        // habitable zone, and the rules agree: at size 5 the -2 DM for being
+        // outside gives a mean atmosphere of exactly the 3 it has.
+        let requires_habitable = pinned.is_some()
+            || (main_world.atmosphere > 1 && main_world.atmosphere < 10 && main_world.size > 0);
+        let mut habitable = match pinned {
+            Some(o) => o,
+            None => get_zone(&self.star).habitable,
+        };
+        if pinned.is_none()
+            && (habitable <= 0 || habitable == get_zone(&self.star).inner)
+            && requires_habitable
+        {
             warn!(
                 "No habitable zone for main world for system: {:?}. Habitable = {}. Inner = {}. Using orbit 0.",
                 self,
@@ -1238,7 +1359,7 @@ impl System {
                     self.secondary
                         .as_mut()
                         .unwrap()
-                        .place_main_world(main_world);
+                        .place_main_world(main_world, None);
                 }
                 Some(OrbitContent::Tertiary) => {
                     // If there happens to be a star in the habitable zone, place it in orbit there.
@@ -1246,7 +1367,10 @@ impl System {
                     // TODO: Is this correct when we have multiple stars?
                     main_world.position_in_system = habitable as usize;
                     // Safe to unwrap as if the orbital position is tertiary but there is no tertiary, thats bug.
-                    self.tertiary.as_mut().unwrap().place_main_world(main_world);
+                    self.tertiary
+                        .as_mut()
+                        .unwrap()
+                        .place_main_world(main_world, None);
                 }
                 Some(OrbitContent::GasGiant(gas_giant)) => {
                     let orbit = gas_giant.gen_satellite_orbit(main_world.size == 0);
@@ -1312,6 +1436,12 @@ impl System {
         main_world: &World,
         moon_overrides_out: &mut std::collections::HashMap<usize, i32>,
     ) {
+        // Pinned bodies first: the unpinned ones take `get_unused_orbits()
+        // .first()`, so in list order a pinned planet at orbit 2 could find
+        // its slot already taken by a planet that had no preference at all.
+        // Same failure as the gas giants and belts, now within a single pass.
+        let mut planets: Vec<&PlanetOverride> = planets.iter().collect();
+        planets.sort_by_key(|p| p.orbit.is_none());
         for p in planets {
             // Choose the orbit. Explicit orbit wins; if it'd land
             // outside the system or be already filled, skip the
@@ -1398,6 +1528,8 @@ impl System {
         main_world: &World,
         moon_overrides_out: &mut std::collections::HashMap<usize, i32>,
     ) {
+        let mut belts: Vec<&BeltOverride> = belts.iter().collect();
+        belts.sort_by_key(|b| b.orbit.is_none());
         for b in belts {
             let orbit = match b.orbit {
                 Some(o) => {
@@ -1649,7 +1781,14 @@ impl System {
         }
     }
 
-    fn gen_blocked_orbits(&mut self) {
+    /// Randomly block a few orbits, skipping any a constraint has claimed.
+    ///
+    /// This runs before every placement pass, so without `claimed` it could
+    /// block an orbit a source explicitly assigned — and did: Makergod gives
+    /// Doruc's orbit 1 to the gas giant Khazha, and a random block landed
+    /// there first. The rolls are unchanged either way, so a system with no
+    /// constraints blocks exactly the orbits it always did.
+    fn gen_blocked_orbits(&mut self, claimed: &[usize]) {
         if roll_1d6() < 5 {
             // No Empty orbits
             return;
@@ -1661,7 +1800,11 @@ impl System {
             _ => 3,
         };
 
-        let valid_orbits = self.get_unused_orbits();
+        let valid_orbits: Vec<usize> = self
+            .get_unused_orbits()
+            .into_iter()
+            .filter(|o| !claimed.contains(o))
+            .collect();
 
         for _ in 0..num_empty {
             if let Some(pos) = crate::util::rng_choose(&valid_orbits) {
@@ -1672,6 +1815,11 @@ impl System {
 }
 
 impl System {
+    /// The primary star's name, falling back to the system's.
+    pub fn star_name(&self) -> &str {
+        self.star_name.as_deref().unwrap_or(&self.name)
+    }
+
     /// Every constraint this system and its companions failed to honour.
     ///
     /// Walks the tree because companions are `System`s in their own right
@@ -1694,6 +1842,7 @@ impl Default for System {
     fn default() -> Self {
         Self {
             name: "Unknown".to_string(),
+            star_name: None,
             dropped: Vec::new(),
             star: Star {
                 star_type: StarType::G,
@@ -1991,12 +2140,13 @@ fn gen_stars(world_mod: i32, companions_possible: bool, overrides: &SystemOverri
     // the RNG stream identical whether or not a name is pinned — so naming a
     // system doesn't silently re-roll the rest of it. Same reasoning as the
     // reserve-then-release dance for the main world's habitable orbit.
-    //
-    // The primary reads `system_name`, not its own `StarOverride::name`: the
-    // primary's name and the system's name are one value, and validation
-    // rejects a name on an explicitly-primary Star constraint.
     if let Some(n) = &overrides.system_name {
         system.name = n.clone();
+    }
+    // The primary star's own name, when the source gives it one distinct
+    // from the system's. Defaults to the system name via `star_name()`.
+    if let Some(n) = &primary_override.name {
+        system.star_name = Some(n.clone());
     }
     let star = system.star;
     system.set_max_orbits(gen_max_orbits(&star));
@@ -2082,6 +2232,35 @@ fn gen_stars(world_mod: i32, companions_possible: bool, overrides: &SystemOverri
 /// declaration order (first becomes the primary override). Gas-giant
 /// constraints become a non-empty `Some(Vec)` so the random-count
 /// branch in `gen_gas_giants` is suppressed.
+/// Build the overrides for a companion sub-system from the constraints
+/// addressed to it.
+///
+/// Goes through `collect_overrides` like the primary's do, so a companion's
+/// bodies obey exactly the same rules — pinned orbits reserved, counts
+/// authoritative, the lot. `autopop` stays false: a companion has no PBG
+/// digits of its own, so its gas-giant and belt counts are still rolled
+/// unless constraints say otherwise.
+fn companion_overrides(bodies: &[Constraint]) -> SystemOverrides {
+    if bodies.is_empty() {
+        return SystemOverrides::default();
+    }
+    let mut o = collect_overrides(&SystemConstraints {
+        bodies: bodies.to_vec(),
+        system_name: None,
+        post: Vec::new(),
+        secondary_bodies: Vec::new(),
+        tertiary_bodies: Vec::new(),
+        main_world_orbit: None,
+    });
+    // Autopop, despite there being no PBG digits here: it means "this
+    // description is authoritative", which is exactly what a source table
+    // listing a companion's bodies is. Without it the random planetoid pass
+    // runs and overwrites the pinned bodies — Doruc's Khazha came out as a
+    // randomly rolled planetoid belt.
+    o.autopop = true;
+    o
+}
+
 fn collect_overrides(constraints: &SystemConstraints) -> SystemOverrides {
     let system_name = constraints.system_name.clone();
     let mut stars: Vec<StarOverride> = constraints
@@ -2223,6 +2402,9 @@ fn collect_overrides(constraints: &SystemConstraints) -> SystemOverrides {
     SystemOverrides {
         stars,
         system_name,
+        main_world_orbit: constraints.main_world_orbit,
+        secondary_bodies: constraints.secondary_bodies.clone(),
+        tertiary_bodies: constraints.tertiary_bodies.clone(),
         gas_giants: if any_gg_constraint {
             Some(gg_list)
         } else {
@@ -2468,6 +2650,49 @@ mod tests {
         );
     }
 
+    /// A system takes its main world's name, so derived bodies read as
+    /// "Torpol VII" rather than an invented "Canis Corridor VII".
+    #[test]
+    fn a_system_is_named_after_its_main_world() {
+        let mut cs = SystemConstraints::from_main_world("Torpol", "B55A77A-8").unwrap();
+        cs.bodies.push(Constraint::GasGiant {
+            name: None,
+            orbit: Some(6),
+            size: None,
+            num_satellites: None,
+        });
+        let sys = System::generate_from_constraints_seeded(31, cs).expect("generates");
+        assert_eq!(sys.name, "Torpol");
+
+        // The main world keeps its own name...
+        assert!(
+            sys.orbit_slots.iter().flatten().any(|c| matches!(
+                c,
+                OrbitContent::World(w) if w.name == "Torpol"
+            )),
+            "main world should still be called Torpol"
+        );
+        // ...and the unnamed bodies derive from it.
+        assert!(
+            sys.orbit_slots.iter().flatten().any(|c| match c {
+                OrbitContent::World(w) => w.name.starts_with("Torpol "),
+                OrbitContent::GasGiant(g) => g.name.starts_with("Torpol "),
+                _ => false,
+            }),
+            "no body derived its name from the system"
+        );
+    }
+
+    /// An explicit system_name still wins — the main world is only the
+    /// default.
+    #[test]
+    fn an_explicit_system_name_beats_the_main_world_default() {
+        let mut cs = SystemConstraints::from_main_world("Torpol", "B55A77A-8").unwrap();
+        cs.system_name = Some("Merak Mists".to_string());
+        let sys = System::generate_from_constraints_seeded(31, cs).expect("generates");
+        assert_eq!(sys.name, "Merak Mists");
+    }
+
     /// A companion's name is its own — it names that companion's
     /// sub-system, whose bodies derive from it — so unlike the primary it
     /// really does belong on the Star constraint.
@@ -2498,26 +2723,34 @@ mod tests {
         );
     }
 
-    /// Naming the primary star is the same act as naming the system, so the
-    /// constraint set refuses to express it twice. Silently ignoring the
-    /// field would lose a name the author clearly meant to set.
+    /// The primary star can carry its own name, distinct from the system's.
+    ///
+    /// Usually they are the same string and nobody names the star
+    /// separately. But sources do: Makergod's Oghma orbits *Fijari*, as
+    /// Terra orbits Sol. `star_name()` falls back to the system name so the
+    /// common case needs nothing.
     #[test]
-    fn name_on_the_primary_star_is_rejected() {
-        let mut cs = SystemConstraints::from_main_world("Pourne", "A9B2887-A").unwrap();
+    fn the_primary_star_can_be_named_apart_from_the_system() {
+        let mut cs = SystemConstraints::from_main_world("Oghma", "B534754-9").unwrap();
         cs.bodies.push(Constraint::Star {
             orbit: Some(StarOrbit::Primary),
-            spectral: None,
-            subtype: None,
-            size: None,
-            name: Some("Merak Mists".to_string()),
+            spectral: Some(StarType::K),
+            subtype: Some(5),
+            size: Some(StarSize::V),
+            name: Some("Fijari".to_string()),
         });
-        let errors = cs.validate();
-        assert!(
-            errors
-                .iter()
-                .any(|e| matches!(e, ConstraintError::NameOnPrimaryStar(_))),
-            "expected NameOnPrimaryStar, got {errors:?}"
-        );
+        let sys = System::generate_from_constraints_seeded(5, cs).expect("generates");
+        assert_eq!(sys.name, "Oghma", "the system is named after its main world");
+        assert_eq!(sys.star_name(), "Fijari", "the star has its own name");
+    }
+
+    /// With no star name given, the star answers to the system's name.
+    #[test]
+    fn an_unnamed_star_falls_back_to_the_system_name() {
+        let cs = SystemConstraints::from_main_world("Regina", "A788899-A").unwrap();
+        let sys = System::generate_from_constraints_seeded(5, cs).expect("generates");
+        assert_eq!(sys.star_name(), sys.name);
+        assert_eq!(sys.star_name(), "Regina");
     }
 
     /// Pinning the name must not disturb anything else.
