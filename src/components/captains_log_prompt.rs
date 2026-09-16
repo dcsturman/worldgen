@@ -1,4 +1,4 @@
-//! Build the captain's-log prompt sent to `gemini-3-flash-preview`.
+//! Build the captain's-log prompt sent to `gemini-3.8-flash`.
 //!
 //! This module is purely client-side text assembly: it walks the
 //! [`SimulationStep`] stream, coalesces consecutive steps at the same

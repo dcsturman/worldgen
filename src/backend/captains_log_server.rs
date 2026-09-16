@@ -221,10 +221,7 @@ pub async fn handle_captains_log_ws(
             // Log full detail server-side. NEVER log the prompt or
             // any Authorization header — only the URL and Vertex's
             // response body.
-            let url = format!(
-                "https://aiplatform.googleapis.com/v1/projects/{}/locations/global/publishers/google/models/gemini-3-flash-preview:streamGenerateContent?alt=sse",
-                project.as_ref()
-            );
+            let url = vertex_client::build_url(project.as_ref());
             let (status, body, short) = match &e {
                 VertexError::Status { status, body } => {
                     (Some(*status), body.clone(), truncate(body, 200))
