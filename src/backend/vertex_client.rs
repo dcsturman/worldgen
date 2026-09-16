@@ -1,7 +1,7 @@
 //! Vertex AI streaming client used by the captain's-log endpoint.
 //!
 //! This is a thin REST + SSE wrapper around Vertex AI's
-//! `streamGenerateContent` API for `gemini-3-flash-preview` on the
+//! `streamGenerateContent` API for `gemini-3.8-flash` on the
 //! `global` location. We hand-roll the SSE splitter (Vertex's SSE shape
 //! is well-defined: each event is a single `data: <JSON>` line with a
 //! blank line terminator) rather than pulling in an extra dep.
@@ -32,7 +32,35 @@ const VERTEX_SCOPE: &[&str] = &["https://www.googleapis.com/auth/cloud-platform"
 /// Model ID. Pinned here because the URL shape includes the model and
 /// because the request body's generation config is calibrated for
 /// Gemini 3 Flash specifically.
-const MODEL: &str = "gemini-3-flash-preview";
+///
+/// Was `gemini-3-flash-preview` until 2026-09-15. That name never had a
+/// GA counterpart — Gemini 3 Flash shipped as preview only and the line
+/// moved on to 3.5/3.6/3.7/3.8 — so staying on it meant depending on a
+/// preview build of a superseded generation with no graduation path.
+/// Google retired `gemini-3-pro-image-preview` and
+/// `gemini-3.1-flash-image-preview` out from under callers this year
+/// with no published date, which is the same exposure.
+///
+/// 3.8 Flash is GA, and at the introductory rate ($0.75/$3.75 per 1M
+/// in/out through 2026-12-31, $1.50/$7.50 after) it is cheaper than
+/// `gemini-3.5-flash` ($1.50/$9.00). 3.6 and 3.7 cost the same as 3.8,
+/// so there is no reason to pin an older one.
+const MODEL: &str = "gemini-3.8-flash";
+
+/// Reasoning effort. Thinking tokens bill as output, so this is a cost
+/// lever, not a quality dial we are free to ignore.
+///
+/// Measured on this exact endpoint with a two-sentence captain's-log
+/// prompt: no `thinkingConfig` at all burned **775** thinking tokens
+/// for 69 visible ones (855 total); `"low"` burned **zero** and
+/// returned 58 visible (69 total). Same prompt, 12x the billed volume.
+///
+/// The field must be nested under `thinkingConfig` — a flat
+/// `"thinkingLevel"` in `generationConfig` is rejected outright with
+/// `Unknown name "thinkingLevel"`. `"minimal"` is *not* supported on
+/// 3.8 Flash and fails with `THINKING_LEVEL_MINIMAL`; `low` is the
+/// floor.
+const THINKING_LEVEL: &str = "low";
 
 /// HTTP timeout for the streaming POST. Generation can be slow
 /// (several seconds) so this is generous; the SSE stream itself can
@@ -153,6 +181,11 @@ async fn auth_provider() -> Result<Arc<dyn TokenProvider>, VertexError> {
 ///    starts, so an apparent 8192 budget really only buys ~1000 visible
 ///    tokens. We budget generously to leave room for both.
 ///
+///    [`THINKING_LEVEL`] shrinks that hidden draw a long way (to zero on
+///    a short prompt) but does not remove it, and the budget is a
+///    ceiling rather than a spend — an unused allowance costs nothing.
+///    So the generous clamp stays as the safety margin it always was.
+///
 /// Formula: `prompt_chars / 4 + 4096`, clamped to `[16384, 65536]`.
 /// 65536 is the documented `maxOutputTokens` ceiling on Gemini 3 Flash
 /// when reasoning is enabled.
@@ -164,7 +197,12 @@ fn compute_max_output_tokens(prompt: &str) -> u32 {
 }
 
 /// Build the Vertex `streamGenerateContent` URL for the given project.
-fn build_url(project: &str) -> String {
+///
+/// `pub(crate)` so the captain's-log error path can log the URL it
+/// actually called rather than re-spelling it. It used to hand-roll its
+/// own copy with the model name inline, which is a second place for the
+/// model to drift out of sync with [`MODEL`].
+pub(crate) fn build_url(project: &str) -> String {
     format!(
         "https://aiplatform.googleapis.com/v1/projects/{}/locations/global/publishers/google/models/{}:streamGenerateContent?alt=sse",
         project, MODEL
@@ -200,7 +238,8 @@ pub async fn stream_generate(
         }],
         "generationConfig": {
             "maxOutputTokens": max_output_tokens,
-            "temperature": 0.9
+            "temperature": 0.9,
+            "thinkingConfig": { "thinkingLevel": THINKING_LEVEL }
         }
     });
 
