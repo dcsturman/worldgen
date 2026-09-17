@@ -303,6 +303,25 @@
           "parent_orbit": 3
         }
       ]
+    },
+    {
+      "sector": "Trojan Reach",
+      "hex": "2324",
+      "world": "Pourne",
+      "note": "Traveller wiki, drawing on Mike Jackson's 1986 Tlaiowaha writeup in Third Imperium 02: Pourne has exactly one moon, Baen, 3,000 km across at 400,000 km. TravellerMap already supplies A9B2887-A, F3 V, PBG 902 and W=11, so only the moon is recorded. Both of Baen's numbers are derived, not quoted: satellite orbits are counted in parent diameters, and Pourne is size 9 (14,400 km), so 400,000 km is orbit 28; a 3,000 km diameter is closest to size 2 (3,200 km), size 1 being 1,600. Baen attaches by parent *name* rather than orbit because Pourne's own orbit is rolled, not pinned — atmosphere B puts it outside the habitable-zone rule, which is RAW and deliberate. moons is the main world's total, so the 1 here means one moon called Baen rather than a rolled moon plus Baen.",
+      "bodies": [
+        {
+          "type": "main_world",
+          "moons": 1
+        },
+        {
+          "type": "moon",
+          "name": "Baen",
+          "parent": "Pourne",
+          "satellite_orbit": 28,
+          "uwp": "?2XXXXX-X"
+        }
+      ]
     }
   ]
 }

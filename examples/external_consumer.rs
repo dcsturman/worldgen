@@ -40,6 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         secondary_bodies: Vec::new(),
         tertiary_bodies: Vec::new(),
         main_world_orbit: None,
+        main_world_num_satellites: None,
     };
 
     // Generate and write the system map.
