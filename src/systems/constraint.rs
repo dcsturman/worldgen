@@ -37,7 +37,13 @@ use crate::trade::PortCode;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PartialUwp {
     pub port: Option<PortCode>,
-    pub size: Option<u8>,
+    /// Size, as an `i8` rather than `u8` so the satellite codes fit: a
+    /// rendered satellite UWP writes `S` for a body under ~1,000 km
+    /// (internally -1) and `R` for a ring (0). Without the sign those
+    /// round-trip as ehex 26 and 27, which `to_uwp` then renders as the
+    /// literal "26" — a silently malformed nine-column UWP rather than an
+    /// error.
+    pub size: Option<i8>,
     pub atmosphere: Option<u8>,
     pub hydro: Option<u8>,
     pub population: Option<u8>,
@@ -69,7 +75,7 @@ impl PartialUwp {
         }
         Ok(PartialUwp {
             port: parse_port(chars[0])?,
-            size: parse_digit(chars[1])?,
+            size: parse_size(chars[1])?,
             atmosphere: parse_digit(chars[2])?,
             hydro: parse_digit(chars[3])?,
             population: parse_digit(chars[4])?,
@@ -95,6 +101,15 @@ impl PartialUwp {
 
     /// Format as a 9-char UWP string, using `'X'` for any wild column.
     pub fn to_string_with_wildcards(&self) -> String {
+        // Size goes back out the way it came in, satellite codes included.
+        fn size_d(v: Option<i8>) -> char {
+            match v {
+                Some(-1) => 'S',
+                Some(n) if n >= 0 => crate::util::value_to_ehex(n as u32),
+                Some(_) => 'X',
+                None => 'X',
+            }
+        }
         fn d(v: Option<u8>) -> char {
             // Specified columns render in Traveller ehex (so 16 → `G`, not a
             // truncated hex digit); wild columns render as `X`.
@@ -113,7 +128,7 @@ impl PartialUwp {
         format!(
             "{}{}{}{}{}{}{}-{}",
             port,
-            d(self.size),
+            size_d(self.size),
             d(self.atmosphere),
             d(self.hydro),
             d(self.population),
@@ -121,6 +136,22 @@ impl PartialUwp {
             d(self.law),
             d(self.tech),
         )
+    }
+}
+
+/// Size column parser. Accepts the two satellite codes `to_uwp` emits —
+/// `S` (small, internally -1) and `R` (ring, 0) — so a UWP copied off a
+/// rendered system map parses back to the body it describes. Everything
+/// else is an ordinary ehex digit.
+fn parse_size(c: char) -> Result<Option<i8>, String> {
+    match c.to_ascii_uppercase() {
+        'X' => Ok(None),
+        'S' => Ok(Some(-1)),
+        'R' => Ok(Some(0)),
+        other => crate::util::ehex_to_value(other)
+            .filter(|v| *v <= i8::MAX as u32)
+            .map(|v| Some(v as i8))
+            .ok_or_else(|| format!("invalid size digit '{c}'")),
     }
 }
 
@@ -430,6 +461,30 @@ impl std::error::Error for ConstraintError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The satellite size codes must survive a parse/render round-trip.
+    ///
+    /// `to_uwp` writes `S` for a satellite under ~1,000 km and `R` for a
+    /// ring. Before `parse_size` existed both went through `ehex_to_value`,
+    /// where `S` is 26 and `R` is 27 — so `GS00169-A` parsed to size 26 and
+    /// rendered back as the literal `"26"`, a malformed nine-column UWP,
+    /// with no error anywhere. Baen is exactly that UWP.
+    #[test]
+    fn satellite_size_codes_round_trip() {
+        let baen = PartialUwp::parse("GS00169-A").expect("parses");
+        assert_eq!(baen.size, Some(-1), "S is the small-satellite code");
+        assert_eq!(baen.to_string_with_wildcards(), "GS00169-A");
+
+        let ring = PartialUwp::parse("?RXXXXX-X").expect("parses");
+        assert_eq!(ring.size, Some(0), "R is a ring");
+
+        // An ordinary digit is untouched, and a wild size still renders X.
+        assert_eq!(PartialUwp::parse("A9B2887-A").unwrap().size, Some(9));
+        assert_eq!(
+            PartialUwp::parse("?XXXXXX-X").unwrap().to_string_with_wildcards(),
+            "?XXXXXX-X"
+        );
+    }
 
     #[test]
     fn parse_full_uwp() {
