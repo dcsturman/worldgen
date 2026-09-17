@@ -257,7 +257,17 @@ pub enum BodySpec {
     /// frozen. Without this the world is relocated into the habitable orbit,
     /// which in that system already holds a gas giant, and the main world
     /// ends up as its moon.
-    MainWorld { orbit: i32 },
+    ///
+    /// `moons` is the main world's **total** satellite count. A moon named
+    /// here as well is counted against it, not added on top: the Traveller
+    /// wiki gives Pourne exactly one moon, so `moons: 1` plus a `Baen` row
+    /// has to mean one moon called Baen, never one rolled plus Baen.
+    MainWorld {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        orbit: Option<i32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        moons: Option<i32>,
+    },
 }
 
 /// What a body in an override turns into.
@@ -273,9 +283,13 @@ pub enum Lowered {
     Constraint(Constraint),
     /// Applied to the generated system afterwards.
     Post(PostSpec),
-    /// Pins the main world's orbit. Not a constraint: the main world already
-    /// exists, this only says where it goes.
-    MainWorldOrbit(i32),
+    /// Facts about the main world itself. Not a constraint: the main world
+    /// already exists, this only says where it goes and how many moons it
+    /// keeps.
+    MainWorld {
+        orbit: Option<i32>,
+        moons: Option<i32>,
+    },
 }
 
 /// Which kind of body a [`PostSpec`] is looking for.
@@ -638,7 +652,10 @@ impl BodySpec {
                 }),
             },
             BodySpec::Empty { orbit } => Lowered::Constraint(Constraint::Empty { orbit: *orbit }),
-            BodySpec::MainWorld { orbit } => Lowered::MainWorldOrbit(*orbit),
+            BodySpec::MainWorld { orbit, moons } => Lowered::MainWorld {
+                orbit: *orbit,
+                moons: *moons,
+            },
         })
     }
 
@@ -650,8 +667,8 @@ impl BodySpec {
             Lowered::Post(_) => {
                 Err("this body is positioned relatively and is applied after generation".into())
             }
-            Lowered::MainWorldOrbit(_) => {
-                Err("this pins the main world's orbit rather than describing a body".into())
+            Lowered::MainWorld { .. } => {
+                Err("this describes the main world rather than a body of its own".into())
             }
         }
     }
@@ -685,6 +702,7 @@ impl SystemOverride {
         }
 
         let mut mine: Vec<Constraint> = Vec::new();
+        let mut main_world_moons: Option<i32> = None;
         for b in &self.bodies {
             let star = b.star();
             for l in b.lower_all()? {
@@ -697,9 +715,34 @@ impl SystemOverride {
                     // Post facts resolve against the whole system, companions
                     // included, so they need no routing.
                     (Lowered::Post(p), _) => cs.post.push(p),
-                    (Lowered::MainWorldOrbit(o), _) => cs.main_world_orbit = Some(o),
+                    (Lowered::MainWorld { orbit, moons }, _) => {
+                        if let Some(o) = orbit {
+                            cs.main_world_orbit = Some(o);
+                        }
+                        if let Some(m) = moons {
+                            main_world_moons = Some(m);
+                        }
+                    }
                 }
             }
+        }
+
+        // The main world's moon count is a *total*, so an explicitly named
+        // moon comes out of it rather than adding to it. The generator's own
+        // subtraction only covers moon rows keyed by `parent_orbit`; a moon
+        // keyed by parent *name* is resolved after generation, too late for
+        // that. Pourne is exactly this case — its orbit is rolled, so Baen
+        // has to attach by name — and "one moon" has to stay one.
+        if let Some(total) = main_world_moons {
+            let named_here = cs
+                .post
+                .iter()
+                .filter(|p| match &p.target {
+                    Target::MoonOf(parent) => parent.eq_ignore_ascii_case(&self.world),
+                    _ => false,
+                })
+                .count() as i32;
+            cs.main_world_num_satellites = Some((total - named_here).max(0));
         }
 
         // --- stars ---
@@ -1234,6 +1277,50 @@ mod tests {
             { "type": "empty", "orbit": 1 }
           ] }
       ] }"#;
+
+    /// `moons` on the main world is a total, and a moon named in the same
+    /// override is deducted from it.
+    ///
+    /// Pourne is the case that forced this. The wiki gives it exactly one
+    /// moon, Baen. Its orbit is rolled (atmosphere B keeps it out of the
+    /// habitable-zone rule), so Baen can only attach by parent *name*,
+    /// which resolves after generation — too late for the generator's own
+    /// subtraction, which only sees moon rows keyed by `parent_orbit`.
+    /// Without deducting here, "one moon" generated a rolled moon *and*
+    /// Baen.
+    #[test]
+    fn a_named_moon_counts_against_the_main_worlds_total() {
+        let f: OverrideFile = serde_json::from_str(
+            r#"{ "overrides": [ { "sector": "Trojan Reach", "hex": "2324", "world": "Pourne",
+                "bodies": [
+                  { "type": "main_world", "moons": 1 },
+                  { "type": "moon", "name": "Baen", "parent": "Pourne", "satellite_orbit": 28 }
+                ] } ] }"#,
+        )
+        .expect("parses");
+        let cs = crate::SystemConstraints::from_main_world("Pourne", "A9B2887-A").unwrap();
+        let cs = f.overrides[0].merge_into(cs).expect("merges");
+        assert_eq!(
+            cs.main_world_num_satellites,
+            Some(0),
+            "the one named moon should leave nothing to roll"
+        );
+        assert_eq!(cs.post.len(), 1, "Baen should be a post-pass moon");
+    }
+
+    /// A main-world moon count with no named moons passes through intact.
+    #[test]
+    fn a_main_world_moon_count_survives_with_no_named_moons() {
+        let f: OverrideFile = serde_json::from_str(
+            r#"{ "overrides": [ { "sector": "Trojan Reach", "hex": "2324", "world": "Pourne",
+                "bodies": [ { "type": "main_world", "moons": 3 } ] } ] }"#,
+        )
+        .expect("parses");
+        let cs = crate::SystemConstraints::from_main_world("Pourne", "A9B2887-A").unwrap();
+        let cs = f.overrides[0].merge_into(cs).expect("merges");
+        assert_eq!(cs.main_world_num_satellites, Some(3));
+        assert_eq!(cs.main_world_orbit, None, "no orbit was pinned");
+    }
 
     #[test]
     fn sample_file_parses_and_lowers() {

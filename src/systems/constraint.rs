@@ -266,6 +266,12 @@ pub struct SystemConstraints {
     /// Where the main world sits, when a source states it. `None` uses the
     /// habitable-zone default.
     pub main_world_orbit: Option<i32>,
+    /// The main world's total satellite count. `None` rolls it.
+    ///
+    /// Counted as a *total*: a moon named explicitly in an override is
+    /// deducted from this before it reaches the generator, so "one moon,
+    /// called Baen" cannot come out as a rolled moon plus Baen.
+    pub main_world_num_satellites: Option<i32>,
 }
 
 impl SystemConstraints {
@@ -278,6 +284,7 @@ impl SystemConstraints {
             secondary_bodies: Vec::new(),
             tertiary_bodies: Vec::new(),
             main_world_orbit: None,
+            main_world_num_satellites: None,
             bodies: vec![Constraint::Planet {
                 name: Some(name.to_string()),
                 orbit: None,
@@ -512,6 +519,7 @@ mod tests {
             secondary_bodies: Vec::new(),
             tertiary_bodies: Vec::new(),
             main_world_orbit: None,
+            main_world_num_satellites: None,
         };
         let errs = cs.validate();
         assert!(
@@ -543,6 +551,7 @@ mod tests {
             secondary_bodies: Vec::new(),
             tertiary_bodies: Vec::new(),
             main_world_orbit: None,
+            main_world_num_satellites: None,
         };
         let errs = cs.validate();
         assert!(
@@ -567,6 +576,7 @@ mod tests {
             secondary_bodies: Vec::new(),
             tertiary_bodies: Vec::new(),
             main_world_orbit: None,
+            main_world_num_satellites: None,
         };
         let errs = cs.validate();
         assert!(

@@ -587,7 +587,13 @@ impl System {
             })?;
 
         let mut overrides = collect_overrides(&constraints);
-        overrides.main_world_num_satellites = main_num_satellites;
+        // An override's count wins over whatever the caller's main-world
+        // constraint carried: upstream data has no moon count, so the
+        // constraint's value is a roll or nothing, while an override is a
+        // sourced fact.
+        overrides.main_world_num_satellites = constraints
+            .main_world_num_satellites
+            .or(main_num_satellites);
 
         let star_mod = if (main_world.atmosphere >= 4 && main_world.atmosphere <= 9)
             || main_world.get_population() >= 8
@@ -2251,6 +2257,7 @@ fn companion_overrides(bodies: &[Constraint]) -> SystemOverrides {
         secondary_bodies: Vec::new(),
         tertiary_bodies: Vec::new(),
         main_world_orbit: None,
+        main_world_num_satellites: None,
     });
     // Autopop, despite there being no PBG digits here: it means "this
     // description is authoritative", which is exactly what a source table
