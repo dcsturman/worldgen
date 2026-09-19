@@ -5,15 +5,28 @@
       "sector": "Trojan Reach",
       "hex": "2221",
       "world": "Torpol",
-      "note": "Drinaxian Companion ch.5. Star (F4 V), 2 belts, 4 gas giants and 10 rocky worlds already match TravellerMap's stellar/PBG/W data, so only the named body is recorded. Traefar is 'the next world out from Torpol', said relatively because that is what the book says — the absolute orbit is a derived fact that would go stale if generation shifted.",
+      "note": "Drinaxian Companion ch.5. TravellerMap already gives F4 V, PBG 624 (2 belts, 4 gas giants) and W=16, so only the named bodies are recorded. Traefar is \"the next world out from Torpol\", said relatively because that is what the book says — the absolute orbit is a derived fact that would go stale if generation shifted. Its UWP is now given in full (G410466-7) rather than as the partial the book's prose supported, so every column is stated rather than rolled around the two digits that were known.\n\nThe book splits the two belts by role: \"The outer planetoid belt has an extensive belter community whilst the inner one has less belters but more commercial mining operations... the Imperial megacorporation Sternmetal Horizons also has a mining base in the inner belt.\" Unpinned, both belts generated far out at orbits 10 and 11 (11,548 and 23,038 Mkm), which makes the inner one a month's travel from Torpol and nothing like the near-at-hand mining ground the text describes.\n\nSo the inner belt is pinned to orbit 6, the one orbit between Torpol (orbit 5) and Traefar, carrying the mining facility for Sternmetal Horizons' base and the Provost-owned claims — the Provosts being Torpol's ruling merchant council, which is what \"local companies operating out of Torpol\" means. Orbit 6 is 778 Mkm, not the ~600 Mkm the placement was asked for: orbit radii are a fixed Traveller grid (orbit 5 is 419 Mkm, orbit 6 is 778) and 600 is not on it, so 6 is the only orbit that sits between the two worlds at all. The outer belt keeps orbit 11 (23,038 Mkm), the belter community, far enough out to be its own world. The belt that generated at orbit 10 is gone: the PBG digit fixes the count at two, and both are now spoken for.\n\nBoth belts are named with \"Planetoid\" still in them on purpose. `is_belt` is `size <= 0 && name.contains(\"planetoid\")`, so a belt renamed to something else reads as a *planet* to the post-pass — and \"the first planet beyond Torpol\" would then resolve to the inner belt and rename it Traefar.",
       "bodies": [
+        {
+          "type": "belt",
+          "name": "Inner Planetoid Belt",
+          "orbit": 6,
+          "facilities": [
+            "mining"
+          ]
+        },
+        {
+          "type": "belt",
+          "name": "Outer Planetoid Belt",
+          "orbit": 11
+        },
         {
           "type": "planet",
           "name": "Traefar",
           "position": {
             "after": "Torpol"
           },
-          "uwp": "?X106XX-X"
+          "uwp": "G410466-7"
         }
       ]
     },
