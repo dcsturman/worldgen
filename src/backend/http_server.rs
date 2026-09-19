@@ -1118,7 +1118,7 @@ async fn write_system_png(
 ///
 /// Bump `SYSTEM_RENDER_VERSION` when a change alters what a system looks like
 /// without changing the override file — a placement rule, the renderer.
-const SYSTEM_RENDER_VERSION: u32 = 2;
+const SYSTEM_RENDER_VERSION: u32 = 3;
 
 fn system_etag(query: &str) -> String {
     let mut h = SipHasher24::new_with_keys(CACHE_SIP_KEY_0, CACHE_SIP_KEY_1);
