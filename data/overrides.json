@@ -32,7 +32,7 @@
       "sector": "Trojan Reach",
       "hex": "2421",
       "world": "Blue",
-      "note": "Drinaxian Companion ch.7. Star (F9 V) and 2 gas giants match TravellerMap. Bulhai is 'the system's outer gas giant'; Bulhai Freeport sits on one of its moons, pop ~20,000 (code 4). Port class F (the spaceport equivalent of C): it builds small craft and does minor refits - electronics and weaponry - but the book has it 'may come to rival the main starport at Blue', so it sits below Blue's B today.",
+      "note": "Drinaxian Companion ch.7. Star (F9 V) and 2 gas giants match TravellerMap. Bulhai is 'the system's outer gas giant'; Bulhai Freeport sits on one of its moons, pop ~20,000 (code 4). Its UWP is now given in full as C300426-B rather than pinning the port and population and rolling the rest. That makes it a class C starport, not the class F spaceport recorded earlier on the reasoning that the book's 'may come to rival the main starport at Blue' put it below Blue's B. Size 3 and a vacuum read as the moon it is; population 4 is the ~20,000 the book gives; TL B matches Blue.",
       "bodies": [
         {
           "type": "gas_giant",
@@ -43,7 +43,7 @@
           "type": "moon",
           "parent": "Bulhai",
           "name": "Bulhai Freeport",
-          "uwp": "FXXX4XX-X"
+          "uwp": "C300426-B"
         }
       ]
     },
