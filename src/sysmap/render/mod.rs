@@ -733,10 +733,27 @@ fn draw_moons<R: Renderer + ?Sized>(
     if moons.is_empty() {
         return;
     }
-    // Each moon gets its own miniature tilted orbit concentric with the
-    // parent. Angular position is a golden-angle fan keyed by moon index;
-    // pure function of order, no rng.
-    for (idx, m) in moons.iter().take(MAX_MOONS_DRAWN).enumerate() {
+    // More moons than fit: choose by population rather than taking the
+    // first few in orbital order.
+    //
+    // Bulhai has eight, and Bulhai Freeport — a class-C port with 20,000
+    // people, the reason the system is in an adventure at all — sits last
+    // in orbital order. Taking the first four drew three empty rockballs
+    // and a ring instead, so the Freeport was not on the map to hover
+    // over. Population is the same signal `World::gen_name` already uses
+    // to decide whether a body is worth a real name.
+    //
+    // Selection is by population, ties by orbital order; the survivors are
+    // then drawn back in orbital order so inner moons stay inner. Both
+    // sorts are stable and key off nothing but the slice, so the output
+    // stays a pure function of the system.
+    let mut chosen: Vec<(usize, &World)> = moons.iter().enumerate().collect();
+    if chosen.len() > MAX_MOONS_DRAWN {
+        chosen.sort_by_key(|(idx, m)| (std::cmp::Reverse(m.get_population()), *idx));
+        chosen.truncate(MAX_MOONS_DRAWN);
+        chosen.sort_by_key(|(idx, _)| *idx);
+    }
+    for (idx, (_, m)) in chosen.into_iter().enumerate() {
         let orbit_r = moon_orbit_radius_px(parent_r, idx);
         r.stroke_ellipse(
             parent_cx,
