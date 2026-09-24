@@ -31,10 +31,13 @@
 //! - [`colors`] holds the star-spectral-type → tint table and palette.
 //! - [`render`] holds the `Renderer` trait, the shared scene-walk, and the
 //!   PNG (tiny-skia) and SVG (string-builder) backends.
+//! - [`travel`] holds the brachistochrone travel-time maths and the
+//!   duration formatter behind the legend's thrust columns.
 
 pub mod colors;
 pub mod geometry;
 pub mod render;
+pub mod travel;
 
 use crate::systems::system::System;
 use geometry::{CANVAS_H, CANVAS_W};
@@ -189,6 +192,26 @@ mod tests {
         if let Ok(path) = std::env::var("SYSMAP_DUMP_SVG") {
             std::fs::write(&path, &svg).expect("dump");
         }
+    }
+
+    #[test]
+    fn svg_legend_has_travel_time_columns_and_jump_limit_row() {
+        let mw = World::from_uwp("Regina", "A788899-A", false, true).unwrap();
+        let sys = System::generate_system_seeded(0, mw);
+        let svg = render_svg(&sys);
+        for header in [
+            ">Mkm<",
+            ">1G<",
+            ">2G<",
+            ">6G<",
+            ">Travel time from primary<",
+        ] {
+            assert!(svg.contains(header), "legend missing {header}");
+        }
+        assert!(
+            svg.contains(">Jump limit (100D)<"),
+            "legend missing the jump-limit row"
+        );
     }
 
     #[test]

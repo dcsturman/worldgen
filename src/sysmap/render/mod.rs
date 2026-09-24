@@ -28,6 +28,7 @@ use crate::systems::world::World;
 
 use super::colors::*;
 use super::geometry::*;
+use super::travel::{THRUSTS_G, brachistochrone_secs, format_duration};
 
 pub use png::PngRenderer;
 pub use svg::SvgRenderer;
@@ -861,66 +862,155 @@ fn format_star_size(star: &Star) -> String {
     format!("{:?}", star.size)
 }
 
-fn draw_legend<R: Renderer + ?Sized>(r: &mut R, system: &System) {
-    let x_label = CANVAS_W - 360.0;
-    let x_dist = CANVAS_W - 180.0;
-    // Right edge the distance column is aligned to. The data rows below
-    // right-align their numbers to this edge; the "Mkm" header and the
-    // central star's "0.0" must use the same edge or they sit left of the
-    // rest of the column (the misalignment the panel showed).
-    let x_dist_right = x_dist + 60.0;
-    let mut y = 60.0;
-    let line_h = 18.0;
-    r.fill_text(x_label, y, 14.0, "System Objects", LABEL);
-    y += 22.0;
-    r.fill_text(x_label, y, 12.0, "Body", LABEL_DIM);
-    r.fill_text(x_dist_right - text_width("Mkm", 12.0), y, 12.0, "Mkm", LABEL_DIM);
-    y += line_h;
-    r.fill_text(x_label, y, 12.0, &system.name, LABEL);
-    r.fill_text(x_dist_right - text_width("0.0", 12.0), y, 12.0, "0.0", LABEL_DIM);
-    y += line_h;
+// ---- Legend layout ----------------------------------------------------------
+//
+// The legend is a table: `Body | Mkm | 1G | 2G | 6G`. The name column keeps
+// the left edge it always had; the numeric columns are right-aligned to fixed
+// edges measured back from the canvas's right margin, so every row's digits
+// line up regardless of how wide its name is.
+
+/// Left edge of the name column. Unchanged from the single-column legend so
+/// small systems look as they did, only with more columns to the right.
+const LEGEND_X: f32 = CANVAS_W - 360.0;
+/// Right edge of the last thrust column: a 24 px margin from the canvas
+/// edge.
+const LEGEND_RIGHT: f32 = CANVAS_W - 24.0;
+/// Right-edge to right-edge spacing of the thrust columns. The widest time
+/// string is four glyphs (`3.2h`, `12d`, `81w` — see
+/// [`crate::sysmap::travel::format_duration`]), ~28 px at 12 px, leaving a
+/// 12 px gutter.
+const TIME_COL_PITCH: f32 = 40.0;
+/// Right edge of the Mkm column to right edge of the first thrust column.
+/// Wider than [`TIME_COL_PITCH`] so the gap between distance and times reads
+/// as a column break rather than as one run of numbers.
+const DIST_TO_TIME_GAP: f32 = 50.0;
+/// Room reserved for the widest Mkm value (`1.47e6`) left of its right edge;
+/// names are truncated to end short of it.
+const DIST_COL_W: f32 = 48.0;
+const LEGEND_FONT: f32 = 12.0;
+const LEGEND_LINE_H: f32 = 18.0;
+/// Baseline of the "System Objects" title; the column header and rows
+/// follow it.
+const LEGEND_TITLE_Y: f32 = 60.0;
+/// Clearance kept between legend text and the outermost orbit ring where the
+/// ring passes under the legend column. Above: a gas giant disc (12 px) on
+/// the ring plus the row's descenders. Below: the disc, the body's label
+/// (drawn level with it) and the next row's ascenders.
+const RING_CLEAR_ABOVE: f32 = 20.0;
+const RING_CLEAR_BELOW: f32 = 42.0;
+
+/// Right edges of the thrust columns, in [`THRUSTS_G`] order.
+fn time_col_right(i: usize) -> f32 {
+    LEGEND_RIGHT - (THRUSTS_G.len() - 1 - i) as f32 * TIME_COL_PITCH
+}
+
+/// Right edge of the Mkm column.
+fn dist_col_right() -> f32 {
+    time_col_right(0) - DIST_TO_TIME_GAP
+}
+
+/// The vertical span the outermost orbit ring occupies at the legend's left
+/// edge. The legend sits beside the orbit diagram, not beside empty space:
+/// the ring's right-hand lobe reaches x = `STAR_CX + MAX_ORBIT_RADIUS` =
+/// 1320, which is 80 px *inside* the name column, so any row whose baseline
+/// lands in this band is drawn across the ring (and across whatever body sits
+/// there). Derived from the same constants the ring is drawn with, so moving
+/// the star or resizing the diagram moves the band with it.
+fn ring_band_at_legend() -> (f32, f32) {
+    let dx = ((LEGEND_X - STAR_CX) / MAX_ORBIT_RADIUS).clamp(-1.0, 1.0);
+    let half = MAX_ORBIT_RADIUS * TILT_RATIO * (1.0 - dx * dx).sqrt();
+    (STAR_CY - half, STAR_CY + half)
+}
+
+/// One row of the legend table.
+#[derive(Debug, Clone, PartialEq)]
+struct LegendRow {
+    name: String,
+    /// Parenthesised kind shown after the name (`"World"`, `"Star, Far"`);
+    /// kept apart from `name` so truncation shortens the name and never
+    /// the kind.
+    kind: Option<String>,
+    color: (u8, u8, u8),
+    dist: String,
+    /// Distance the travel-time columns are computed over. `None` prints a
+    /// dash: the primary itself, a contact companion (no distance to
+    /// travel) and a far companion (no stated distance).
+    travel_mkm: Option<f32>,
+    jump_limit: bool,
+}
+
+/// The legend's rows, top to bottom.
+///
+/// The primary's jump-limit row is placed **by distance among the bodies**
+/// rather than as a footer. The question it answers is "which of these
+/// worlds are inside the shadow, and how long to get clear?", and sorted
+/// placement answers the first half without any reading at all: every row
+/// above the line is inside. Its own time columns answer the second half. A
+/// footer would make the reader compare its Mkm against every row's by eye.
+///
+/// A body exactly at the limit sorts below it — at 100D a ship can jump.
+fn legend_rows(system: &System) -> Vec<LegendRow> {
+    // Same radius the map's "Jump Shadow" ring is drawn at, so the row and
+    // the ring can never disagree.
+    let jump_mkm = jump_shadow_mkm(&system.star);
+    let mut rows = vec![LegendRow {
+        name: system.name.clone(),
+        kind: None,
+        color: LABEL,
+        dist: "0.0".to_string(),
+        travel_mkm: None,
+        jump_limit: false,
+    }];
+    let mut jump_row = Some(LegendRow {
+        name: "Jump limit (100D)".to_string(),
+        kind: None,
+        color: LABEL_DIM,
+        dist: format_mkm(jump_mkm),
+        travel_mkm: Some(jump_mkm),
+        jump_limit: true,
+    });
+
     for (orbit, slot) in system.orbit_slots.iter().enumerate() {
         let Some(content) = slot else { continue };
         let dist = slot_distance_mkm(orbit);
-        let (name, kind): (String, &str) = match content {
-            OrbitContent::World(w) => (w.name.clone(), if is_belt(w) { "Belt" } else { "World" }),
-            OrbitContent::GasGiant(gg) => (gg.name.clone(), "Gas Giant"),
+        let (name, kind): (&str, &str) = match content {
+            OrbitContent::World(w) => (&w.name, if is_belt(w) { "Belt" } else { "World" }),
+            OrbitContent::GasGiant(gg) => (&gg.name, "Gas Giant"),
             OrbitContent::Secondary => (
-                system
-                    .secondary
-                    .as_ref()
-                    .map(|s| s.name.clone())
-                    .unwrap_or_else(|| "Secondary".to_string()),
+                system.secondary.as_ref().map_or("Secondary", |s| &s.name),
                 "Star",
             ),
             OrbitContent::Tertiary => (
-                system
-                    .tertiary
-                    .as_ref()
-                    .map(|s| s.name.clone())
-                    .unwrap_or_else(|| "Tertiary".to_string()),
+                system.tertiary.as_ref().map_or("Tertiary", |s| &s.name),
                 "Star",
             ),
             OrbitContent::Blocked => continue,
         };
-        let row = format!("{name}  ({kind})");
+        if dist >= jump_mkm
+            && let Some(j) = jump_row.take()
+        {
+            rows.push(j);
+        }
         // Tint the legend name to match the on-map label so the panel and
         // the map agree at a glance: amber gas giants, tan belts, white rest.
-        let row_color = match kind {
+        let color = match kind {
             "Gas Giant" => LABEL_GAS_GIANT,
             "Belt" => LABEL_BELT,
             _ => LABEL,
         };
-        r.fill_text(x_label, y, 12.0, &row, row_color);
-        let dist_str = format_mkm(dist);
-        let dw = text_width(&dist_str, 12.0);
-        // right-align distance column
-        r.fill_text(x_dist_right - dw, y, 12.0, &dist_str, LABEL_DIM);
-        y += line_h;
-        if y > CANVAS_H - 24.0 {
-            break;
-        }
+        rows.push(LegendRow {
+            name: name.to_string(),
+            kind: Some(kind.to_string()),
+            color,
+            dist: format_mkm(dist),
+            travel_mkm: Some(dist),
+            jump_limit: false,
+        });
     }
+    // Every body is inside the shadow (a giant primary): the limit still
+    // belongs after them and before the companions that have no distance.
+    rows.extend(jump_row);
+
     // Companions that aren't at an orbital position — `Primary` (contact
     // binary) and `Far` — don't appear in `orbit_slots`, so append them so
     // the user can see every star the system contains.
@@ -928,19 +1018,111 @@ fn draw_legend<R: Renderer + ?Sized>(r: &mut R, system: &System) {
         .into_iter()
         .flatten()
     {
-        let (orbit_label, dist_str): (&str, &str) = match companion.orbit {
+        let (orbit_label, dist): (&str, &str) = match companion.orbit {
             StarOrbit::Far => ("Far", "Far"),
             StarOrbit::Primary => ("Contact", "—"),
             _ => continue,
         };
-        let row = format!("{}  (Star, {orbit_label})", companion.name);
-        r.fill_text(x_label, y, 12.0, &row, LABEL);
-        let dw = text_width(dist_str, 12.0);
-        r.fill_text(x_dist_right - dw, y, 12.0, dist_str, LABEL_DIM);
-        y += line_h;
-        if y > CANVAS_H - 24.0 {
+        rows.push(LegendRow {
+            name: companion.name.clone(),
+            kind: Some(format!("Star, {orbit_label}")),
+            color: LABEL,
+            dist: dist.to_string(),
+            travel_mkm: None,
+            jump_limit: false,
+        });
+    }
+    rows
+}
+
+/// `name  (kind)`, with `name` cut short and ellipsised until the whole
+/// string fits `max_w`. Before the travel-time columns the name column had
+/// ~240 px and never needed this; it now has ~160, and a long generated name
+/// plus a `(Gas Giant)` suffix can exceed that.
+fn fit_row_label(name: &str, kind: Option<&str>, max_w: f32) -> String {
+    let suffix = kind.map_or(String::new(), |k| format!("  ({k})"));
+    let full = format!("{name}{suffix}");
+    if text_width(&full, LEGEND_FONT) <= max_w {
+        return full;
+    }
+    let chars: Vec<char> = name.chars().collect();
+    (1..chars.len())
+        .rev()
+        .map(|n| {
+            let head: String = chars[..n].iter().collect();
+            format!("{}…{suffix}", head.trim_end())
+        })
+        .find(|s| text_width(s, LEGEND_FONT) <= max_w)
+        .unwrap_or(full)
+}
+
+fn draw_legend_header<R: Renderer + ?Sized>(r: &mut R, y: f32) {
+    r.fill_text(LEGEND_X, y, LEGEND_FONT, "Body", LABEL_DIM);
+    draw_right(r, dist_col_right(), y, "Mkm", LABEL_DIM);
+    for (i, g) in THRUSTS_G.iter().enumerate() {
+        draw_right(r, time_col_right(i), y, &format!("{g}G"), LABEL_DIM);
+    }
+}
+
+/// Right-align `text` to `right` at the legend font size.
+fn draw_right<R: Renderer + ?Sized>(r: &mut R, right: f32, y: f32, text: &str, rgb: (u8, u8, u8)) {
+    r.fill_text(right - text_width(text, LEGEND_FONT), y, LEGEND_FONT, text, rgb);
+}
+
+fn draw_legend<R: Renderer + ?Sized>(r: &mut R, system: &System) {
+    r.fill_text(LEGEND_X, LEGEND_TITLE_Y, 14.0, "System Objects", LABEL);
+    // Caption over the thrust columns, so "1G 2G 6G" reads as travel times
+    // rather than as a property of each body.
+    let caption = "Travel time from primary";
+    r.fill_text(
+        LEGEND_RIGHT - text_width(caption, 10.0),
+        LEGEND_TITLE_Y,
+        10.0,
+        caption,
+        LABEL_DIM,
+    );
+    let mut y = LEGEND_TITLE_Y + 22.0;
+    draw_legend_header(r, y);
+    y += LEGEND_LINE_H;
+
+    // The table flows in up to two blocks: above the outermost ring where it
+    // passes under the column, then — only for systems too big to fit —
+    // resuming below it with the header repeated. Before travel times the
+    // single block simply ran down through the ring, drawing rows across
+    // outer-orbit bodies and their labels once a system passed ~13 rows.
+    let (band_top, band_bottom) = ring_band_at_legend();
+    let top_block_max_y = band_top - RING_CLEAR_ABOVE;
+    let bottom_block_y = band_bottom + RING_CLEAR_BELOW;
+    let max_y = CANVAS_H - 16.0;
+    let name_max_w = dist_col_right() - DIST_COL_W - LEGEND_X;
+    let mut in_top_block = true;
+
+    for row in legend_rows(system) {
+        if in_top_block && y > top_block_max_y {
+            in_top_block = false;
+            y = bottom_block_y;
+            draw_legend_header(r, y);
+            y += LEGEND_LINE_H;
+        }
+        if y > max_y {
             break;
         }
+        if row.jump_limit {
+            // A miniature of the map's jump-shadow ring, so the row reads as
+            // "that grey ellipse" rather than as another body.
+            r.stroke_ellipse(LEGEND_X - 9.0, y - 4.0, 5.0, 2.5, JUMP_SHADOW, 1.0);
+        }
+        let label = fit_row_label(&row.name, row.kind.as_deref(), name_max_w);
+        r.fill_text(LEGEND_X, y, LEGEND_FONT, &label, row.color);
+        draw_right(r, dist_col_right(), y, &row.dist, LABEL_DIM);
+        for (i, g) in THRUSTS_G.iter().enumerate() {
+            let t = row.travel_mkm.map_or_else(
+                || "—".to_string(),
+                |d| format_duration(brachistochrone_secs(f64::from(d), f64::from(*g))),
+            );
+            draw_right(r, time_col_right(i), y, &t, LABEL_DIM);
+        }
+        y += LEGEND_LINE_H;
     }
 }
 
@@ -951,5 +1133,64 @@ fn format_mkm(d: f32) -> String {
         format!("{:.0}", d)
     } else {
         format!("{:.2e}", d)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::systems::world::World;
+
+    fn regina() -> System {
+        let mw = World::from_uwp("Regina", "A788899-A", false, true).unwrap();
+        System::generate_system_seeded(0, mw)
+    }
+
+    #[test]
+    fn jump_limit_row_sorts_among_bodies_by_distance() {
+        let sys = regina();
+        let rows = legend_rows(&sys);
+        let jump = jump_shadow_mkm(&sys.star);
+        assert_eq!(rows.iter().filter(|r| r.jump_limit).count(), 1);
+        let idx = rows
+            .iter()
+            .position(|r| r.jump_limit)
+            .expect("legend has a jump-limit row");
+        assert_eq!(rows[idx].travel_mkm, Some(jump));
+        // Everything listed above the limit is inside it; everything below
+        // with a distance is at or beyond it.
+        assert!(rows[..idx].iter().filter_map(|r| r.travel_mkm).all(|d| d < jump));
+        assert!(
+            rows[idx + 1..]
+                .iter()
+                .filter_map(|r| r.travel_mkm)
+                .all(|d| d >= jump)
+        );
+    }
+
+    #[test]
+    fn long_names_truncate_but_keep_their_kind() {
+        let max_w = dist_col_right() - DIST_COL_W - LEGEND_X;
+        assert_eq!(
+            fit_row_label("Regina", Some("World"), max_w),
+            "Regina  (World)"
+        );
+        let long = fit_row_label("Extraordinarily Long Generated Name", Some("Gas Giant"), max_w);
+        assert!(long.ends_with("…  (Gas Giant)"), "{long}");
+        assert!(text_width(&long, LEGEND_FONT) <= max_w);
+    }
+
+    #[test]
+    fn legend_columns_fit_the_canvas_and_clear_the_ring() {
+        // The widest time the formatter can produce for a real orbit must
+        // fit the column pitch with a gutter, and the last column must end
+        // inside the canvas.
+        assert!(text_width("115w", LEGEND_FONT) < TIME_COL_PITCH - 6.0);
+        assert!(time_col_right(THRUSTS_G.len() - 1) <= CANVAS_W);
+        // The top block has room for a dozen rows above the ring band, so
+        // the common case never splits; the bottom block starts on-canvas.
+        let (top, bottom) = ring_band_at_legend();
+        assert!(top - RING_CLEAR_ABOVE > LEGEND_TITLE_Y + 22.0 + 12.0 * LEGEND_LINE_H);
+        assert!(bottom + RING_CLEAR_BELOW < CANVAS_H - 16.0);
     }
 }
