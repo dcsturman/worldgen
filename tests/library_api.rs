@@ -21,28 +21,20 @@ fn noricum_constraints() -> SystemConstraints {
     SystemConstraints::from_main_world("Noricum", "D8867BB-1").expect("Noricum UWP is valid")
 }
 
+/// The system render's headline guarantees, checked against one render:
+/// it's a real PNG, the same (seed, constraints) gives identical bytes, and
+/// the `_scaled` API at 1.0 doesn't perturb a pixel. These were three tests
+/// each re-rendering the same system; one render answers all three.
 #[test]
-fn system_png_is_valid_png() {
-    let bytes = generate_system_png(42, noricum_constraints())
+fn system_png_is_valid_deterministic_and_unperturbed_by_scale_1() {
+    let a = generate_system_png(42, noricum_constraints())
         .expect("a fully-specified main-world constraint always generates");
-    assert!(
-        bytes.len() > 1000,
-        "PNG suspiciously small: {} bytes",
-        bytes.len()
-    );
-    assert_eq!(&bytes[..8], PNG_MAGIC);
-}
-
-#[test]
-fn system_png_is_deterministic() {
-    // Same seed + same constraints must produce byte-identical PNG.
-    // This is the headline determinism guarantee for the library API.
-    let a = generate_system_png(42, noricum_constraints()).unwrap();
+    assert!(a.len() > 1000, "PNG suspiciously small: {} bytes", a.len());
+    assert_eq!(&a[..8], PNG_MAGIC);
     let b = generate_system_png(42, noricum_constraints()).unwrap();
-    assert_eq!(
-        a, b,
-        "same (seed, constraints) produced different PNG bytes"
-    );
+    assert_eq!(a, b, "same (seed, constraints) produced different PNG bytes");
+    let scaled = generate_system_png_scaled(42, noricum_constraints(), 1.0).unwrap();
+    assert_eq!(a, scaled, "scale=1.0 must be byte-identical to unscaled render");
 }
 
 #[test]
@@ -60,42 +52,24 @@ fn different_seeds_produce_different_systems() {
 }
 
 #[test]
-fn planet_png_is_valid_png() {
-    let bytes = generate_planet_png(42, "A788899-A", Some("Regina")).unwrap();
-    assert!(bytes.len() > 1000);
-    assert_eq!(&bytes[..8], PNG_MAGIC);
-}
-
-#[test]
-fn planet_png_is_deterministic() {
-    let a = generate_planet_png(42, "A788899-A", Some("Regina")).unwrap();
-    let b = generate_planet_png(42, "A788899-A", Some("Regina")).unwrap();
-    assert_eq!(a, b, "same (seed, uwp, name) produced different PNG bytes");
-}
-
-#[test]
 fn invalid_uwp_returns_map_error() {
     let result = generate_planet_png(42, "not-a-real-uwp", None);
     assert!(matches!(result, Err(WorldgenError::Map(_))));
 }
 
+/// The planet render's headline guarantees, checked against one render per
+/// world: a real PNG, identical bytes for the same (seed, uwp, name), no
+/// change at `_scaled` 1.0, and none from empty decorations — every world
+/// cached before decorations existed was rendered without them. These were
+/// four tests re-rendering the same Regina map; the second world keeps the
+/// empty-decorations check off a single fixture.
 #[test]
-fn planet_png_scaled_at_1_0_matches_unscaled_byte_for_byte() {
-    // Legacy contract: existing `generate_planet_png` keeps producing
-    // today's exact bytes. The new `_scaled` API at scale=1.0 must
-    // not perturb a single pixel.
-    let a = generate_planet_png(42, "A788899-A", Some("Regina")).unwrap();
-    let b = generate_planet_png_scaled(42, "A788899-A", Some("Regina"), 1.0).unwrap();
-    assert_eq!(a, b, "scale=1.0 must be byte-identical to unscaled render");
-}
-
-#[test]
-fn planet_png_with_empty_decorations_matches_undecorated_byte_for_byte() {
-    // Every world cached before decorations existed was rendered without
-    // them; an empty value must reproduce those bytes exactly.
+fn planet_png_is_valid_deterministic_and_unperturbed_by_scale_or_empty_decorations() {
     for (seed, uwp) in [(42, "A788899-A"), (7, "C530677-8")] {
         let a = generate_planet_png(seed, uwp, Some("Regina")).unwrap();
-        let b = generate_planet_png_scaled_decorated(
+        assert!(a.len() > 1000);
+        assert_eq!(&a[..8], PNG_MAGIC);
+        let decorated = generate_planet_png_scaled_decorated(
             seed,
             uwp,
             Some("Regina"),
@@ -103,7 +77,13 @@ fn planet_png_with_empty_decorations_matches_undecorated_byte_for_byte() {
             &WorldDecorations::default(),
         )
         .unwrap();
-        assert_eq!(a, b, "{uwp} seed {seed}: empty decorations changed the render");
+        assert_eq!(a, decorated, "{uwp} seed {seed}: empty decorations changed the render");
+        if seed == 42 {
+            let b = generate_planet_png(seed, uwp, Some("Regina")).unwrap();
+            assert_eq!(a, b, "same (seed, uwp, name) produced different PNG bytes");
+            let scaled = generate_planet_png_scaled(seed, uwp, Some("Regina"), 1.0).unwrap();
+            assert_eq!(a, scaled, "scale=1.0 must be byte-identical to unscaled render");
+        }
     }
 }
 
@@ -131,16 +111,6 @@ fn planet_png_scaled_at_2_0_doubles_dimensions() {
     let uh = u32::from_be_bytes([unscaled[20], unscaled[21], unscaled[22], unscaled[23]]);
     assert_eq!(w, uw * 2, "scale=2.0 width should be 2x native");
     assert_eq!(h, uh * 2, "scale=2.0 height should be 2x native");
-}
-
-#[test]
-fn planet_png_scaled_is_deterministic() {
-    let a = generate_planet_png_scaled(42, "A788899-A", Some("Regina"), 2.0).unwrap();
-    let b = generate_planet_png_scaled(42, "A788899-A", Some("Regina"), 2.0).unwrap();
-    assert_eq!(
-        a, b,
-        "same (seed, uwp, name, scale) must produce identical bytes"
-    );
 }
 
 #[test]
@@ -195,75 +165,49 @@ fn render_world_from_travellermap(
     (system_png, planet_png)
 }
 
+/// The user's actual headline use case: clicking the same world on
+/// TravellerMap twice produces valid, identical images. If this fires,
+/// something in the determinism chain broke — the seed derivation, the
+/// ChaCha RNG plumbing, or the rasterizer.
 #[test]
-fn end_to_end_travellermap_flow_produces_valid_pngs() {
-    let (sys, planet) =
-        render_world_from_travellermap("Trojan Reach", 31, 28, "Noricum", "D8867BB-1", 3);
-    assert!(sys.len() > 1000);
-    assert!(planet.len() > 1000);
-    assert_eq!(&sys[..8], PNG_MAGIC);
-    assert_eq!(&planet[..8], PNG_MAGIC);
-}
-
-#[test]
-fn same_travellermap_identity_produces_byte_identical_pngs() {
-    // The user's actual headline use case: clicking the same world on
-    // TravellerMap twice always produces the same images. If this test
-    // ever fires, something in the determinism chain broke — either the
-    // seed derivation, the ChaCha RNG plumbing, or the rasterizer.
+fn travellermap_flow_produces_valid_identical_pngs() {
     let (sys1, planet1) =
         render_world_from_travellermap("Trojan Reach", 31, 28, "Noricum", "D8867BB-1", 3);
+    for png in [&sys1, &planet1] {
+        assert!(png.len() > 1000);
+        assert_eq!(&png[..8], PNG_MAGIC);
+    }
     let (sys2, planet2) =
         render_world_from_travellermap("Trojan Reach", 31, 28, "Noricum", "D8867BB-1", 3);
     assert_eq!(sys1, sys2, "system PNG drifted across runs");
     assert_eq!(planet1, planet2, "planet PNG drifted across runs");
 }
 
+/// The headline first-application use case: main world UWP + N stars +
+/// counts of gas giants / belts / planets. The builder must hand the
+/// generator a constraint set that renders a valid PNG, identically for the
+/// same seed.
 #[test]
-fn build_constraints_assembles_full_system_recipe() {
-    // The headline first-application use case: main world UWP + N stars
-    // + counts of gas giants / belts / planets. The builder must hand
-    // the generator a constraint set that produces a valid system PNG.
-    let cs = build_constraints(
-        "Noricum",
-        "D8867BB-1",
-        &[
-            StarSpec::new(StarType::G, 2, StarSize::V),
-            StarSpec::new(StarType::M, 9, StarSize::V),
-            StarSpec::new(StarType::M, 6, StarSize::V),
-        ],
-        2, // gas giants
-        1, // planetoid belts
-        3, // additional planets
-    )
-    .expect("valid main-world UWP");
-    let png = generate_system_png(42, cs).expect("builder output should always generate");
-    assert!(png.len() > 1000);
-    assert_eq!(&png[..8], PNG_MAGIC);
-}
-
-#[test]
-fn build_constraints_is_deterministic_under_same_seed() {
-    let cs1 = build_constraints(
-        "Noricum",
-        "D8867BB-1",
-        &[StarSpec::new(StarType::G, 2, StarSize::V)],
-        2,
-        1,
-        3,
-    )
-    .unwrap();
-    let cs2 = build_constraints(
-        "Noricum",
-        "D8867BB-1",
-        &[StarSpec::new(StarType::G, 2, StarSize::V)],
-        2,
-        1,
-        3,
-    )
-    .unwrap();
-    let a = generate_system_png(99, cs1).unwrap();
-    let b = generate_system_png(99, cs2).unwrap();
+fn build_constraints_assembles_a_deterministic_full_system() {
+    let build = || {
+        build_constraints(
+            "Noricum",
+            "D8867BB-1",
+            &[
+                StarSpec::new(StarType::G, 2, StarSize::V),
+                StarSpec::new(StarType::M, 9, StarSize::V),
+                StarSpec::new(StarType::M, 6, StarSize::V),
+            ],
+            2, // gas giants
+            1, // planetoid belts
+            3, // additional planets
+        )
+        .expect("valid main-world UWP")
+    };
+    let a = generate_system_png(99, build()).expect("builder output should always generate");
+    assert!(a.len() > 1000);
+    assert_eq!(&a[..8], PNG_MAGIC);
+    let b = generate_system_png(99, build()).unwrap();
     assert_eq!(a, b);
 }
 
@@ -283,16 +227,6 @@ fn build_constraints_with_zero_stars_lets_generator_roll() {
 }
 
 #[test]
-fn scaled_render_at_1_0_matches_unscaled_byte_for_byte() {
-    // Legacy contract: existing callers using `generate_system_png` get
-    // exactly today's output. The scaled API at scale=1.0 must not
-    // perturb a single pixel.
-    let a = generate_system_png(42, noricum_constraints()).unwrap();
-    let b = generate_system_png_scaled(42, noricum_constraints(), 1.0).unwrap();
-    assert_eq!(a, b, "scale=1.0 must be byte-identical to unscaled render");
-}
-
-#[test]
 fn scaled_render_at_2_0_is_3200x1800() {
     let bytes = generate_system_png_scaled(42, noricum_constraints(), 2.0).unwrap();
     assert_eq!(&bytes[..8], PNG_MAGIC);
@@ -301,15 +235,6 @@ fn scaled_render_at_2_0_is_3200x1800() {
     let w = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
     let h = u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
     assert_eq!((w, h), (3200, 1800), "scale=2.0 should yield 3200x1800");
-}
-
-#[test]
-fn scaled_render_is_deterministic() {
-    // scale must not perturb the RNG; same (seed, constraints, scale)
-    // must produce byte-identical output.
-    let a = generate_system_png_scaled(42, noricum_constraints(), 2.0).unwrap();
-    let b = generate_system_png_scaled(42, noricum_constraints(), 2.0).unwrap();
-    assert_eq!(a, b);
 }
 
 #[test]

@@ -296,12 +296,22 @@ fn rotating_model_is_the_latitude_model() {
 // ---- Whole-map acceptance --------------------------------------------------------
 
 /// SPEC's acceptance worlds: thin atmosphere, hydrographics 0, populated.
+/// Seeds these tests run on.
+///
+/// Deliberately *not* 1–10. The climate constants (spread per atmosphere,
+/// terminator transport, trap capacity) were tuned while these tests ran on
+/// seeds 1–10, so passing there only showed the model fits the worlds it was
+/// fitted to. These three were never used during tuning: if the model only
+/// worked by overfitting, this is where it would show. Three rather than ten
+/// also keeps the suite quick — each seed is a whole map per UWP.
+const HELD_OUT_SEEDS: [u64; 3] = [11, 12, 13];
+
 const ACCEPTANCE: [&str; 2] = ["C530677-8", "C540677-8"];
 
 #[test]
 fn zones_are_rings_around_the_substellar_point() {
     for uwp in ACCEPTANCE {
-        for seed in 1..=10u64 {
+        for seed in HELD_OUT_SEEDS {
             let map = generate_decorated(uwp, seed, None, &locked()).unwrap();
             let th = hex_thetas(&map);
             let bins = [0.0, 30.0, 70.0, 105.0, 140.0, 180.1];
@@ -375,7 +385,7 @@ fn zones_are_rings_around_the_substellar_point() {
 #[test]
 fn ice_sits_at_the_antistellar_point_not_the_poles() {
     for uwp in ["C530677-8", "C540677-8", "C541677-8", "A788899-A"] {
-        for seed in 1..=10u64 {
+        for seed in HELD_OUT_SEEDS {
             let map = generate_decorated(uwp, seed, None, &locked()).unwrap();
             let th = hex_thetas(&map);
             let ice: Vec<f64> = map
@@ -401,7 +411,7 @@ fn ice_sits_at_the_antistellar_point_not_the_poles() {
         }
         // Where there is water to trap, the antistellar region is the sheet.
         if uwp.as_bytes()[3] != b'0' {
-            for seed in 1..=10u64 {
+            for seed in HELD_OUT_SEEDS {
                 let map = generate_decorated(uwp, seed, None, &locked()).unwrap();
                 let far: Vec<Biome> = map
                     .grid
@@ -449,7 +459,7 @@ fn trace_water_is_all_in_the_cold_trap() {
     // Hydrographics 0–1 fits in the trap: no open water anywhere, per hex or
     // per pixel — dayside basins are dry pans.
     for uwp in ["C530677-8", "C540677-8", "C541677-8", "A781899-A"] {
-        for seed in 1..=10u64 {
+        for seed in HELD_OUT_SEEDS {
             let map = generate_decorated(uwp, seed, None, &locked()).unwrap();
             assert!(
                 !map.grid.hexes.iter().any(|h| is_water(h.biome)),
@@ -467,7 +477,8 @@ fn trace_water_is_all_in_the_cold_trap() {
 #[test]
 fn liquid_water_collects_at_the_inner_terminator_once_the_trap_is_full() {
     for uwp in ["C542677-8", "C543677-8"] {
-        let wet_thetas: Vec<f64> = (1..=10u64)
+        let wet_thetas: Vec<f64> = HELD_OUT_SEEDS
+            .into_iter()
             .flat_map(|seed| {
                 let map = generate_decorated(uwp, seed, None, &locked()).unwrap();
                 pixel_above(&map, 4_000)
@@ -522,7 +533,7 @@ fn settlements_and_starport_stay_in_the_terminator_ring() {
     let core_share = |cases: &[(&str, WorldDecorations)]| {
         let (mut core, mut all) = (0usize, 0usize);
         for (uwp, deco) in cases {
-            for seed in 1..=10u64 {
+            for seed in HELD_OUT_SEEDS {
                 let map = generate_decorated(uwp, seed, None, deco).unwrap();
                 let mut starports = 0;
                 let mut cities = 0;

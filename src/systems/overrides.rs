@@ -1881,6 +1881,18 @@ mod tests {
     /// The shipped file must parse. It's compiled in, so a broken one is a
     /// broken build — but `table()` only parses on first use, which could be
     /// deep inside a request. This makes it a test failure instead.
+    /// Hilfer is tide-locked by the shipped override file, and by nothing
+    /// else — no world locks automatically. If this entry is lost, Hilfer
+    /// silently reverts to the rotating climate, so pin it.
+    #[test]
+    fn hilfer_is_tide_locked_by_the_shipped_overrides() {
+        let deco = decorations_for("Trojan Reach", "2424", "Hilfer")
+            .expect("the shipped overrides state Hilfer's decorations");
+        assert!(deco.tide_locked.is_some(), "Hilfer should be tide-locked");
+        // The substellar point is left to the map seed.
+        assert_eq!(deco.to_query(), "tl");
+    }
+
     #[test]
     fn the_shipped_override_file_parses() {
         let file: OverrideFile =

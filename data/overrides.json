@@ -334,6 +334,18 @@
           "uwp": "G200169-A"
         }
       ]
+    },
+    {
+      "sector": "Trojan Reach",
+      "hex": "2424",
+      "world": "Hilfer",
+      "note": "Tide-locked by referee decision, not a citation: no published source says Hilfer is locked. It is the world the tide-lock climate model was built around, and it fits the model's dry case exactly — BA5077A-6 (thin atmosphere, hydrographics 0) around an M6 V, at orbit 0 where a red-dwarf main world lands. Nothing locks a world automatically; this entry is the only reason Hilfer's map is drawn as locked. The substellar point is left to the map seed.",
+      "bodies": [
+        {
+          "type": "main_world",
+          "tide_locked": true
+        }
+      ]
     }
   ]
 }
