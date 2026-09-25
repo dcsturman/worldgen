@@ -176,12 +176,20 @@ impl AstroData {
     /// - Formula: y = -0.03x + 8.69 (where x is temperature, y is ice multiplier)
     pub fn compute(star: &Star, world: &World) -> AstroData {
         let mut astro = AstroData::new();
-        astro.compute_orbital_period(star, world.position_in_system);
+        astro.compute_orbital_period(star, world.position_in_system, world.orbit_distance_mkm);
         astro.compute_mass_gravity(world.size);
 
         // Initial temperature calculation for ice cap estimation
         astro.compute_albedo_temp(
-            world.position_in_system,
+            // A stated distance means the orbit slot no longer says where the
+            // world is, so the slot-keyed habitable-zone lookup doesn't apply.
+            // `None`, not a sentinel slot: an earlier `usize::MAX` collided
+            // with `get_habitable` returning -1 (no habitable orbit) cast to
+            // usize, and sent Hilfer to the table's +5 °C.
+            world
+                .orbit_distance_mkm
+                .is_none()
+                .then_some(world.position_in_system),
             world.atmosphere,
             world.hydro,
             star,
@@ -206,22 +214,41 @@ impl AstroData {
         self.orbit_distance
     }
 
-    /// Calculates orbital period and distance using Kepler's laws
+    /// Surface temperature in kelvin, as the description reports it.
+    #[cfg(test)]
+    pub(crate) fn temperature_k(&self) -> f32 {
+        self.temp
+    }
+
+    /// Calculates orbital period and distance using Kepler's third law.
     ///
-    /// Uses the formula P = sqrt(M * D³) where:
-    /// - P = orbital period in years
-    /// - M = stellar mass in solar masses  
-    /// - D = orbital distance in AU
+    /// P = sqrt(D³ / M), with P in years, D in AU and M in solar masses. This
+    /// used to be `sqrt(M · D³)`, which agrees only for a one-solar-mass star
+    /// and is wrong by a factor of M everywhere else — too short around small
+    /// stars, too long around big ones. Hilfer, an M6 V world at orbit 0,
+    /// read a year of 18.8 days where the physics gives ~57.
+    ///
+    /// `stated_mkm` overrides the orbit slot's distance when a source gives
+    /// one (see `World::orbit_distance_mkm`).
     ///
     /// # Arguments
     ///
     /// * `star` - The primary star
     /// * `orbit` - Orbital position index in the system
-    fn compute_orbital_period(&mut self, star: &Star, orbit: usize) {
+    /// * `stated_mkm` - A stated distance in millions of km, if any
+    fn compute_orbital_period(&mut self, star: &Star, orbit: usize, stated_mkm: Option<f32>) {
         let mass = get_solar_mass(star);
         // Convert from million km to AU (1 AU = 149.6 million km)
-        self.orbit_distance = get_orbital_distance(orbit as i32) / 149.6;
-        self.orbital_period = (mass * self.orbit_distance.powi(3)).sqrt();
+        let mkm = stated_mkm.unwrap_or_else(|| get_orbital_distance(orbit as i32));
+        self.orbit_distance = mkm / 149.6;
+        // O-class rows in the mass table are 0.0 placeholders, not data.
+        // Dividing by them would give an infinite year; report none, which is
+        // what the old multiply-by-mass formula happened to produce.
+        self.orbital_period = if mass > 0.0 {
+            (self.orbit_distance.powi(3) / mass).sqrt()
+        } else {
+            0.0
+        };
     }
 
     /// Calculates planetary mass and surface gravity
@@ -259,7 +286,13 @@ impl AstroData {
     /// * `atmosphere` - Atmospheric density code
     /// * `hydro` - Hydrographics percentage
     /// * `star` - Primary star characteristics
-    fn compute_albedo_temp(&mut self, position: usize, atmosphere: i32, hydro: i32, star: &Star) {
+    fn compute_albedo_temp(
+        &mut self,
+        position: Option<usize>,
+        atmosphere: i32,
+        hydro: i32,
+        star: &Star,
+    ) {
         let cloud_percent = get_cloudiness(atmosphere) as f32 / 100.0;
         let mut water_percent = hydro as f32 / 10.0;
         let mut land_percent = 1.0 - water_percent;
@@ -296,7 +329,9 @@ impl AstroData {
         self.luminosity = get_luminosity(star);
 
         // Different formulas for habitable zone vs other orbits
-        if position == get_habitable(star) as usize {
+        // Compared as i32: `get_habitable` is -1 when the star has no
+        // habitable orbit, and must then match nothing.
+        if position.is_some_and(|p| p as i32 == get_habitable(star)) {
             // Habitable zone: use lookup table with greenhouse modifier
             let temp_modifier: i32 =
                 ((self.greenhouse * (1.0 - self.albedo) - 1.0) / 0.05).trunc() as i32;
@@ -344,7 +379,10 @@ impl AstroData {
         let climate = format!(
             "{:+0.2} °C, {:2.0}% ice, {:0.1}G, {:0.1} yrs",
             self.temp - EARTH_TEMP + 15.0, // Temperature relative to Earth
-            (self.ice_cap_percent * 100.0).round(), // Ice coverage percentage
+            // `+ 0.0` turns -0.0 into 0.0. A world with no water computes its
+            // ice as 0 × (a negative factor) = -0.0, which `clamp` keeps and
+            // the formatter printed as "-0%".
+            (self.ice_cap_percent * 100.0).round() + 0.0, // Ice coverage percentage
             self.gravity,
             self.orbital_period
         );

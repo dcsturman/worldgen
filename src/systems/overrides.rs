@@ -172,6 +172,14 @@ pub enum BodySpec {
         /// `LatLon`, so a latitude past ±90 fails the file, not a render.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         substellar: Option<LatLon>,
+        /// Distance from the star in millions of km, when the source states
+        /// one. Traveller's orbit table can't place a world closer than
+        /// 29.9 Mkm (orbit 0), which is far outside a red dwarf's habitable
+        /// zone; this is how a world gets its real distance. The orbit slot
+        /// still decides where it's drawn — this sets its year, temperature,
+        /// and the legend's distance and travel times.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        distance_mkm: Option<f32>,
     },
     Belt {
         /// Which star this body orbits; defaults to the primary.
@@ -300,6 +308,9 @@ pub enum BodySpec {
         /// See [`BodySpec::Planet`].
         #[serde(default, skip_serializing_if = "Option::is_none")]
         substellar: Option<LatLon>,
+        /// See [`BodySpec::Planet`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        distance_mkm: Option<f32>,
     },
 }
 
@@ -375,12 +386,18 @@ pub struct PostSpec {
     /// except on the spec that creates a moon, so [`apply_post`] can run
     /// every one of them after every other fact.
     pub decorations: Option<WorldDecorations>,
+    /// A stated distance from the star, in millions of km. Rides with the
+    /// decorations and is applied last for the same reason: a UWP rebuild
+    /// in the post pass would otherwise replace the world it was set on.
+    pub distance_mkm: Option<f32>,
 }
 
 impl PostSpec {
-    /// Specs that only state decorations, which [`apply_post`] runs last.
+    /// Specs that must be the last word on a body — stated decorations and
+    /// a stated distance — which [`apply_post`] runs after everything else.
     fn is_decoration(&self) -> bool {
-        self.decorations.is_some() && !matches!(self.target, Target::MoonOf(_))
+        (self.decorations.is_some() || self.distance_mkm.is_some())
+            && !matches!(self.target, Target::MoonOf(_))
     }
 }
 
@@ -454,9 +471,11 @@ impl BodySpec {
     /// resolved against the primary's orbits first: an unnamed "orbit 1" on
     /// a companion's body would decorate the primary's orbit 1 instead.
     pub fn decoration_post(&self) -> Result<Option<PostSpec>, String> {
-        let Some(decorations) = self.decorations()? else {
+        let decorations = self.decorations()?;
+        let distance_mkm = self.distance_mkm()?;
+        if decorations.is_none() && distance_mkm.is_none() {
             return Ok(None);
-        };
+        }
         let unlocatable = "a tide lock needs a body it can find: give it a name (or, orbiting \
                            the primary, an orbit or a position)";
         let target = match self {
@@ -492,8 +511,26 @@ impl BodySpec {
             uwp: None,
             facilities: Vec::new(),
             zone: None,
-            decorations: Some(decorations),
+            decorations,
+            distance_mkm,
         }))
+    }
+
+    /// The distance from the star this body states, if any. Must be a
+    /// positive, finite number of millions of km.
+    pub fn distance_mkm(&self) -> Result<Option<f32>, String> {
+        let d = match self {
+            BodySpec::Planet { distance_mkm, .. } | BodySpec::MainWorld { distance_mkm, .. } => {
+                *distance_mkm
+            }
+            _ => None,
+        };
+        match d {
+            Some(v) if !(v.is_finite() && v > 0.0) => Err(format!(
+                "distance_mkm must be a positive number of millions of km, got {v}"
+            )),
+            other => Ok(other),
+        }
     }
 
     /// The facilities and travel zone this body declares, if any, as a
@@ -560,6 +597,7 @@ impl BodySpec {
             facilities: self.parse_facilities()?,
             zone: self.parse_zone()?,
             decorations: None,
+            distance_mkm: None,
         }))
     }
 
@@ -700,6 +738,7 @@ impl BodySpec {
                     facilities: Vec::new(),
                     zone: None,
                     decorations: None,
+                    distance_mkm: None,
                     }),
                     None => Lowered::Constraint(Constraint::Planet {
                         name: name.clone(),
@@ -731,6 +770,7 @@ impl BodySpec {
                     facilities: Vec::new(),
                     zone: None,
                     decorations: None,
+                    distance_mkm: None,
                     }),
                     None => Lowered::Constraint(Constraint::Belt {
                         name: name.clone(),
@@ -770,6 +810,7 @@ impl BodySpec {
                     facilities: Vec::new(),
                     zone: None,
                     decorations: None,
+                    distance_mkm: None,
                     }),
                     None => Lowered::Constraint(Constraint::GasGiant {
                         name: name.clone(),
@@ -808,6 +849,7 @@ impl BodySpec {
                     // This spec *creates* the moon, and nothing rebuilds it
                     // afterwards, so the lock can go on at birth.
                     decorations: self.decorations()?,
+                    distance_mkm: None,
                 }),
             },
             BodySpec::Empty { orbit } => Lowered::Constraint(Constraint::Empty { orbit: *orbit }),
@@ -1371,10 +1413,14 @@ fn apply_post_level(
                     Target::Named(n) => w.name.eq_ignore_ascii_case(n),
                     _ => w.is_mainworld(),
                 };
+                let star = system.star;
                 match find_world_mut(system, is_target) {
                     Some(w) => {
                         if let Some(d) = &spec.decorations {
                             w.decorations = d.clone();
+                        }
+                        if let Some(mkm) = spec.distance_mkm {
+                            set_stated_distance(w, mkm, &star);
                         }
                     }
                     None => dropped.push((
@@ -1451,6 +1497,9 @@ fn apply_post_level(
                 if let Some(d) = &spec.decorations {
                     w.decorations = d.clone();
                 }
+                if let Some(mkm) = spec.distance_mkm {
+                    set_stated_distance(w, mkm, &star);
+                }
             }
             Some(OrbitContent::GasGiant(g)) => {
                 if let Some(n) = &spec.name {
@@ -1467,6 +1516,21 @@ fn apply_post_level(
 /// The first world at this level — orbit-slot worlds, then any planet's or
 /// gas giant's moons — that `is_target` accepts. Companions are searched by
 /// [`apply_post`]'s own recursion, not here.
+/// Give `w` a stated distance from `star` and recompute what depends on it.
+///
+/// The world's astronomy — year, temperature, and so day length when it's
+/// locked — was worked out from its orbit slot when it was placed, so it has
+/// to be redone here or the stated distance would change nothing but the
+/// field.
+fn set_stated_distance(
+    w: &mut crate::systems::world::World,
+    mkm: f32,
+    star: &crate::systems::system::Star,
+) {
+    w.orbit_distance_mkm = Some(mkm);
+    w.compute_astro_data(star);
+}
+
 fn find_world_mut(
     system: &mut crate::systems::system::System,
     is_target: impl Fn(&crate::systems::world::World) -> bool,
@@ -1854,6 +1918,7 @@ mod tests {
             bodies: vec![BodySpec::Planet {
                 tide_locked: None,
                 substellar: None,
+                distance_mkm: None,
                 star: StarRef::Primary,
                 position: None,
                 facilities: Vec::new(),
@@ -1891,6 +1956,14 @@ mod tests {
         assert!(deco.tide_locked.is_some(), "Hilfer should be tide-locked");
         // The substellar point is left to the map seed.
         assert_eq!(deco.to_query(), "tl");
+        // And it sits at 5 million km, inside the orbit table's reach.
+        let hilfer = lookup("Trojan Reach", "2424").expect("Hilfer has an override");
+        let distances: Vec<f32> = hilfer
+            .bodies
+            .iter()
+            .filter_map(|b| b.distance_mkm().ok().flatten())
+            .collect();
+        assert_eq!(distances, vec![5.0]);
     }
 
     #[test]
@@ -1950,6 +2023,47 @@ mod tests {
         crate::systems::system::System::generate_from_constraints_seeded(77, merged).unwrap()
     }
 
+    /// A stated distance lands on the body and its astronomy is recomputed,
+    /// so the year (and a locked world's day) follow it.
+    #[test]
+    fn a_stated_distance_reaches_the_main_world() {
+        let sys = generate(vec![BodySpec::MainWorld {
+            orbit: None,
+            moons: None,
+            tide_locked: Some(true),
+            substellar: None,
+            distance_mkm: Some(5.0),
+        }]);
+        let mw = sys
+            .orbit_slots
+            .iter()
+            .flatten()
+            .find_map(|c| match c {
+                crate::systems::system::OrbitContent::World(w) if w.is_mainworld() => Some(w),
+                _ => None,
+            })
+            .expect("main world");
+        assert_eq!(mw.orbit_distance_mkm, Some(5.0));
+        let au = 5.0_f32 / 149.6;
+        let mass = crate::systems::system_tables::get_solar_mass(&sys.star);
+        assert!((mw.orbital_period_years() - (au.powi(3) / mass).sqrt()).abs() < 1e-6);
+        assert_eq!(mw.day_length_years(), Some(mw.orbital_period_years()));
+    }
+
+    #[test]
+    fn a_nonsense_distance_is_rejected() {
+        for bad in [0.0, -3.0, f32::NAN, f32::INFINITY] {
+            let b = BodySpec::MainWorld {
+                orbit: None,
+                moons: None,
+                tide_locked: None,
+                substellar: None,
+                distance_mkm: Some(bad),
+            };
+            assert!(b.distance_mkm().is_err(), "{bad} should be rejected");
+        }
+    }
+
     /// "The outermost gas giant is Bulhai" — the name lands on whichever
     /// giant actually ended up outermost, not on an orbit guessed in advance.
     #[test]
@@ -1994,6 +2108,7 @@ mod tests {
         let sys = generate(vec![BodySpec::Planet {
             tide_locked: None,
             substellar: None,
+            distance_mkm: None,
             star: StarRef::Primary,
             facilities: Vec::new(),
             zone: None,
@@ -2199,6 +2314,7 @@ mod tests {
         let sys = generate(vec![BodySpec::Planet {
             tide_locked: None,
             substellar: None,
+            distance_mkm: None,
             star: StarRef::Primary,
             facilities: Vec::new(),
             zone: None,
@@ -2273,6 +2389,7 @@ mod tests {
         let bad_fac = BodySpec::Planet {
             tide_locked: None,
             substellar: None,
+            distance_mkm: None,
             star: StarRef::Primary,
             facilities: vec!["shipyard".into()],
             zone: None,
@@ -2287,6 +2404,7 @@ mod tests {
         let bad_zone = BodySpec::Planet {
             tide_locked: None,
             substellar: None,
+            distance_mkm: None,
             star: StarRef::Primary,
             facilities: Vec::new(),
             zone: Some("chartreuse".into()),
@@ -2306,6 +2424,7 @@ mod tests {
         let floating = BodySpec::Planet {
             tide_locked: None,
             substellar: None,
+            distance_mkm: None,
             star: StarRef::Primary,
             facilities: vec!["naval".into()],
             zone: None,
@@ -2502,6 +2621,7 @@ mod tests {
         let sys = generate(vec![BodySpec::MainWorld {
             tide_locked: Some(true),
             substellar: Some(LatLon::from_degrees(-10.0, 45.0).unwrap()),
+            distance_mkm: None,
             orbit: None,
             moons: None,
         }]);
@@ -2519,6 +2639,7 @@ mod tests {
         let sys = generate(vec![BodySpec::Planet {
             tide_locked: Some(true),
             substellar: None,
+            distance_mkm: None,
             star: StarRef::Primary,
             name: Some("Hotside".into()),
             orbit: Some(2),
@@ -2550,9 +2671,11 @@ mod tests {
             facilities: Vec::new(),
             zone: None,
             decorations: Some(WorldDecorations::tide_locked(TideLock::default())),
+            distance_mkm: None,
         };
         let rebuild = PostSpec {
             decorations: None,
+            distance_mkm: None,
             uwp: Some(PartialUwp::parse("X867000-0").unwrap()),
             ..lock.clone()
         };
@@ -2674,6 +2797,7 @@ mod tests {
             facilities: Vec::new(),
             zone: None,
             decorations: Some(WorldDecorations::tide_locked(TideLock::default())),
+            distance_mkm: None,
         };
         assert_eq!(
             apply_post(&mut sys, &[lock]),

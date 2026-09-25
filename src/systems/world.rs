@@ -62,6 +62,19 @@ pub struct World {
     /// was.
     #[serde(default, skip_serializing_if = "WorldDecorations::is_empty")]
     pub decorations: WorldDecorations,
+    /// Distance from the star in millions of km, when a source states one
+    /// rather than leaving it to the orbit slot.
+    ///
+    /// Traveller's orbit table starts at 29.9 Mkm (orbit 0, 0.2 AU), which
+    /// is far outside a red dwarf's habitable zone — Hilfer, an M6 V world,
+    /// sits at 5 Mkm. The slot still decides where the world is drawn and
+    /// what it's ordered among; this decides the physics: year, day length
+    /// when locked, temperature, and the legend's distance and travel times.
+    ///
+    /// Same serde treatment as `decorations`, for the same reasons: stored
+    /// worlds predate it, and a world without it serializes as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orbit_distance_mkm: Option<f32>,
 }
 
 /// Enum for facilities that can be present on a world
@@ -133,6 +146,7 @@ impl World {
             astro_data: AstroData::new(),
             coordinates: None,
             decorations: WorldDecorations::default(),
+            orbit_distance_mkm: None,
         }
     }
     /// Generates a name for the world based on system name and orbital position
@@ -1301,6 +1315,41 @@ mod tests {
             subtype: spec.subtype.unwrap_or(0),
             size: spec.size,
         }
+    }
+
+    /// Kepler's third law is P = sqrt(a³/M). It used to be sqrt(M·a³),
+    /// which agrees only at one solar mass. Earth's orbit around a G2 V comes
+    /// out at a year; orbit 0 of an M5 V at about 57 days, not the 18.8 the
+    /// old formula gave.
+    #[test]
+    fn orbital_period_follows_keplers_third_law() {
+        let earth = placed("G2 V", 3, false);
+        assert!((earth.orbital_period_years() - 1.0).abs() < 0.01, "{}", earth.orbital_period_years());
+        let red = placed("M5 V", 0, false);
+        let days = red.orbital_period_years() * 365.25;
+        assert!((days - 56.7).abs() < 0.5, "M5 V orbit 0: {days} days");
+    }
+
+    /// A stated distance replaces the orbit slot's in the year and the
+    /// temperature. Hilfer sits at 5 Mkm, well inside orbit 0's 29.9.
+    #[test]
+    fn a_stated_distance_drives_the_year_and_temperature() {
+        let slot = placed("M5 V", 0, false);
+        let mut near = World::new("Near".into(), 0, 0, 7, 6, 5, 5, false, false);
+        near.orbit_distance_mkm = Some(5.0);
+        near.compute_astro_data(&star("M5 V"));
+        let au = 5.0_f32 / 149.6;
+        assert!((near.astro_data.orbit_distance_au() - au).abs() < 1e-6);
+        let expect = (au.powi(3) / 0.331).sqrt();
+        assert!((near.orbital_period_years() - expect).abs() < 1e-6);
+        // Both off the star's habitable orbit, so both use the distance
+        // formula, T ∝ D^-0.5 — the stated distance must go through it, not
+        // the slot-keyed habitable-zone table. (A sentinel slot once collided
+        // with "no habitable orbit" and gave the table's flat +5 °C instead;
+        // "warmer" alone didn't catch that, the exact ratio does.)
+        let ratio = near.astro_data.temperature_k() / slot.astro_data.temperature_k();
+        let expect = (29.9_f32 / 5.0).sqrt();
+        assert!((ratio - expect).abs() < 0.01, "T ratio {ratio}, expected {expect}");
     }
 
     /// A size-7 planet placed directly around `class` at `orbit`.

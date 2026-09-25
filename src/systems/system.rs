@@ -3442,16 +3442,23 @@ mod tests {
 
     /// Per case: FNV of the system's `Display` (every orbit, name, UWP and
     /// facility — the RNG stream), then of the astro descriptions, then of
-    /// the worlds' JSON, all as generated on 560525d.
+    /// the worlds' JSON.
+    ///
+    /// The `Display` column is unchanged since 560525d and must stay so:
+    /// nothing here may change what generation draws. The astro and JSON
+    /// columns were re-pinned when the astronomy was corrected — Kepler's
+    /// period became sqrt(a³/M) instead of sqrt(M·a³), and stellar mass and
+    /// luminosity interpolate by subtype instead of rounding to 0 and 5 —
+    /// which changes description figures (year, temperature) but no body.
     const GOLDEN_PINNED: &[(u64, u64, u64)] = &[
-        (0x549284a0277aabea, 0xd2b266d74e964fb5, 0xf968abea6f3b3e28),
-        (0xb3ff30419755844d, 0xeac3fcb95a7d0f43, 0x03d408cd148a240b),
-        (0xe9bf4e59473c5ed0, 0x5c470eaeaa14c2ad, 0xd8bba359d7725950),
-        (0x2ac7ac01e9deb855, 0xc3b7e662c9fd4a2a, 0xa97b30775fa665ba),
-        (0x835938276d66627d, 0x846d94d9a04138f9, 0xa17d0fba4db1a7f6),
-        (0xdfb79b2d32a7e98c, 0xd38125e7b0766a9b, 0x116adfd883528165),
-        (0xa470d87a612956e9, 0x1a8408ec427408bc, 0xdaeafb7cec81a935),
-        (0x31e44892ffd570a8, 0xd7f42ff17360779a, 0xfe8d1c008831a812),
+        (0x549284a0277aabea, 0x6e52f546870f3063, 0x378c61a2b1fae1b7),
+        (0xb3ff30419755844d, 0x3d7d60ef290bed39, 0x0873f027a7fc2a37),
+        (0xe9bf4e59473c5ed0, 0x0814742a7702cf5f, 0xc70888ca601fe732),
+        (0x2ac7ac01e9deb855, 0xc3b7e662c9fd4a2a, 0x8c03453fa569610a),
+        (0x835938276d66627d, 0xd648773bb015e7c4, 0xcf9a33915d85838f),
+        (0xdfb79b2d32a7e98c, 0xfe7770a8c1439526, 0x9109b3a18f88ae69),
+        (0xa470d87a612956e9, 0x1a8408ec427408bc, 0x3bb00c3f797b017a),
+        (0x31e44892ffd570a8, 0x74cfc44d5277079b, 0x7d669b94d9a3870b),
     ];
 
     /// No world is tide-locked by generation — only an override locks one —

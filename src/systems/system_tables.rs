@@ -165,9 +165,7 @@ pub fn round_subtype(subtype: StarSubType) -> u8 {
 ///
 /// Stellar luminosity as multiple of Sol's luminosity
 pub(crate) fn get_luminosity(star: &Star) -> f32 {
-    *LUMINOSITY_TABLE
-        .get(&(star.star_type, round_subtype(star.subtype), star.size))
-        .unwrap()
+    interpolate_subtype(&LUMINOSITY_TABLE, star, m9_anchor(star.size).map(|(l, _)| l))
 }
 
 /// Retrieves stellar mass for a given star
@@ -183,9 +181,91 @@ pub(crate) fn get_luminosity(star: &Star) -> f32 {
 ///
 /// Stellar mass as multiple of Sol's mass
 pub(crate) fn get_solar_mass(star: &Star) -> f32 {
-    *MASS_TABLE
-        .get(&(star.star_type, round_subtype(star.subtype), star.size))
-        .unwrap()
+    interpolate_subtype(&MASS_TABLE, star, m9_anchor(star.size).map(|(_, m)| m))
+}
+
+/// Book 6's M9 figures — the far end of the main sequence the tables below
+/// stop short of.
+///
+/// Classic Traveller Book 6 (*Scouts*) tabulates stellar luminosity and mass
+/// for B0 through M9 (pp. 44–45); the tables here were transcribed from it
+/// (their M0 and M5 rows match it exactly) but stop at M5. Without M9 every
+/// M6–M9 star rounded to M5, which made a late red dwarf about seven times
+/// too bright by Book 6's own numbers — Hilfer (M6 V) came out scorching at
+/// the 5 Mkm the setting places it. `None` where Book 6 gives none (size IV
+/// has no K5–M9) or for white dwarfs, whose M row these tables treat
+/// separately. Returns `(luminosity, mass)`.
+fn m9_anchor(size: StarSize) -> Option<(f32, f32)> {
+    Some(match size {
+        StarSize::Ia => (141_000.0, 30.0),
+        StarSize::Ib => (117_000.0, 25.0),
+        StarSize::II => (16_200.0, 18.0),
+        StarSize::III => (2_690.0, 9.2),
+        StarSize::V => (0.001, 0.215),
+        StarSize::VI => (0.000_06, 0.058),
+        StarSize::IV | StarSize::D => return None,
+    })
+}
+
+/// The next cooler spectral class, whose subtype 0 continues this class's 9.
+fn next_cooler(t: StarType) -> Option<StarType> {
+    match t {
+        StarType::O => Some(StarType::B),
+        StarType::B => Some(StarType::A),
+        StarType::A => Some(StarType::F),
+        StarType::F => Some(StarType::G),
+        StarType::G => Some(StarType::K),
+        StarType::K => Some(StarType::M),
+        StarType::M => None,
+    }
+}
+
+/// Look a star up in a mass or luminosity table, interpolating between rows.
+///
+/// The tables hold subtypes 0 and 5 only, and every other subtype used to
+/// round to one of them — so a G2 got G0's figures and an M8 got M5's. That
+/// only fed description text (temperature and year), never generation, but
+/// it made those figures step in jumps of five subtypes.
+///
+/// Now subtypes 1–4 sit between the class's 0 and 5 rows, and 6–9 between
+/// its 5 row and the next cooler class's 0 row (G9 lies between G5 and K0).
+/// Interpolation is in log space, because mass and luminosity fall off
+/// geometrically along the sequence, not linearly. Subtypes 0 and 5 read
+/// their rows exactly, so a star on a row is unchanged.
+///
+/// M6–M8 interpolate from M5 toward Book 6's M9 row (see [`m9_anchor`]),
+/// four subtypes on rather than five. Where there's no row to interpolate
+/// toward it falls back to rounding, as before: next to O-class rows, which
+/// are 0.0 placeholders rather than data, and for sizes Book 6 gives no M9
+/// for (IV) or that these tables don't cover that way (D).
+fn interpolate_subtype(
+    table: &HashMap<(StarType, u8, StarSize), f32>,
+    star: &Star,
+    m9: Option<f32>,
+) -> f32 {
+    let at = |t: StarType, sub: u8| table.get(&(t, sub, star.size)).copied();
+    let rounded = || at(star.star_type, round_subtype(star.subtype)).unwrap();
+    let s = star.subtype;
+    if s == 0 || s == 5 {
+        return rounded();
+    }
+    let (lo, hi, frac) = if s < 5 {
+        (at(star.star_type, 0), at(star.star_type, 5), f32::from(s) / 5.0)
+    } else if star.star_type == StarType::M {
+        // M ends the sequence: there's no "N0" row, so M6–M8 run from M5 to
+        // Book 6's M9, which is four subtypes on, not five.
+        (at(StarType::M, 5), m9, f32::from(s - 5) / 4.0)
+    } else {
+        (
+            at(star.star_type, 5),
+            next_cooler(star.star_type).and_then(|n| at(n, 0)),
+            f32::from(s - 5) / 5.0,
+        )
+    };
+    match (lo, hi) {
+        (Some(a), Some(b)) if a > 0.0 && b > 0.0 => (a.ln() + (b.ln() - a.ln()) * frac).exp(),
+        _ => rounded(),
+    }
 }
 
 /// Converts orbital position to distance in millions of kilometers
@@ -1748,6 +1828,50 @@ lazy_static! {
 mod tests {
     use super::*;
     use crate::systems::system::{Star, System};
+
+    fn v(t: crate::systems::system::StarType, sub: u8) -> Star {
+        Star { star_type: t, subtype: sub, size: StarSize::V }
+    }
+
+    /// Subtypes 0 and 5 read their table rows exactly; everything between
+    /// interpolates instead of rounding. Before, an F4 V took F0's 1.7 M☉.
+    #[test]
+    fn mass_and_luminosity_interpolate_between_subtype_rows() {
+        use crate::systems::system::StarType::{F, G, K, M};
+        assert_eq!(get_solar_mass(&v(G, 0)), 1.04);
+        assert_eq!(get_solar_mass(&v(G, 5)), 0.94);
+        let f4 = get_solar_mass(&v(F, 4));
+        assert!(f4 < 1.7 && f4 > 1.3, "F4 V {f4} should lie between F0 and F5");
+        // G9 lies between G5 and the next class's K0.
+        let g9 = get_solar_mass(&v(G, 9));
+        assert!(g9 < 0.94 && g9 > 0.825, "G9 V {g9}");
+        // Monotonic along the sequence, G0 through K0.
+        let seq: Vec<f32> = (0..=9).map(|s| get_solar_mass(&v(G, s))).collect();
+        assert!(seq.windows(2).all(|w| w[1] < w[0]), "{seq:?}");
+        assert!(get_luminosity(&v(G, 2)) < get_luminosity(&v(G, 0)));
+        // A G2 V is the Sun: about one solar mass.
+        assert!((get_solar_mass(&v(G, 2)) - 1.0).abs() < 0.01);
+        // M6–M9 run from M5 to Book 6's M9 row (0.001 L☉, 0.215 M☉), which
+        // these tables once stopped short of — every late red dwarf used to
+        // read as an M5.
+        let m9m = get_solar_mass(&v(M, 9));
+        let m9l = get_luminosity(&v(M, 9));
+        assert!((m9m - 0.215).abs() < 1e-4, "M9 V mass {m9m}");
+        assert!((m9l - 0.001).abs() < 1e-6, "M9 V luminosity {m9l}");
+        let m6 = get_luminosity(&v(M, 6));
+        assert!(m6 < 0.007 && m6 > 0.001, "M6 V luminosity {m6}");
+        assert_eq!(get_luminosity(&v(K, 5)), 0.08, "on-row stars read their row exactly");
+    }
+
+    /// O-class rows are 0.0 placeholders; interpolating toward one would
+    /// produce nonsense, so those fall back to rounding.
+    #[test]
+    fn placeholder_rows_are_not_interpolated_toward() {
+        use crate::systems::system::StarType::{B, O};
+        assert_eq!(get_solar_mass(&v(O, 2)), 0.0);
+        let b9 = get_solar_mass(&v(B, 9));
+        assert!(b9 > 0.0, "B9 V interpolates toward A0, not a placeholder");
+    }
 
     #[test]
     fn test_get_orbital_distance_extrapolates_past_table() {
