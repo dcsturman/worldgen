@@ -364,6 +364,9 @@ pub enum DroppedConstraint {
     /// Nothing of the required kind exists to be outermost/innermost/after —
     /// "the outermost gas giant" in a system with no gas giants.
     NoBodyAtRelativePosition { body: BodyKind },
+    /// A fact aimed at a body by name — a tide lock on a moon, say — found
+    /// nothing called that. Usually a misspelling.
+    NamedBodyNotFound { name: String },
 }
 
 impl std::fmt::Display for DroppedConstraint {
@@ -400,6 +403,9 @@ impl std::fmt::Display for DroppedConstraint {
             ),
             DroppedConstraint::NoBodyAtRelativePosition { body } => {
                 write!(f, "no {body} exists at the position this override describes")
+            }
+            DroppedConstraint::NamedBodyNotFound { name } => {
+                write!(f, "no body called \"{name}\" exists in this system")
             }
         }
     }
@@ -3360,6 +3366,124 @@ mod tests {
         count_vec.sort_by(|a, b| a.0.cmp(b.0));
         for (roll, count) in count_vec {
             println!("{}: {:2.2}%", roll, *count as f32 / 100.0);
+        }
+    }
+
+    // ---- Generation is unchanged by tide locking ----
+    //
+    // Pinned on 560525d, the commit before decorations existed. Tide locks
+    // come only from overrides, so generation must be exactly what it was:
+    // no extra dice (one roll would shift every later draw and reshuffle
+    // every system) and no change to any world. Re-pin with `golden_print`
+    // only for a change that is *meant* to alter generation.
+
+    /// Every world in a system, companions and satellites included, in a
+    /// fixed order.
+    fn golden_worlds(sys: &System) -> Vec<&World> {
+        let mut out = Vec::new();
+        for slot in sys.orbit_slots.iter().flatten() {
+            match slot {
+                OrbitContent::World(w) => {
+                    out.push(w);
+                    out.extend(w.satellites.sats.iter());
+                }
+                OrbitContent::GasGiant(g) => out.extend(g.satellites().iter()),
+                _ => {}
+            }
+        }
+        for child in [sys.secondary.as_deref(), sys.tertiary.as_deref()]
+            .into_iter()
+            .flatten()
+        {
+            out.extend(golden_worlds(child));
+        }
+        out
+    }
+
+    /// FNV-1a: fixed forever, unlike `DefaultHasher`, so a pinned value
+    /// can't move under a toolchain upgrade.
+    fn golden_fnv(s: &str) -> u64 {
+        s.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
+            (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01b3)
+        })
+    }
+
+    /// `(name, uwp, stellar, belts, giants, planets, seed)`.
+    const GOLDEN_CASES: &[(&str, &str, &str, usize, usize, usize, u64)] = &[
+        ("Regina", "A788899-C", "F7 V BD M3 V", 1, 3, 6, 1),
+        ("Pourne", "A9B2887-A", "F3 V M9 V", 0, 2, 4, 2),
+        ("Oghma", "B534754-9", "K5 V M5 V", 0, 4, 6, 3),
+        ("Torpol", "B55A77A-8", "G2 V", 2, 1, 3, 4),
+        ("Dim", "C867977-8", "M5 V", 1, 1, 5, 5),
+        ("Dimmer", "C544677-8", "M9 V", 0, 1, 4, 6),
+        ("Rock", "E300000-0", "M7 V", 2, 0, 3, 7),
+        ("Dwarf", "C867977-8", "M5 D", 0, 1, 3, 8),
+    ];
+
+    /// `(Display, astro descriptions, world JSON)` for one golden case.
+    fn golden_fingerprint(
+        case: &(&str, &str, &str, usize, usize, usize, u64),
+    ) -> (String, String, String, System) {
+        let (name, uwp, stellar, belts, giants, planets, seed) = *case;
+        let stars = crate::api::parse_stellar(stellar);
+        let cs = crate::api::build_constraints(name, uwp, &stars, giants, belts, planets).unwrap();
+        let sys = System::generate_from_constraints_seeded(seed, cs).unwrap();
+        let worlds = golden_worlds(&sys);
+        let astro: String = worlds
+            .iter()
+            .map(|w| format!("{}|{}\n", w.name, w.get_astro_description()))
+            .collect();
+        let json: String = worlds
+            .iter()
+            .map(|w| serde_json::to_string(w).unwrap() + "\n")
+            .collect();
+        (format!("{sys}"), astro, json, sys)
+    }
+
+    /// Per case: FNV of the system's `Display` (every orbit, name, UWP and
+    /// facility — the RNG stream), then of the astro descriptions, then of
+    /// the worlds' JSON, all as generated on 560525d.
+    const GOLDEN_PINNED: &[(u64, u64, u64)] = &[
+        (0x549284a0277aabea, 0xd2b266d74e964fb5, 0xf968abea6f3b3e28),
+        (0xb3ff30419755844d, 0xeac3fcb95a7d0f43, 0x03d408cd148a240b),
+        (0xe9bf4e59473c5ed0, 0x5c470eaeaa14c2ad, 0xd8bba359d7725950),
+        (0x2ac7ac01e9deb855, 0xc3b7e662c9fd4a2a, 0xa97b30775fa665ba),
+        (0x835938276d66627d, 0x846d94d9a04138f9, 0xa17d0fba4db1a7f6),
+        (0xdfb79b2d32a7e98c, 0xd38125e7b0766a9b, 0x116adfd883528165),
+        (0xa470d87a612956e9, 0x1a8408ec427408bc, 0xdaeafb7cec81a935),
+        (0x31e44892ffd570a8, 0xd7f42ff17360779a, 0xfe8d1c008831a812),
+    ];
+
+    /// No world is tide-locked by generation — only an override locks one —
+    /// so every case, the red dwarfs included, must match 560525d exactly:
+    /// same dice, same astro text, same JSON.
+    #[test]
+    fn tide_locking_leaves_generation_unchanged() {
+        for (case, &(display, astro, json)) in GOLDEN_CASES.iter().zip(GOLDEN_PINNED) {
+            let (d, a, j, sys) = golden_fingerprint(case);
+            let name = case.0;
+            assert!(
+                golden_worlds(&sys).iter().all(|w| !w.is_tide_locked()),
+                "{name}: generation locked a world on its own"
+            );
+            assert_eq!(golden_fnv(&d), display, "{name}: generation drew differently");
+            assert_eq!(golden_fnv(&a), astro, "{name}: astro description changed");
+            assert_eq!(golden_fnv(&j), json, "{name}: world JSON changed");
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn golden_print() {
+        for c in GOLDEN_CASES {
+            let (d, a, j, _) = golden_fingerprint(c);
+            println!(
+                "{:?}: 0x{:016x}, 0x{:016x}, 0x{:016x}",
+                c.0,
+                golden_fnv(&d),
+                golden_fnv(&a),
+                golden_fnv(&j)
+            );
         }
     }
 }

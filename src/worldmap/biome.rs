@@ -13,10 +13,10 @@ use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
 use super::Uwp;
-use super::climate::{self, HumidityField};
+use super::climate::{self, ClimateModel, HumidityField};
 use super::grid::{Grid, xy_to_sphere};
 use super::noise::ElevationField;
-use super::raster::{apply_continentality, continentality};
+use super::raster::{apply_continentality, continentality_with};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Biome {
@@ -70,9 +70,11 @@ pub struct SubSample {
 
 const SUB_SAMPLES_PER_HEX: usize = 12;
 
+#[allow(clippy::too_many_arguments)]
 pub fn assign_biomes(
     grid: &mut Grid,
     uwp: &Uwp,
+    model: &ClimateModel,
     elev: &ElevationField,
     humidity_field: &HumidityField,
     temp_field: &climate::TempField,
@@ -108,10 +110,11 @@ pub fn assign_biomes(
             );
             let sphere = xy_to_sphere(canon_2d.0, canon_2d.1);
             let elev_v = elev.sample(&sphere);
-            let above = climate::amplify_elevation(elev_v - sea_level, uwp.hydrographics());
-            let raw_t = climate::temperature_at_wobbled(&sphere, temp_field);
-            let temp_v = climate::apply_lapse(climate::adjust_temperature(raw_t, uwp), above, uwp);
-            let mut hum_v = humidity_field.sample(&sphere, uwp);
+            let above =
+                model.above_sea(elev_v, &sphere, sea_level, uwp.hydrographics(), temp_field);
+            let raw_t = model.surface_temperature(&sphere, temp_field, uwp);
+            let temp_v = climate::apply_lapse(raw_t, above, uwp);
+            let mut hum_v = model.humidity(&sphere, humidity_field, uwp);
             if let Some(tec) = elev.tectonics() {
                 hum_v = super::colormap::rain_shadow_adjustment(hum_v, tec.rain_shadow_at(&sphere));
             }
@@ -119,7 +122,7 @@ pub fn assign_biomes(
             // Match the raster's continentality drying so per-hex biomes
             // line up with visible pixels in continental interiors.
             if above > 0.0 {
-                let cont = continentality(elev, sea_level, canon_2d.0, canon_2d.1);
+                let cont = continentality_with(model, elev, sea_level, canon_2d.0, canon_2d.1);
                 hum_v = apply_continentality(hum_v, cont);
             }
 
@@ -139,10 +142,16 @@ pub fn assign_biomes(
         // canonical 2D center (set in grid.rs::generate_hexes), so these
         // sample at the same point the raster will color.
         hex.elevation = elev.sample(&hex.sphere_pos);
-        let above = climate::amplify_elevation(hex.elevation - sea_level, uwp.hydrographics());
-        let raw_t = climate::temperature_at_wobbled(&hex.sphere_pos, temp_field);
-        hex.temperature = climate::apply_lapse(climate::adjust_temperature(raw_t, uwp), above, uwp);
-        let mut hum = humidity_field.sample(&hex.sphere_pos, uwp);
+        let above = model.above_sea(
+            hex.elevation,
+            &hex.sphere_pos,
+            sea_level,
+            uwp.hydrographics(),
+            temp_field,
+        );
+        let raw_t = model.surface_temperature(&hex.sphere_pos, temp_field, uwp);
+        hex.temperature = climate::apply_lapse(raw_t, above, uwp);
+        let mut hum = model.humidity(&hex.sphere_pos, humidity_field, uwp);
         if let Some(tec) = elev.tectonics() {
             hum = super::colormap::rain_shadow_adjustment(hum, tec.rain_shadow_at(&hex.sphere_pos));
         }
@@ -182,14 +191,48 @@ fn jitter_barycentric(center: &[f64; 3], rng: &mut ChaCha8Rng) -> [f64; 3] {
 /// UWP's hydrographics digit. Hexes with elevation strictly below this
 /// threshold are water.
 ///
+/// On a tidally locked world the same water fraction is split between the
+/// antistellar ice trap and liquid water instead (see
+/// [`climate::TideLockedClimate::settle_water`]), which also settles the
+/// sheet's extent on `model`; the returned level then applies to
+/// [`ClimateModel::water_potential`] rather than raw elevation. The fraction
+/// is drawn identically either way, so a lock never shifts this RNG stream.
+pub fn compute_sea_level(
+    grid: &Grid,
+    uwp: &Uwp,
+    model: &mut ClimateModel,
+    temp_field: &climate::TempField,
+    rng: &mut ChaCha8Rng,
+) -> f64 {
+    let frac_water = draw_water_fraction(uwp, rng);
+    if let ClimateModel::TideLocked(tl) = model {
+        return tl.settle_water(frac_water, grid, temp_field);
+    }
+
+    let mut values: Vec<f64> = grid.hexes.iter().map(|h| h.elevation).collect();
+    values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+    if frac_water <= 0.0 {
+        // Sea level below every hex → no water at all.
+        return values.first().copied().unwrap_or(0.0) - 1.0;
+    }
+    if frac_water >= 1.0 {
+        // Sea level above every hex → all water.
+        return values.last().copied().unwrap_or(0.0) + 1.0;
+    }
+    let idx = ((values.len() as f64) * frac_water).round() as usize;
+    let idx = idx.min(values.len().saturating_sub(1));
+    values[idx]
+}
+
+/// Fraction of the surface that is water (liquid or ice), drawn from the
+/// hydrographics digit's band.
+///
 /// The hydrographics digit names a 10-percentage-point band, and we draw
 /// the actual water fraction uniformly from that band so two same-UWP
 /// worlds vary instead of always landing on the midpoint. Hyd 0 and 10
 /// have a 50% chance of clipping to the rail (0% / 100% water).
-pub fn compute_sea_level(grid: &Grid, uwp: &Uwp, rng: &mut ChaCha8Rng) -> f64 {
-    let mut values: Vec<f64> = grid.hexes.iter().map(|h| h.elevation).collect();
-    values.sort_by(|a, b| a.partial_cmp(b).unwrap());
-
+pub fn draw_water_fraction(uwp: &Uwp, rng: &mut ChaCha8Rng) -> f64 {
     let hydro = uwp.hydrographics().min(10);
     let frac_water: f64 = match hydro {
         0 => {
@@ -212,18 +255,7 @@ pub fn compute_sea_level(grid: &Grid, uwp: &Uwp, rng: &mut ChaCha8Rng) -> f64 {
             rng.random_range(lo..hi)
         }
     };
-
-    if frac_water <= 0.0 {
-        // Sea level below every hex → no water at all.
-        return values.first().copied().unwrap_or(0.0) - 1.0;
-    }
-    if frac_water >= 1.0 {
-        // Sea level above every hex → all water.
-        return values.last().copied().unwrap_or(0.0) + 1.0;
-    }
-    let idx = ((values.len() as f64) * frac_water).round() as usize;
-    let idx = idx.min(values.len().saturating_sub(1));
-    values[idx]
+    frac_water
 }
 
 const BIOME_COUNT: usize = 16; // covers every variant; trailing slots unused
@@ -258,7 +290,8 @@ fn biome_from_index(i: usize) -> Biome {
 }
 
 /// Map (amplified above-sea elevation, temperature, humidity) → Biome.
-/// `above` must be `climate::amplify_elevation(raw_elev - sea_level, hyd)`
+/// `above` must be `ClimateModel::above_sea` (on a rotating world,
+/// `climate::amplify_elevation(raw_elev - sea_level, hyd)`)
 /// so the Mountain / Highland thresholds compare against the same scaled
 /// terrain the per-pixel rasterizer paints. Negative `above` means the
 /// point is below sea level; depth is `-above` in raw elevation units

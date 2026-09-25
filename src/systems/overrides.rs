@@ -23,6 +23,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::decorations::{LatLon, TideLock, WorldDecorations};
 use crate::systems::constraint::{Constraint, PartialUwp};
 use crate::systems::gas_giant::GasGiantSize;
 use crate::systems::system::StarOrbit;
@@ -159,6 +160,18 @@ pub enum BodySpec {
         /// thing sources describe.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         zone: Option<String>,
+        /// Whether this body keeps one face to its star. This is the *only*
+        /// way a world becomes tide-locked — generation never guesses (see
+        /// `systems::astro::auto_tide_locked` for why). `false` says so
+        /// explicitly; leaving it out means the same today.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tide_locked: Option<bool>,
+        /// Where the star stands overhead on a locked body, `[lat, lon]` in
+        /// degrees. Only valid with `tide_locked: true`; leave it out to
+        /// derive the point from the map seed. Parsed straight into a
+        /// `LatLon`, so a latitude past ±90 fails the file, not a render.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        substellar: Option<LatLon>,
     },
     Belt {
         /// Which star this body orbits; defaults to the primary.
@@ -236,13 +249,24 @@ pub enum BodySpec {
         /// thing sources describe.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         zone: Option<String>,
+        /// Whether this moon keeps one face to the star. A moon normally
+        /// locks to its planet instead, so its substellar point sweeps round
+        /// every orbit — but a source that says one is locked is honoured.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tide_locked: Option<bool>,
+        /// Where the star stands overhead on a locked body, `[lat, lon]` in
+        /// degrees. Only valid with `tide_locked: true`; leave it out to
+        /// derive the point from the map seed. Parsed straight into a
+        /// `LatLon`, so a latitude past ±90 fails the file, not a render.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        substellar: Option<LatLon>,
     },
     /// An orbit known to be empty.
     Empty { orbit: i32 },
     /// Where the main world sits, when a source states it.
     ///
-    /// Only the orbit. The main world's UWP and name are upstream data and
-    /// stay unsayable — the guarantee that an override can't contradict the
+    /// Only its placement, moons and tide lock. The main world's UWP and name
+    /// are upstream data and stay unsayable — the guarantee that an override can't contradict the
     /// map everyone else sees is worth more than the convenience of editing
     /// them here. Its *orbit* was never upstream data; TravellerMap does not
     /// carry one.
@@ -262,11 +286,20 @@ pub enum BodySpec {
     /// here as well is counted against it, not added on top: the Traveller
     /// wiki gives Pourne exactly one moon, so `moons: 1` plus a `Baen` row
     /// has to mean one moon called Baen, never one rolled plus Baen.
+    ///
+    /// `tide_locked` and `substellar` mean what they do on a planet. Neither
+    /// is upstream data — TravellerMap has no notion of rotation.
     MainWorld {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         orbit: Option<i32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         moons: Option<i32>,
+        /// See [`BodySpec::Planet`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tide_locked: Option<bool>,
+        /// See [`BodySpec::Planet`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        substellar: Option<LatLon>,
     },
 }
 
@@ -315,6 +348,14 @@ pub enum Target {
     /// pinned its own orbit — the placement was a constraint, but the
     /// facilities and travel zone still get attached afterwards.
     AtOrbit(i32),
+    /// The body with this name, planet or moon, wherever it ended up. Only
+    /// decorations are applied this way today: a tide lock on a moon keyed
+    /// by `parent_orbit` has no orbit of its own to aim at, and a name is
+    /// the one handle that survives into a companion's sub-system unchanged.
+    Named(String),
+    /// The main world, wherever placement put it — including around a gas
+    /// giant or a companion star.
+    MainWorld,
 }
 
 /// A fact applied to the finished system rather than steering generation.
@@ -327,6 +368,20 @@ pub struct PostSpec {
     pub uwp: Option<PartialUwp>,
     pub facilities: Vec<crate::systems::world::Facility>,
     pub zone: Option<crate::trade::ZoneClassification>,
+    /// Stated decorations. `None` is no opinion; `Some(empty)` is an
+    /// explicit "not locked", which clears any lock set earlier.
+    ///
+    /// Carried on a spec of its own (see [`BodySpec::decoration_post`]),
+    /// except on the spec that creates a moon, so [`apply_post`] can run
+    /// every one of them after every other fact.
+    pub decorations: Option<WorldDecorations>,
+}
+
+impl PostSpec {
+    /// Specs that only state decorations, which [`apply_post`] runs last.
+    fn is_decoration(&self) -> bool {
+        self.decorations.is_some() && !matches!(self.target, Target::MoonOf(_))
+    }
 }
 
 impl BodySpec {
@@ -341,7 +396,104 @@ impl BodySpec {
         if let Some(attrs) = self.attributes()? {
             out.push(Lowered::Post(attrs));
         }
+        if let Some(deco) = self.decoration_post()? {
+            out.push(Lowered::Post(deco));
+        }
         Ok(out)
+    }
+
+    /// The decorations this body states, if it states any.
+    ///
+    /// `None` is "no opinion"; `Some(empty)` is an explicit "not locked".
+    /// Nothing locks a world automatically today, so the two mean the same —
+    /// but `tide_locked` stays an `Option<bool>` so an explicit `false` keeps
+    /// meaning "the source says not" if an opt-in rule ever arrives.
+    pub fn decorations(&self) -> Result<Option<WorldDecorations>, String> {
+        let (locked, substellar) = match self {
+            BodySpec::Planet {
+                tide_locked,
+                substellar,
+                ..
+            }
+            | BodySpec::Moon {
+                tide_locked,
+                substellar,
+                ..
+            }
+            | BodySpec::MainWorld {
+                tide_locked,
+                substellar,
+                ..
+            } => (*tide_locked, *substellar),
+            _ => return Ok(None),
+        };
+        match (locked, substellar) {
+            (Some(true), substellar) => {
+                Ok(Some(WorldDecorations::tide_locked(TideLock { substellar })))
+            }
+            // Almost certainly a forgotten `tide_locked: true`. Rendering the
+            // world unlocked would drop the one fact the author wrote down.
+            (_, Some(_)) => Err(
+                "substellar only means something on a locked world; add \"tide_locked\": true"
+                    .into(),
+            ),
+            (Some(false), None) => Ok(Some(WorldDecorations::default())),
+            (None, None) => Ok(None),
+        }
+    }
+
+    /// This body's decorations as a post-generation fact, aimed at wherever
+    /// the body ends up.
+    ///
+    /// Post-generation because a stated lock has to be the *last* word on
+    /// the body: the post pass rebuilds a world from scratch when it applies
+    /// a UWP, and a lock applied any earlier would be discarded with the
+    /// world it was on.
+    ///
+    /// A name is preferred over an orbit or position, because post facts are
+    /// resolved against the primary's orbits first: an unnamed "orbit 1" on
+    /// a companion's body would decorate the primary's orbit 1 instead.
+    pub fn decoration_post(&self) -> Result<Option<PostSpec>, String> {
+        let Some(decorations) = self.decorations()? else {
+            return Ok(None);
+        };
+        let unlocatable = "a tide lock needs a body it can find: give it a name (or, orbiting \
+                           the primary, an orbit or a position)";
+        let target = match self {
+            BodySpec::MainWorld { .. } => Target::MainWorld,
+            // Rides on the spec that creates the moon; see `lower`.
+            BodySpec::Moon {
+                parent: Some(_), ..
+            } => return Ok(None),
+            BodySpec::Planet { name: Some(n), .. } | BodySpec::Moon { name: Some(n), .. } => {
+                Target::Named(n.clone())
+            }
+            BodySpec::Planet {
+                star: StarRef::Primary,
+                orbit,
+                position,
+                ..
+            } => match (orbit, position) {
+                (Some(o), _) => Target::AtOrbit(*o),
+                (None, Some(PositionSpec::Outermost)) => Target::Outermost(PostKind::Planet),
+                (None, Some(PositionSpec::Innermost)) => Target::Innermost(PostKind::Planet),
+                (None, Some(PositionSpec::After(b))) => Target::After {
+                    kind: PostKind::Planet,
+                    body: b.clone(),
+                },
+                (None, None) => return Err(unlocatable.into()),
+            },
+            _ => return Err(unlocatable.into()),
+        };
+        Ok(Some(PostSpec {
+            target,
+            satellite_orbit: None,
+            name: None,
+            uwp: None,
+            facilities: Vec::new(),
+            zone: None,
+            decorations: Some(decorations),
+        }))
     }
 
     /// The facilities and travel zone this body declares, if any, as a
@@ -407,6 +559,7 @@ impl BodySpec {
             uwp: None,
             facilities: self.parse_facilities()?,
             zone: self.parse_zone()?,
+            decorations: None,
         }))
     }
 
@@ -546,6 +699,7 @@ impl BodySpec {
                         uwp: uwp(u)?,
                     facilities: Vec::new(),
                     zone: None,
+                    decorations: None,
                     }),
                     None => Lowered::Constraint(Constraint::Planet {
                         name: name.clone(),
@@ -576,6 +730,7 @@ impl BodySpec {
                         uwp: uwp(u)?,
                     facilities: Vec::new(),
                     zone: None,
+                    decorations: None,
                     }),
                     None => Lowered::Constraint(Constraint::Belt {
                         name: name.clone(),
@@ -614,6 +769,7 @@ impl BodySpec {
                         uwp: None,
                     facilities: Vec::new(),
                     zone: None,
+                    decorations: None,
                     }),
                     None => Lowered::Constraint(Constraint::GasGiant {
                         name: name.clone(),
@@ -649,10 +805,13 @@ impl BodySpec {
                     uwp: uwp(u)?,
                 facilities: Vec::new(),
                 zone: None,
+                    // This spec *creates* the moon, and nothing rebuilds it
+                    // afterwards, so the lock can go on at birth.
+                    decorations: self.decorations()?,
                 }),
             },
             BodySpec::Empty { orbit } => Lowered::Constraint(Constraint::Empty { orbit: *orbit }),
-            BodySpec::MainWorld { orbit, moons } => Lowered::MainWorld {
+            BodySpec::MainWorld { orbit, moons, .. } => Lowered::MainWorld {
                 orbit: *orbit,
                 moons: *moons,
             },
@@ -1008,6 +1167,26 @@ pub fn apply_post(
     system: &mut crate::systems::system::System,
     specs: &[PostSpec],
 ) -> Vec<crate::systems::system::DroppedConstraint> {
+    // Stated decorations go last, so nothing can undo them. A UWP rebuild
+    // replaces the world with a fresh one; a lock applied before a rebuild
+    // of the same body would be silently thrown away with the old world.
+    // Decoration specs carry nothing else, so moving them can't reorder any
+    // other fact.
+    let (decorations, rest): (Vec<PostSpec>, Vec<PostSpec>) =
+        specs.iter().cloned().partition(PostSpec::is_decoration);
+    let mut dropped = apply_post_pass(system, &rest);
+    dropped.extend(apply_post_pass(system, &decorations));
+    dropped
+}
+
+/// One pass of [`apply_post`] over `specs`, in order.
+fn apply_post_pass(
+    system: &mut crate::systems::system::System,
+    specs: &[PostSpec],
+) -> Vec<crate::systems::system::DroppedConstraint> {
+    if specs.is_empty() {
+        return Vec::new();
+    }
     // Try this level, then hand whatever didn't resolve to the companions.
     //
     // A companion is a `System` in its own right with its own orbit slots,
@@ -1149,6 +1328,16 @@ fn apply_post_level(
                         if let Some(so) = spec.satellite_orbit {
                             moon.orbit = so;
                         }
+                        if let Some(d) = &spec.decorations {
+                            moon.decorations = d.clone();
+                            // Moons built here have never had astro data — their
+                            // description is blank — and computing it for all of
+                            // them would change every existing one. A locked moon
+                            // needs it, though: its day length is read from it.
+                            if moon.is_tide_locked() {
+                                moon.compute_astro_data(&star);
+                            }
+                        }
                         match system.orbit_slots.get_mut(o).and_then(|s| s.as_mut()) {
                             Some(OrbitContent::GasGiant(g)) => {
                                 use crate::systems::has_satellites::HasSatellites;
@@ -1176,6 +1365,32 @@ fn apply_post_level(
                     }
                 }
             }
+            // Not orbit-addressable: either may be a moon.
+            Target::Named(_) | Target::MainWorld => {
+                let is_target = |w: &crate::systems::world::World| match &spec.target {
+                    Target::Named(n) => w.name.eq_ignore_ascii_case(n),
+                    _ => w.is_mainworld(),
+                };
+                match find_world_mut(system, is_target) {
+                    Some(w) => {
+                        if let Some(d) = &spec.decorations {
+                            w.decorations = d.clone();
+                        }
+                    }
+                    None => dropped.push((
+                        spec.clone(),
+                        match &spec.target {
+                            Target::Named(n) => DroppedConstraint::NamedBodyNotFound {
+                                name: n.clone(),
+                            },
+                            _ => DroppedConstraint::NoBodyAtRelativePosition {
+                                body: BodyKind::Planet,
+                            },
+                        },
+                    )),
+                }
+                continue;
+            }
         };
 
         let Some(orbit) = target_orbit else {
@@ -1183,7 +1398,7 @@ fn apply_post_level(
                 Target::Outermost(k) | Target::Innermost(k) => body_kind(*k),
                 Target::After { kind, .. } => body_kind(*kind),
                 Target::MoonOf(_) => BodyKind::Moon,
-                Target::AtOrbit(_) => BodyKind::Planet,
+                Target::AtOrbit(_) | Target::Named(_) | Target::MainWorld => BodyKind::Planet,
             };
             dropped.push((
                 spec.clone(),
@@ -1233,6 +1448,9 @@ fn apply_post_level(
                 } else if let Some(n) = &spec.name {
                     w.name = n.clone();
                 }
+                if let Some(d) = &spec.decorations {
+                    w.decorations = d.clone();
+                }
             }
             Some(OrbitContent::GasGiant(g)) => {
                 if let Some(n) = &spec.name {
@@ -1244,6 +1462,72 @@ fn apply_post_level(
     }
 
     dropped
+}
+
+/// The first world at this level — orbit-slot worlds, then any planet's or
+/// gas giant's moons — that `is_target` accepts. Companions are searched by
+/// [`apply_post`]'s own recursion, not here.
+fn find_world_mut(
+    system: &mut crate::systems::system::System,
+    is_target: impl Fn(&crate::systems::world::World) -> bool,
+) -> Option<&mut crate::systems::world::World> {
+    use crate::systems::has_satellites::HasSatellites;
+    use crate::systems::system::OrbitContent;
+    system
+        .orbit_slots
+        .iter_mut()
+        .flatten()
+        .find_map(|slot| match slot {
+            OrbitContent::World(w) => {
+                if is_target(w) {
+                    Some(w)
+                } else {
+                    w.satellites.sats.iter_mut().find(|m| is_target(m))
+                }
+            }
+            OrbitContent::GasGiant(g) => g
+                .get_satellites_mut()
+                .sats
+                .iter_mut()
+                .find(|m| is_target(m)),
+            _ => None,
+        })
+}
+
+/// The decorations an override states for the world called `name` at
+/// `(sector, hex)`, for the map endpoint — which knows a world only by its
+/// coordinates and name, and never generates the system.
+///
+/// `None` when there's no override or it says nothing about that world.
+/// `Some(empty)` is an explicit "not locked". A pure lookup — and since
+/// only overrides lock worlds, it is the whole answer.
+pub fn decorations_for(sector: &str, hex: &str, name: &str) -> Option<WorldDecorations> {
+    lookup(sector, hex)?.decorations_for(name)
+}
+
+impl SystemOverride {
+    /// The decorations this override states for the world called `name`:
+    /// the main world's if `name` is [`SystemOverride::world`], otherwise
+    /// those of the planet or moon with that name. Case-insensitive and
+    /// trimmed, like every other name match here.
+    ///
+    /// A body whose decorations don't validate yields `None` rather than an
+    /// error; the same body fails `merge_into` and the validator loudly, so
+    /// it can't ship.
+    pub fn decorations_for(&self, name: &str) -> Option<WorldDecorations> {
+        let name = name.trim();
+        let is_main = self.world.trim().eq_ignore_ascii_case(name);
+        self.bodies.iter().find_map(|b| {
+            let wanted = match b {
+                BodySpec::MainWorld { .. } => is_main,
+                BodySpec::Planet { name: Some(n), .. } | BodySpec::Moon { name: Some(n), .. } => {
+                    !is_main && n.trim().eq_ignore_ascii_case(name)
+                }
+                _ => false,
+            };
+            wanted.then(|| b.decorations().ok().flatten()).flatten()
+        })
+    }
 }
 
 /// Canonical lookup key for a system.
@@ -1568,6 +1852,8 @@ mod tests {
             note: None,
             system_name: None,
             bodies: vec![BodySpec::Planet {
+                tide_locked: None,
+                substellar: None,
                 star: StarRef::Primary,
                 position: None,
                 facilities: Vec::new(),
@@ -1595,6 +1881,18 @@ mod tests {
     /// The shipped file must parse. It's compiled in, so a broken one is a
     /// broken build — but `table()` only parses on first use, which could be
     /// deep inside a request. This makes it a test failure instead.
+    /// Hilfer is tide-locked by the shipped override file, and by nothing
+    /// else — no world locks automatically. If this entry is lost, Hilfer
+    /// silently reverts to the rotating climate, so pin it.
+    #[test]
+    fn hilfer_is_tide_locked_by_the_shipped_overrides() {
+        let deco = decorations_for("Trojan Reach", "2424", "Hilfer")
+            .expect("the shipped overrides state Hilfer's decorations");
+        assert!(deco.tide_locked.is_some(), "Hilfer should be tide-locked");
+        // The substellar point is left to the map seed.
+        assert_eq!(deco.to_query(), "tl");
+    }
+
     #[test]
     fn the_shipped_override_file_parses() {
         let file: OverrideFile =
@@ -1603,9 +1901,10 @@ mod tests {
         // contain an unparseable star class or UWP.
         for o in &file.overrides {
             for b in &o.bodies {
-                // `lower`, not `to_constraint`: a relatively-positioned body
-                // is a valid override that simply isn't a constraint.
-                b.lower()
+                // `lower_all`, not `to_constraint`: a relatively-positioned
+                // body is a valid override that simply isn't a constraint, and
+                // only `lower_all` checks the attributes and tide lock too.
+                b.lower_all()
                     .unwrap_or_else(|e| panic!("{} {}: {e}", o.sector, o.hex));
             }
         }
@@ -1693,6 +1992,8 @@ mod tests {
     #[test]
     fn after_resolves_to_the_next_body_beyond_the_named_one() {
         let sys = generate(vec![BodySpec::Planet {
+            tide_locked: None,
+            substellar: None,
             star: StarRef::Primary,
             facilities: Vec::new(),
             zone: None,
@@ -1745,6 +2046,8 @@ mod tests {
                 moons: None,
             },
             BodySpec::Moon {
+                tide_locked: None,
+                substellar: None,
                 star: StarRef::Primary,
                 satellite_orbit: None,
                 facilities: Vec::new(),
@@ -1861,6 +2164,8 @@ mod tests {
                 moons: None,
             },
             BodySpec::Moon {
+                tide_locked: None,
+                substellar: None,
                 star: StarRef::Primary,
                 satellite_orbit: Some(27),
                 facilities: Vec::new(),
@@ -1892,6 +2197,8 @@ mod tests {
     #[test]
     fn an_unresolvable_position_is_reported() {
         let sys = generate(vec![BodySpec::Planet {
+            tide_locked: None,
+            substellar: None,
             star: StarRef::Primary,
             facilities: Vec::new(),
             zone: None,
@@ -1964,6 +2271,8 @@ mod tests {
     #[test]
     fn bad_facilities_and_zones_are_rejected() {
         let bad_fac = BodySpec::Planet {
+            tide_locked: None,
+            substellar: None,
             star: StarRef::Primary,
             facilities: vec!["shipyard".into()],
             zone: None,
@@ -1976,6 +2285,8 @@ mod tests {
         assert!(bad_fac.lower_all().unwrap_err().contains("shipyard"));
 
         let bad_zone = BodySpec::Planet {
+            tide_locked: None,
+            substellar: None,
             star: StarRef::Primary,
             facilities: Vec::new(),
             zone: Some("chartreuse".into()),
@@ -1993,6 +2304,8 @@ mod tests {
     #[test]
     fn attributes_need_a_locatable_body() {
         let floating = BodySpec::Planet {
+            tide_locked: None,
+            substellar: None,
             star: StarRef::Primary,
             facilities: vec!["naval".into()],
             zone: None,
@@ -2029,5 +2342,371 @@ mod tests {
             canonical_key("Trojan Reach", "2324"),
             canonical_key("Trojan Reach", "2325")
         );
+    }
+
+    // ---- Tide locks ----
+
+    fn parse_one(bodies: &str) -> SystemOverride {
+        let json = format!(
+            r#"{{ "overrides": [ {{ "sector": "Trojan Reach", "hex": "2221", "world": "Torpol",
+                "bodies": {bodies} }} ] }}"#
+        );
+        let mut f: OverrideFile = serde_json::from_str(&json).expect("parses");
+        f.overrides.remove(0)
+    }
+
+    fn all_worlds(sys: &crate::systems::system::System) -> Vec<&crate::systems::world::World> {
+        use crate::systems::system::OrbitContent;
+        let mut out = Vec::new();
+        for slot in sys.orbit_slots.iter().flatten() {
+            match slot {
+                OrbitContent::World(w) => {
+                    out.push(w);
+                    out.extend(w.satellites.sats.iter());
+                }
+                OrbitContent::GasGiant(g) => out.extend(g.satellites().iter()),
+                _ => {}
+            }
+        }
+        for c in [sys.secondary.as_deref(), sys.tertiary.as_deref()]
+            .into_iter()
+            .flatten()
+        {
+            out.extend(all_worlds(c));
+        }
+        out
+    }
+
+    fn main_world_of(sys: &crate::systems::system::System) -> &crate::systems::world::World {
+        all_worlds(sys)
+            .into_iter()
+            .find(|w| w.is_mainworld())
+            .expect("a main world")
+    }
+
+    /// A stated substellar point means exactly what the same point means in
+    /// a `deco=tl:LAT:LON` URL — one value, one cache key.
+    #[test]
+    fn a_tide_lock_parses_with_or_without_a_substellar_point() {
+        let o = parse_one(
+            r#"[ { "type": "main_world", "tide_locked": true, "substellar": [12.5, -90] },
+                 { "type": "planet", "name": "Inner", "orbit": 0, "tide_locked": true },
+                 { "type": "moon", "name": "Cold", "parent": "Big", "tide_locked": false } ]"#,
+        );
+        assert_eq!(
+            o.bodies[0].decorations().unwrap(),
+            Some(WorldDecorations::parse_query("tl:12.5:270").unwrap())
+        );
+        assert_eq!(
+            o.bodies[1].decorations().unwrap(),
+            Some(WorldDecorations::parse_query("tl").unwrap())
+        );
+        assert_eq!(
+            o.bodies[2].decorations().unwrap(),
+            Some(WorldDecorations::default()),
+            "an explicit false is a statement, not silence"
+        );
+        for b in &o.bodies {
+            b.lower_all().expect("lowers");
+        }
+    }
+
+    #[test]
+    fn tide_lock_typos_and_bad_points_fail_the_parse() {
+        let parse = |bodies: &str| {
+            let json = format!(
+                r#"{{ "overrides": [ {{ "sector": "S", "hex": "0101", "world": "W",
+                    "bodies": {bodies} }} ] }}"#
+            );
+            serde_json::from_str::<OverrideFile>(&json).map(|_| ())
+        };
+        let err = parse(r#"[ { "type": "planet", "orbit": 0, "tide_lock": true } ]"#)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("tide_lock"), "{err}");
+        assert!(parse(r#"[ { "type": "main_world", "tidelocked": true } ]"#).is_err());
+        // Latitude past the pole fails at parse time, not at render time.
+        assert!(
+            parse(r#"[ { "type": "planet", "orbit": 0, "tide_locked": true, "substellar": [95, 0] } ]"#)
+                .is_err()
+        );
+        // Belts and gas giants have no map to lock.
+        assert!(parse(r#"[ { "type": "belt", "orbit": 0, "tide_locked": true } ]"#).is_err());
+        assert!(parse(r#"[ { "type": "gas_giant", "orbit": 0, "tide_locked": true } ]"#).is_err());
+    }
+
+    #[test]
+    fn a_substellar_point_without_a_lock_is_rejected() {
+        let o = parse_one(
+            r#"[ { "type": "planet", "orbit": 0, "substellar": [0, 10] },
+                 { "type": "main_world", "tide_locked": false, "substellar": [0, 10] } ]"#,
+        );
+        for b in &o.bodies {
+            assert!(b.lower_all().unwrap_err().contains("tide_locked"));
+        }
+    }
+
+    #[test]
+    fn a_tide_lock_needs_a_body_it_can_find() {
+        // A moon keyed by parent orbit has no orbit of its own; only a name
+        // finds it after generation.
+        let o = parse_one(
+            r#"[ { "type": "moon", "parent_orbit": 3, "tide_locked": true },
+                 { "type": "planet", "star": "secondary", "orbit": 1, "tide_locked": true } ]"#,
+        );
+        for b in &o.bodies {
+            assert!(b.lower_all().unwrap_err().contains("a body it can find"));
+        }
+    }
+
+    /// Dim: a C867977-8 main world around an M5 V. With no habitable zone to
+    /// go to, it lands at orbit 0 — exactly the case a physics rule would
+    /// lock, and that generation deliberately leaves alone.
+    fn dim(bodies: &str, seed: u64) -> crate::systems::system::System {
+        let stars = parse_stellar("M5 V");
+        let cs = build_constraints("Dim", "C867977-8", &stars, 1, 1, 5).unwrap();
+        let o = parse_one(bodies);
+        let o = SystemOverride {
+            world: "Dim".into(),
+            ..o
+        };
+        let cs = o.merge_into(cs).unwrap();
+        crate::systems::system::System::generate_from_constraints_seeded(seed, cs).unwrap()
+    }
+
+    /// A red dwarf's orbit-0 main world is not locked unless the file says
+    /// so — and when it does, that's the only thing that changes.
+    #[test]
+    fn only_an_override_locks_a_red_dwarfs_orbit_zero_world() {
+        let plain = dim("[]", 5);
+        let mw = main_world_of(&plain);
+        assert_eq!(mw.orbit, 0, "precondition: the orbit-0 case");
+        assert!(!mw.is_tide_locked());
+        assert!(all_worlds(&plain).iter().all(|w| !w.is_tide_locked()));
+
+        let stated = dim(r#"[ { "type": "main_world", "tide_locked": true } ]"#, 5);
+        assert_eq!(stated.dropped_constraints(), Vec::new());
+        let mw = main_world_of(&stated);
+        assert!(mw.is_tide_locked());
+        assert_eq!(mw.day_length_years(), Some(mw.orbital_period_years()));
+        assert_eq!(format!("{plain}"), format!("{stated}"), "same system otherwise");
+
+        let denied = dim(r#"[ { "type": "main_world", "tide_locked": false } ]"#, 5);
+        assert_eq!(denied.dropped_constraints(), Vec::new());
+        assert!(!main_world_of(&denied).is_tide_locked());
+    }
+
+    #[test]
+    fn an_explicit_lock_applies_to_any_star() {
+        assert!(!main_world_of(&generate(Vec::new())).is_tide_locked());
+        let sys = generate(vec![BodySpec::MainWorld {
+            tide_locked: Some(true),
+            substellar: Some(LatLon::from_degrees(-10.0, 45.0).unwrap()),
+            orbit: None,
+            moons: None,
+        }]);
+        assert_eq!(sys.dropped_constraints(), Vec::new());
+        let mw = main_world_of(&sys);
+        assert_eq!(
+            mw.decorations().tide_locked,
+            Some(TideLock {
+                substellar: Some(LatLon::from_degrees(-10.0, 45.0).unwrap())
+            })
+        );
+        assert_eq!(mw.day_length_years(), Some(mw.orbital_period_years()));
+
+        // A planet, found by its name.
+        let sys = generate(vec![BodySpec::Planet {
+            tide_locked: Some(true),
+            substellar: None,
+            star: StarRef::Primary,
+            name: Some("Hotside".into()),
+            orbit: Some(2),
+            position: None,
+            uwp: Some("X510000-0".into()),
+            moons: None,
+            facilities: Vec::new(),
+            zone: None,
+        }]);
+        assert_eq!(sys.dropped_constraints(), Vec::new());
+        let hot = all_worlds(&sys)
+            .into_iter()
+            .find(|w| w.name == "Hotside")
+            .expect("placed");
+        assert!(hot.is_tide_locked());
+    }
+
+    /// A UWP rebuild replaces the world outright. A stated lock has to
+    /// survive that, whatever order the specs arrive in.
+    #[test]
+    fn a_stated_lock_survives_a_later_rebuild_of_the_same_world() {
+        let mut sys = dim("[]", 5);
+        let orbit = main_world_of(&sys).orbit;
+        let lock = PostSpec {
+            target: Target::AtOrbit(orbit as i32),
+            satellite_orbit: None,
+            name: None,
+            uwp: None,
+            facilities: Vec::new(),
+            zone: None,
+            decorations: Some(WorldDecorations::tide_locked(TideLock::default())),
+        };
+        let rebuild = PostSpec {
+            decorations: None,
+            uwp: Some(PartialUwp::parse("X867000-0").unwrap()),
+            ..lock.clone()
+        };
+        // Lock listed first, rebuild second: in list order the rebuild would
+        // throw the lock away with the world it replaced.
+        assert!(apply_post(&mut sys, &[lock, rebuild]).is_empty());
+        let w = match &sys.orbit_slots[orbit] {
+            Some(crate::systems::system::OrbitContent::World(w)) => w,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(w.get_population(), 0, "the rebuild happened");
+        assert!(w.is_tide_locked(), "and the stated lock still had the last word");
+    }
+
+    #[test]
+    fn a_main_world_orbiting_a_gas_giant_takes_its_lock() {
+        // Pin a giant into the habitable orbit and the main world becomes
+        // its moon — reachable only through the giant's satellites.
+        let stars = parse_stellar("G2 V");
+        let star = crate::systems::system::Star {
+            star_type: stars[0].spectral,
+            subtype: stars[0].subtype.unwrap_or(0),
+            size: stars[0].size,
+        };
+        let habitable = crate::systems::system_tables::get_zone(&star).habitable;
+        let mut cs = build_constraints("Moonbase", "B867977-8", &stars, 0, 0, 3).unwrap();
+        cs.bodies.push(Constraint::GasGiant {
+            name: Some("Big".into()),
+            orbit: Some(habitable),
+            size: None,
+            num_satellites: None,
+        });
+        let o = SystemOverride {
+            world: "Moonbase".into(),
+            ..parse_one(r#"[ { "type": "main_world", "tide_locked": true } ]"#)
+        };
+        let sys = crate::systems::system::System::generate_from_constraints_seeded(
+            9,
+            o.merge_into(cs).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(sys.dropped_constraints(), Vec::new());
+        let on_giant = sys.orbit_slots.iter().flatten().any(|c| match c {
+            crate::systems::system::OrbitContent::GasGiant(g) => {
+                g.satellites().iter().any(|m| m.is_mainworld() && m.is_tide_locked())
+            }
+            _ => false,
+        });
+        assert!(on_giant, "the main world should be a locked moon of Big");
+    }
+
+    #[test]
+    fn a_named_moon_takes_its_lock_either_way_it_is_attached() {
+        // By parent name: created in the post pass, locked at birth.
+        let sys = generate(vec![
+            BodySpec::GasGiant {
+                star: StarRef::Primary,
+                name: Some("Bulhai".into()),
+                orbit: None,
+                position: Some(PositionSpec::Outermost),
+                size: None,
+                moons: None,
+            },
+            BodySpec::Moon {
+                tide_locked: Some(true),
+                substellar: None,
+                star: StarRef::Primary,
+                satellite_orbit: None,
+                facilities: Vec::new(),
+                zone: None,
+                name: Some("Bulhai Freeport".into()),
+                parent_orbit: None,
+                parent: Some("Bulhai".into()),
+                uwp: Some("FX00400-8".into()),
+            },
+        ]);
+        assert_eq!(sys.dropped_constraints(), Vec::new());
+        let moon = all_worlds(&sys)
+            .into_iter()
+            .find(|w| w.name == "Bulhai Freeport")
+            .expect("attached");
+        assert!(moon.is_tide_locked());
+        assert!(moon.day_length_years().is_some_and(|d| d > 0.0), "astro data was computed");
+
+        // By parent orbit: placed by the generator, found by name afterwards.
+        let giant_orbit = sys
+            .orbit_slots
+            .iter()
+            .position(|c| matches!(c, Some(crate::systems::system::OrbitContent::GasGiant(_))))
+            .unwrap() as i32;
+        let sys = generate(vec![BodySpec::Moon {
+            tide_locked: Some(true),
+            substellar: None,
+            star: StarRef::Primary,
+            satellite_orbit: None,
+            facilities: Vec::new(),
+            zone: None,
+            name: Some("Sulatra".into()),
+            parent_orbit: Some(giant_orbit),
+            parent: None,
+            uwp: None,
+        }]);
+        assert_eq!(sys.dropped_constraints(), Vec::new());
+        assert!(
+            all_worlds(&sys)
+                .into_iter()
+                .any(|w| w.name == "Sulatra" && w.is_tide_locked())
+        );
+    }
+
+    #[test]
+    fn a_lock_on_a_missing_name_is_reported() {
+        let mut sys = generate(Vec::new());
+        let lock = PostSpec {
+            target: Target::Named("Nowhere".into()),
+            satellite_orbit: None,
+            name: None,
+            uwp: None,
+            facilities: Vec::new(),
+            zone: None,
+            decorations: Some(WorldDecorations::tide_locked(TideLock::default())),
+        };
+        assert_eq!(
+            apply_post(&mut sys, &[lock]),
+            vec![crate::systems::system::DroppedConstraint::NamedBodyNotFound {
+                name: "Nowhere".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn decorations_for_finds_the_main_world_and_named_bodies() {
+        let o = parse_one(
+            r#"[ { "type": "main_world", "tide_locked": true, "substellar": [0, 90] },
+                 { "type": "planet", "name": "Inner", "orbit": 0, "tide_locked": true },
+                 { "type": "moon", "name": "Cold", "parent": "Big", "tide_locked": false },
+                 { "type": "planet", "name": "Plain", "orbit": 4 } ]"#,
+        );
+        assert_eq!(
+            o.decorations_for("  torpol "),
+            Some(WorldDecorations::parse_query("tl:0:90").unwrap()),
+            "the main world, matched like every other name here"
+        );
+        assert_eq!(
+            o.decorations_for("INNER"),
+            Some(WorldDecorations::parse_query("tl").unwrap())
+        );
+        assert_eq!(o.decorations_for("Cold"), Some(WorldDecorations::default()));
+        assert_eq!(o.decorations_for("Plain"), None, "no opinion stated");
+        assert_eq!(o.decorations_for("Elsewhere"), None);
+
+        // No main-world row at all: no opinion about the main world either.
+        assert_eq!(parse_one("[]").decorations_for("Torpol"), None);
+        // And a system with no override has nothing to say.
+        assert_eq!(decorations_for("Nowhere Sector", "0000", "Anything"), None);
     }
 }

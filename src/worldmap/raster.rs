@@ -14,7 +14,7 @@
 //! Output is a flat RGBA8 buffer in row-major order (width × height pixels).
 
 use super::WorldMap;
-use super::climate;
+use super::climate::{self, ClimateModel};
 use super::colormap;
 use super::grid::{Face, SHEET_HEIGHT, SHEET_WIDTH, xy_to_sphere};
 use super::noise::ElevationField;
@@ -41,12 +41,24 @@ const CONT_OFFSETS: [(f64, f64); 4] = [(0.7, 0.7), (-0.7, 0.7), (0.7, -0.7), (-0
 /// Fraction of a small ring of 2D offsets that are also land.
 /// 0 = surrounded by ocean, 1 = deep interior. Land-only; gate at caller.
 pub fn continentality(elev_field: &ElevationField, sea_level: f64, sx: f64, sy: f64) -> f64 {
+    continentality_with(&ClimateModel::Rotating, elev_field, sea_level, sx, sy)
+}
+
+/// [`continentality`] under `model`'s idea of where the water is — on a
+/// locked world the sea sits in a ring, not below one global level.
+pub fn continentality_with(
+    model: &ClimateModel,
+    elev_field: &ElevationField,
+    sea_level: f64,
+    sx: f64,
+    sy: f64,
+) -> f64 {
     let mut land = 0u32;
     for (dx, dy) in CONT_OFFSETS {
         let nx = sx + dx * CONT_OFFSET_PX;
         let ny = sy + dy * CONT_OFFSET_PX;
         let sphere = xy_to_sphere(nx, ny);
-        if elev_field.sample(&sphere) > sea_level {
+        if model.water_potential(elev_field.sample(&sphere), &sphere) > sea_level {
             land += 1;
         }
     }
@@ -164,7 +176,13 @@ impl RasterJob {
                 // coastal plains flat while exaggerating mountain ranges
                 // so they push past lapse/colormap thresholds into varied
                 // biomes.
-                let above = climate::amplify_elevation(e - map.sea_level, map.uwp.hydrographics());
+                let above = map.climate.above_sea(
+                    e,
+                    &sphere,
+                    map.sea_level,
+                    map.uwp.hydrographics(),
+                    &map.temp_field,
+                );
                 let i = (py * self.width + px) as usize;
                 self.elev[i] = above as f32;
             }
@@ -190,14 +208,12 @@ impl RasterJob {
                 let sphere = xy_to_sphere(sx, sy);
                 let above = above as f64;
 
-                let raw_t = climate::temperature_at_wobbled(&sphere, &map.temp_field);
-                let t = climate::apply_lapse(
-                    climate::adjust_temperature(raw_t, &map.uwp),
-                    above,
-                    &map.uwp,
-                );
+                let raw_t = map
+                    .climate
+                    .surface_temperature(&sphere, &map.temp_field, &map.uwp);
+                let t = climate::apply_lapse(raw_t, above, &map.uwp);
 
-                let mut h = map.humidity_field.sample(&sphere, &map.uwp);
+                let mut h = map.climate.humidity(&sphere, &map.humidity_field, &map.uwp);
                 if let Some(tec) = tectonics {
                     h = colormap::rain_shadow_adjustment(h, tec.rain_shadow_at(&sphere));
                 }

@@ -1,6 +1,7 @@
 //! Leptos component: World Map generator.
 //!
-//! Takes a UWP + seed, calls into `worldgen::worldmap::generate`, and shows
+//! Takes a UWP + seed (and any decorations from the `deco` URL param, e.g. a
+//! tidal lock), calls into `worldgen::worldmap::generate_decorated`, and shows
 //! the result in one of two projections, chosen by the Flat/Globe switch:
 //!
 //! - **Flat** — the equirectangular SVG (which already includes the legend
@@ -31,7 +32,7 @@ use web_sys::{
     ImageData, Url, UrlSearchParams,
 };
 
-use crate::worldmap::{self, GlobeTexture};
+use crate::worldmap::{self, GlobeTexture, WorldDecorations};
 
 const DEFAULT_UWP: &str = "A788899-A";
 const DEFAULT_SEED: u64 = 0xC0FFEE;
@@ -45,38 +46,90 @@ const GLOBE_SPIN_PER_FRAME: f64 = 0.01;
 /// threading a typed `NodeRef` through the async build.
 const GLOBE_CANVAS_ID: &str = "worldmap-globe-canvas";
 
-/// Pull `?uwp=…&seed=…&name=…` off the current URL.
+/// Pull `?uwp=…&seed=…&name=…&deco=…` off the current URL.
 ///
 /// Returns the parsed values and a flag indicating whether *any* of the
-/// three params were present — used by the cold-start path to decide
+/// params were present — used by the cold-start path to decide
 /// whether to auto-render. With no params we keep the original behavior
 /// (blank canvas until the user clicks Regenerate); with any param
 /// supplied (the typical "open from system view" case) we render
 /// immediately so the new tab isn't useless.
-fn read_query_params() -> (Option<String>, Option<u64>, Option<String>, bool) {
+///
+/// `deco` comes back as a `Result`: a value that doesn't parse is kept as
+/// its error message so the page can refuse to render, the same way
+/// `/api/world` answers 400 — drawing the undecorated world under a
+/// mistyped `deco` would show a map that isn't the one asked for.
+fn read_query_params() -> QueryParams {
     let Some(window) = web_sys::window() else {
-        return (None, None, None, false);
+        return QueryParams::default();
     };
     let Ok(search) = window.location().search() else {
-        return (None, None, None, false);
+        return QueryParams::default();
     };
     let Ok(params) = UrlSearchParams::new_with_str(&search) else {
-        return (None, None, None, false);
+        return QueryParams::default();
     };
     let uwp = params.get("uwp");
     let seed = params.get("seed").and_then(|s| s.parse::<u64>().ok());
     let name = params.get("name");
-    let any = uwp.is_some() || seed.is_some() || name.is_some();
-    (uwp, seed, name, any)
+    let deco_raw = params.get(WorldDecorations::QUERY_PARAM);
+    let any = uwp.is_some() || seed.is_some() || name.is_some() || deco_raw.is_some();
+    let deco = deco_raw.map_or(Ok(WorldDecorations::default()), |d| {
+        WorldDecorations::parse_query(&d).map_err(|e| format!("Bad deco parameter: {e}"))
+    });
+    QueryParams {
+        uwp,
+        seed,
+        name,
+        deco,
+        any,
+    }
+}
+
+/// What [`read_query_params`] found on the URL.
+struct QueryParams {
+    uwp: Option<String>,
+    seed: Option<u64>,
+    name: Option<String>,
+    deco: Result<WorldDecorations, String>,
+    any: bool,
+}
+
+impl Default for QueryParams {
+    fn default() -> Self {
+        Self {
+            uwp: None,
+            seed: None,
+            name: None,
+            deco: Ok(WorldDecorations::default()),
+            any: false,
+        }
+    }
+}
+
+/// The decorations to render with, or `None` after reporting why there are
+/// none to use. Every render path calls this first so a bad `deco` blocks
+/// all of them rather than just the one that happened to check.
+fn decorations_or_report(
+    deco: RwSignal<Result<WorldDecorations, String>>,
+    error: RwSignal<Option<String>>,
+) -> Option<WorldDecorations> {
+    deco.get_untracked()
+        .map_err(|e| error.set(Some(e)))
+        .ok()
 }
 
 #[component]
 pub fn WorldMap() -> impl IntoView {
-    let (qp_uwp, qp_seed, qp_name, has_query_params) = read_query_params();
+    let qp = read_query_params();
+    let has_query_params = qp.any;
 
-    let uwp = RwSignal::new(qp_uwp.unwrap_or_else(|| DEFAULT_UWP.to_string()));
-    let seed = RwSignal::new(qp_seed.unwrap_or(DEFAULT_SEED));
-    let world_name = RwSignal::new(qp_name);
+    let uwp = RwSignal::new(qp.uwp.unwrap_or_else(|| DEFAULT_UWP.to_string()));
+    let seed = RwSignal::new(qp.seed.unwrap_or(DEFAULT_SEED));
+    let world_name = RwSignal::new(qp.name);
+    // Decorations (e.g. a tidal lock) from the `deco` param. Not editable on
+    // the page; they arrive with the "Map" link from the system view.
+    let deco = RwSignal::new(qp.deco);
     let error = RwSignal::new(None::<String>);
     // Default the legend visible — the key is core to reading the map and
     // many users won't think to look for it.
@@ -126,8 +179,18 @@ pub fn WorldMap() -> impl IntoView {
                     pending_render.set(false);
                     return;
                 }
+                let Some(deco_v) = decorations_or_report(deco, error) else {
+                    svg_html.set(String::new());
+                    pending_render.set(false);
+                    return;
+                };
                 yield_to_browser().await;
-                let map = match worldmap::generate(&uwp_str, seed_v, name_v.as_deref()) {
+                let map = match worldmap::generate_decorated(
+                    &uwp_str,
+                    seed_v,
+                    name_v.as_deref(),
+                    &deco_v,
+                ) {
                     Ok(m) => m,
                     Err(e) => {
                         error.set(Some(e.to_string()));
@@ -189,9 +252,17 @@ pub fn WorldMap() -> impl IntoView {
                     error.set(Some("UWP must be at least 8 characters".to_string()));
                     return;
                 }
+                let Some(deco_v) = decorations_or_report(deco, error) else {
+                    return;
+                };
                 pending_render.set(true);
                 yield_to_browser().await;
-                let map = match worldmap::generate(&uwp_str, seed_v, name_v.as_deref()) {
+                let map = match worldmap::generate_decorated(
+                    &uwp_str,
+                    seed_v,
+                    name_v.as_deref(),
+                    &deco_v,
+                ) {
                     Ok(m) => m,
                     Err(e) => {
                         error.set(Some(e.to_string()));
@@ -253,9 +324,17 @@ pub fn WorldMap() -> impl IntoView {
         let name_now = world_name.get();
         let is_globe = globe_mode.get();
         spawn_local(async move {
+            let Some(deco_now) = decorations_or_report(deco, error) else {
+                return;
+            };
             pending_render.set(true);
             yield_to_browser().await;
-            let result = match worldmap::generate(&uwp_now, seed_now, name_now.as_deref()) {
+            let result = match worldmap::generate_decorated(
+                &uwp_now,
+                seed_now,
+                name_now.as_deref(),
+                &deco_now,
+            ) {
                 Ok(map) => {
                     yield_to_browser().await;
                     if is_globe {

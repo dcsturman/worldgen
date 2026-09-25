@@ -9,6 +9,7 @@ use rand_chacha::ChaCha8Rng;
 
 use super::Uwp;
 use super::biome::Biome;
+use super::climate::ClimateModel;
 use super::grid::Grid;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -33,8 +34,8 @@ pub enum CityTier {
     Small,
 }
 
-pub fn place_features(grid: &mut Grid, uwp: &Uwp, rng: &mut ChaCha8Rng) {
-    place_cities(grid, uwp, rng);
+pub fn place_features(grid: &mut Grid, uwp: &Uwp, climate: &ClimateModel, rng: &mut ChaCha8Rng) {
+    place_cities(grid, uwp, climate, rng);
 }
 
 #[allow(dead_code)]
@@ -145,7 +146,7 @@ fn classify(size: u64) -> CityTier {
     }
 }
 
-fn place_cities(grid: &mut Grid, uwp: &Uwp, rng: &mut ChaCha8Rng) {
+fn place_cities(grid: &mut Grid, uwp: &Uwp, climate: &ClimateModel, rng: &mut ChaCha8Rng) {
     let pop = uwp.population();
     let tl = uwp.tech_level();
     let sizes = city_sizes_for_pop(pop, tl, rng);
@@ -153,7 +154,10 @@ fn place_cities(grid: &mut Grid, uwp: &Uwp, rng: &mut ChaCha8Rng) {
         return;
     }
 
-    let (eligible, base_weights) = collect_eligible_hexes(grid);
+    let (eligible, base_weights) = match climate.substellar() {
+        None => collect_eligible_hexes(grid),
+        Some(_) => collect_ring_hexes(grid, climate),
+    };
     if eligible.is_empty() {
         return;
     }
@@ -268,6 +272,76 @@ fn collect_eligible_hexes(grid: &Grid) -> (Vec<usize>, Vec<u32>) {
             Biome::DeepOcean => Some((i, 1)),
             _ => None,
         })
+        .unzip()
+}
+
+/// Settlement band on a tidally locked world, in degrees from the substellar
+/// point. SPEC: settle the terminator ring (~75–105°), strongly biased toward
+/// it, and never inside 60° or beyond 120°.
+const RING_HARD_MIN_DEG: f64 = 60.0;
+const RING_HARD_MAX_DEG: f64 = 120.0;
+const RING_CORE_MIN_DEG: f64 = 75.0;
+const RING_CORE_MAX_DEG: f64 = 105.0;
+/// Weight multiplier for a hex in the ring's core versus its 60–75° / 105–120°
+/// margins. The two bands cover about the same area, so this is roughly the
+/// odds of core over margin for any one settlement. It is set high because
+/// the margins fill anyway once the core runs out — a wet world's
+/// liquid-water ring floods the core first, and a high-population world
+/// takes every core hex it can and still has cities left — so the weight
+/// only decides the settlements that genuinely have a choice. Measured over
+/// the tests' worlds: dry ones settle ~95% of cities in the core, wet
+/// high-population ones ~75% (12:1 gave ~91% and ~70%).
+const RING_CORE_WEIGHT: u32 = 40;
+
+/// How strongly a locked world's settlers want the hex at `theta_deg`: zero
+/// outside the hard band, so no fallback below can ever leave it.
+fn ring_weight(theta_deg: f64) -> u32 {
+    if !(RING_HARD_MIN_DEG..=RING_HARD_MAX_DEG).contains(&theta_deg) {
+        0
+    } else if (RING_CORE_MIN_DEG..=RING_CORE_MAX_DEG).contains(&theta_deg) {
+        RING_CORE_WEIGHT
+    } else {
+        1
+    }
+}
+
+/// [`collect_eligible_hexes`] for a tidally locked world: the same biome
+/// preferences, restricted to the terminator ring and weighted toward its
+/// core. The fallbacks mirror the rotating world's — floating cities when
+/// the ring's land is all unsuitable — then, as a last resort, any ring hex
+/// at all (ice, mountain), because a populated world must place its
+/// starport somewhere, and SPEC puts it in the ring. Every tier multiplies
+/// by [`ring_weight`], so nothing outside 60–120° is ever eligible.
+fn collect_ring_hexes(grid: &Grid, climate: &ClimateModel) -> (Vec<usize>, Vec<u32>) {
+    let ring: Vec<(usize, u32)> = grid
+        .hexes
+        .iter()
+        .enumerate()
+        .filter_map(|(i, h)| {
+            let w = climate
+                .theta(&h.sphere_pos)
+                .map_or(0, |t| ring_weight(t.to_degrees()));
+            (w > 0).then_some((i, w))
+        })
+        .collect();
+    let tier = |weight: fn(Biome) -> u32| -> Vec<(usize, u32)> {
+        ring.iter()
+            .filter_map(|&(i, rw)| {
+                let w = weight(grid.hexes[i].biome) * rw;
+                (w > 0).then_some((i, w))
+            })
+            .collect()
+    };
+    let floating = |b: Biome| match b {
+        Biome::ShallowOcean => 4,
+        Biome::DeepOcean => 1,
+        _ => 0,
+    };
+    [tier(city_weight), tier(floating), tier(|_| 1)]
+        .into_iter()
+        .find(|t| !t.is_empty())
+        .unwrap_or_default()
+        .into_iter()
         .unzip()
 }
 

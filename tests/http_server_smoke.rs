@@ -485,6 +485,41 @@ async fn get_world_with_missing_required_param_returns_400() {
 }
 
 #[tokio::test]
+async fn get_world_with_unknown_deco_returns_400() {
+    // A mistyped decoration must not quietly render (and cache) the
+    // undecorated world — and it's rejected before any render starts.
+    let addr = spawn_http_server().await;
+    for deco in ["bogus", "tl:95:0", "tl,tl"] {
+        let req = format!(
+            "GET /api/world?{NORICUM_WORLD_QUERY}&deco={deco} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
+        );
+        let buf = send_request(addr, &req).await;
+        let (head, body) = split_response(&buf);
+        assert!(
+            head.starts_with("HTTP/1.1 400 Bad Request\r\n"),
+            "deco={deco}, head:\n{head}"
+        );
+        assert!(String::from_utf8_lossy(&body).contains("deco"));
+    }
+}
+
+#[tokio::test]
+async fn get_world_with_deco_none_matches_no_deco_byte_for_byte() {
+    // Noricum has no override, so an absent `deco` and an explicit `none`
+    // are the same undecorated world.
+    let addr = spawn_http_server().await;
+    let req = |extra: &str| {
+        format!(
+            "GET /api/world?{NORICUM_WORLD_QUERY}{extra} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
+        )
+    };
+    let a = split_response(&send_request(addr, &req("")).await).1;
+    let b = split_response(&send_request(addr, &req("&deco=none")).await).1;
+    assert_eq!(&a[..8], b"\x89PNG\r\n\x1a\n");
+    assert_eq!(a, b, "deco=none must render the undecorated world");
+}
+
+#[tokio::test]
 async fn get_world_globe_static_returns_square_png() {
     // projection=globe&format=png → a single orthographic frame, served as a
     // square PNG (GLOBE_PNG_SIZE²). Flat consumers are unaffected; this is an

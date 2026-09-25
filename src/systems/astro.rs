@@ -31,7 +31,7 @@
 //! ```
 use serde::{Deserialize, Serialize};
 
-use crate::systems::system::Star;
+use crate::systems::system::{Star, StarSize};
 use crate::systems::system_tables::{
     get_cloudiness, get_greenhouse, get_habitable, get_luminosity, get_orbital_distance,
     get_solar_mass, get_world_temp,
@@ -52,6 +52,59 @@ const CLOUD_ALBEDO: f32 = 0.5;
 
 /// Earth's average temperature in Kelvin, used as reference
 const EARTH_TEMP: f32 = 288.0;
+
+/// For stating a tide-locked world's day in days.
+const DAYS_PER_YEAR: f32 = 365.25;
+
+/// Lock radius, in AU, around a one-solar-mass star; see [`tidal_lock_radius_au`].
+///
+/// 0.38 rather than a round 0.4 on purpose. The mass table rounds G2 V to
+/// G0 V (1.04 M☉), which gives 0.385 AU — just inside orbit 1 (0.3997 AU).
+/// At 0.4 a Sun-like star would lock orbit 1, and Mercury, at 0.39 AU, isn't
+/// locked (it's in a 3:2 spin-orbit resonance). Orbit 0 (0.1999 AU) locks
+/// around every main-sequence star in the table.
+pub const TIDAL_LOCK_COEFFICIENT_AU: f32 = 0.38;
+
+/// How far out a main-sequence star tide-locks its planets:
+/// `0.38 · (M / M☉)^(1/3)` AU.
+///
+/// The time to tidally lock scales roughly as a⁶/M². Holding that time fixed
+/// (at "much shorter than the system's age") and solving for the distance
+/// gives a ∝ M^(1/3): a heavier star locks further out, but only weakly. With
+/// the table's masses that's orbit 0 for M, K and G dwarfs, and orbits 0–1
+/// from F5 V (1.3 M☉, 0.41 AU) upward. M5–M9 V all read 0.331 M☉, because the
+/// table rounds subtypes to 0 or 5.
+pub fn tidal_lock_radius_au(star: &Star) -> f32 {
+    TIDAL_LOCK_COEFFICIENT_AU * get_solar_mass(star).cbrt()
+}
+
+/// Whether physics alone would tide-lock a body orbiting `star` directly at
+/// `orbit_distance_au`.
+///
+/// **Not applied automatically, anywhere.** A world is tide-locked only when
+/// `data/overrides.json` says so. TravellerMap's UWPs were generated with no
+/// notion of tidal locking, and a red-dwarf main world only lands at orbit 0
+/// because Traveller's orbit grid is too coarse to place it anywhere closer
+/// — so "M-dwarf main world at orbit 0" is an artifact of the rules, not
+/// evidence of a lock. Measured against Trojan Reach, this rule locked 64 of
+/// 327 main worlds, Drinax among them; even restricted to M5–M9 V it locked
+/// 19, six of them with hydrographics 5–9 (Forandin, Gor, Aohfeau,
+/// Aiuiktiyr, Szirp, Janus) — worlds the published data describes as wet and
+/// temperate. Locking them would decide facts about the setting that belong
+/// to whoever runs it. The physics stays here, tested, for an opt-in later.
+///
+/// Size V only: giants and white dwarfs never auto-lock. Their table masses
+/// say nothing useful about a planet's history — a giant has swollen through
+/// its inner orbits and a white dwarf's planets survived a giant phase — so
+/// the scaling argument doesn't apply. Callers must not apply this to moons
+/// — a moon locks to its planet, not its star, so its substellar point sweeps
+/// round once per month and the fixed-hot-spot climate model is wrong for it.
+///
+/// Pure table lookups, no dice, so a future opt-in can't perturb the
+/// generator's random stream.
+pub fn auto_tide_locked(star: &Star, orbit_distance_au: f32) -> bool {
+    star.size == StarSize::V && orbit_distance_au <= tidal_lock_radius_au(star)
+}
 
 /// Comprehensive astronomical data for a world
 ///
@@ -140,6 +193,17 @@ impl AstroData {
             (world.hydro as f32 / 5.0 * (869.0 / 80.0 - 3.0 / 80.0 * astro.temp)).clamp(0.0, 1.0);
 
         astro
+    }
+
+    /// Orbital period in Earth years, as computed by
+    /// [`compute_orbital_period`](Self::compute_orbital_period).
+    pub fn orbital_period_years(&self) -> f32 {
+        self.orbital_period
+    }
+
+    /// Distance from the star in AU.
+    pub fn orbit_distance_au(&self) -> f32 {
+        self.orbit_distance
     }
 
     /// Calculates orbital period and distance using Kepler's laws
@@ -247,8 +311,10 @@ impl AstroData {
     /// Generates a human-readable description of the world's astronomical data
     ///
     /// Returns a formatted string containing temperature (in Celsius relative to Earth),
-    /// ice cap percentage, surface gravity, and orbital period. Returns empty string
-    /// for worlds with very thin atmospheres (≤1) as they lack meaningful climate data.
+    /// ice cap percentage, surface gravity, and orbital period, plus the day
+    /// length for a tide-locked world. Worlds with very thin atmospheres (≤1)
+    /// lack meaningful climate data, so they get only the tide lock, if any,
+    /// and otherwise an empty string.
     ///
     /// # Arguments
     ///
@@ -264,16 +330,29 @@ impl AstroData {
     /// "+12.50 °C, 15% ice, 0.8G, 2.3 yrs"
     /// ```
     pub fn get_astro_description(&self, world: &World) -> String {
+        // A tidal lock is a fact about the world's rotation, not its weather,
+        // so it's worth saying even for a world thin enough that the climate
+        // figures are suppressed. Given in days: at orbit 0 of a red dwarf
+        // the period is a few weeks, which "0.1 yrs" would hide.
+        let lock = world.day_length_years().map(|day| {
+            format!("tide-locked (day = year = {:0.1} days)", day * DAYS_PER_YEAR)
+        });
         if world.atmosphere <= 1 {
-            return "".to_string();
+            return lock.unwrap_or_default();
         }
 
-        format!(
+        let climate = format!(
             "{:+0.2} °C, {:2.0}% ice, {:0.1}G, {:0.1} yrs",
             self.temp - EARTH_TEMP + 15.0, // Temperature relative to Earth
             (self.ice_cap_percent * 100.0).round(), // Ice coverage percentage
             self.gravity,
             self.orbital_period
-        )
+        );
+        // Appended only when locked, so every unlocked world's description
+        // is exactly what it was.
+        match lock {
+            Some(lock) => format!("{climate}, {lock}"),
+            None => climate,
+        }
     }
 }
