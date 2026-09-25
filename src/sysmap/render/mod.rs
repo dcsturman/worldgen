@@ -958,9 +958,23 @@ struct TravelOrigin {
 /// `None` when it isn't there — a main world placed around a companion
 /// star has no single distance from *this* primary — in which case the
 /// legend falls back to times from the primary rather than inventing one.
+/// Distance of whatever is in `slot` from the primary: the orbit slot's
+/// distance, unless the world there has a stated one. A red dwarf's
+/// habitable-zone world can sit well inside orbit 0 (Hilfer is at 5 Mkm,
+/// orbit 0 is 29.9), and the legend's distances and travel times should say
+/// where it really is rather than where the orbit table can reach.
+fn slot_radius_mkm(orbit: usize, content: &OrbitContent) -> f32 {
+    match content {
+        OrbitContent::World(w) => w.orbit_distance_mkm,
+        _ => None,
+    }
+    .unwrap_or_else(|| slot_distance_mkm(orbit))
+}
+
 fn travel_origin(system: &System) -> Option<TravelOrigin> {
     system.orbit_slots.iter().enumerate().find_map(|(orbit, slot)| {
-        let name = match slot.as_ref()? {
+        let content = slot.as_ref()?;
+        let name = match content {
             OrbitContent::World(w) if w.is_mainworld() => Some(w.name.clone()),
             OrbitContent::World(w) => w
                 .satellites
@@ -975,9 +989,27 @@ fn travel_origin(system: &System) -> Option<TravelOrigin> {
                 .map(|m| m.name.clone()),
             _ => None,
         }?;
+        // A main world that's a moon is as far from the star as its host.
+        let radius_mkm = match content {
+            OrbitContent::World(w) if w.is_mainworld() => slot_radius_mkm(orbit, content),
+            OrbitContent::World(w) => w
+                .satellites
+                .sats
+                .iter()
+                .find(|m| m.is_mainworld())
+                .and_then(|m| m.orbit_distance_mkm)
+                .unwrap_or_else(|| slot_radius_mkm(orbit, content)),
+            OrbitContent::GasGiant(gg) => gg
+                .satellites()
+                .iter()
+                .find(|m| m.is_mainworld())
+                .and_then(|m| m.orbit_distance_mkm)
+                .unwrap_or_else(|| slot_distance_mkm(orbit)),
+            _ => slot_distance_mkm(orbit),
+        };
         Some(TravelOrigin {
             name,
-            radius_mkm: slot_distance_mkm(orbit),
+            radius_mkm,
             orbit,
         })
     })
@@ -1052,7 +1084,7 @@ fn legend_rows(system: &System) -> Vec<LegendRow> {
 
     for (orbit, slot) in system.orbit_slots.iter().enumerate() {
         let Some(content) = slot else { continue };
-        let dist = slot_distance_mkm(orbit);
+        let dist = slot_radius_mkm(orbit, content);
         let (name, kind): (&str, &str) = match content {
             OrbitContent::World(w) => (&w.name, if is_belt(w) { "Belt" } else { "World" }),
             OrbitContent::GasGiant(gg) => (&gg.name, "Gas Giant"),
