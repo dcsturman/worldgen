@@ -285,7 +285,7 @@ pub use raster::RasterJob;
 pub use render::{SVG_RASTER_H, SVG_RASTER_W, assemble_svg};
 pub use globe::{
     ApngTiming, GlobeTexture, GlobeTextureJob, TexSize, build_equirect_texture, render_globe_apng,
-    render_globe_png, render_globe_texture, starport_lonlat,
+    render_globe_png, render_globe_texture, starport_lonlat, substellar_lonlat,
 };
 
 #[cfg(test)]

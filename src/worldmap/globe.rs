@@ -251,6 +251,16 @@ pub struct GlobeTexture {
     /// marker at the world's starport, shown day and night. All-zero for
     /// worlds with no starport (class X / Y, or unpopulated).
     pub beacon: Vec<u8>,
+    /// Where the star stands overhead, as a unit vector in the planet's own
+    /// frame — `Some` only for a tide-locked world.
+    ///
+    /// A rotating world's day/night comes from a light fixed in *camera*
+    /// space, so its terrain turns through day and night as it spins. A
+    /// locked world's sun is fixed on the *planet* instead, over this point,
+    /// so [`Self::warp_into`] turns the light with the surface and the lit
+    /// hemisphere stays put. `None` keeps a rotating world's globe exactly
+    /// as it was.
+    pub sun: Option<[f64; 3]>,
 }
 
 /// Build a full equirectangular surface texture for `map` in one call.
@@ -311,6 +321,8 @@ pub struct GlobeTextureJob {
     color: Vec<(u8, u8, u8)>,
     emissive: Vec<u8>,
     beacon: Vec<u8>,
+    /// Recorded by [`Self::step_elevation`]; see [`GlobeTexture::sun`].
+    sun: Option<[f64; 3]>,
 }
 
 /// One entry of [`GlobeTextureJob::STEPS`]: a name for logging, and the
@@ -487,6 +499,7 @@ impl GlobeTextureJob {
             color: vec![(0u8, 0u8, 0u8); n],
             emissive: vec![0u8; n],
             beacon: vec![0u8; n],
+            sun: None,
         }
     }
 
@@ -497,6 +510,11 @@ impl GlobeTextureJob {
     /// Both outputs come from one [`ElevationField::warp`] call — see
     /// [`Self::rain_shadow`] for why they're computed together.
     pub fn step_elevation(&mut self, map: &WorldMap) {
+        // Recorded here, in the first step, rather than by the callers that
+        // finish the job: the browser drives the steps by hand, and a fact
+        // added outside the pipeline is exactly what it would miss (see
+        // `STEPS`). It costs nothing and changes no texel.
+        self.sun = map.climate.substellar();
         let (w, h) = (self.width as usize, self.height as usize);
         let rows = band_rows(h, self.workers);
         let chunk = rows * w;
@@ -708,6 +726,7 @@ impl GlobeTextureJob {
             clouds: self.clouds,
             emissive: self.emissive,
             beacon: self.beacon,
+            sun: self.sun,
         }
     }
 }
@@ -942,9 +961,31 @@ impl GlobeTexture {
         let north = [0.0, ca, sa];
         let front = [0.0, -sa, ca];
 
-        // Normalized light direction.
-        let ll = (LIGHT.0 * LIGHT.0 + LIGHT.1 * LIGHT.1 + LIGHT.2 * LIGHT.2).sqrt();
-        let light = [LIGHT.0 / ll, LIGHT.1 / ll, LIGHT.2 / ll];
+        // Normalized light direction, in camera space.
+        //
+        // A rotating world keeps LIGHT, fixed relative to the camera, so its
+        // terrain spins through day and night. A tide-locked world's sun is
+        // fixed on the planet, over the substellar point: take that point
+        // through the same (lat, lon) → camera mapping the per-pixel lookup
+        // below inverts, at this frame's spin, so the light turns with the
+        // surface and the day side stays under the star.
+        let light = match self.sun {
+            Some(s) => {
+                let lat = s[2].clamp(-1.0, 1.0).asin();
+                let lon_rel = s[1].atan2(s[0]) - spin;
+                let cl = lat.cos();
+                let (e, n, f) = (cl * lon_rel.sin(), lat.sin(), cl * lon_rel.cos());
+                [
+                    e * east[0] + n * north[0] + f * front[0],
+                    e * east[1] + n * north[1] + f * front[1],
+                    e * east[2] + n * north[2] + f * front[2],
+                ]
+            }
+            None => {
+                let ll = (LIGHT.0 * LIGHT.0 + LIGHT.1 * LIGHT.1 + LIGHT.2 * LIGHT.2).sqrt();
+                [LIGHT.0 / ll, LIGHT.1 / ll, LIGHT.2 / ll]
+            }
+        };
 
         // Beacon pulse — a gentle throb tied to the spin phase (so it loops
         // seamlessly). Constant across the frame, so compute it once here.
@@ -1275,6 +1316,15 @@ pub fn render_globe_texture(
             enc.add_text_chunk("Starport".to_string(), format!("{lon},{lat}"))
                 .map_err(|e| format!("png text chunk: {e}"))?;
         }
+        // A client that lights this texture itself (TravellerMap's WebGL
+        // globe) needs the substellar point to keep a locked world's sun on
+        // the planet rather than fixed in view; see `GlobeTexture::sun`.
+        // Same (lon, lat)-in-radians convention as `Starport`, and absent on
+        // a rotating world, whose texture is byte-identical to before.
+        if let Some((lon, lat)) = substellar_lonlat(map) {
+            enc.add_text_chunk("Substellar".to_string(), format!("{lon},{lat}"))
+                .map_err(|e| format!("png text chunk: {e}"))?;
+        }
         let mut writer = enc.write_header().map_err(|e| format!("png header: {e}"))?;
         writer
             .write_image_data(&rgba)
@@ -1297,6 +1347,17 @@ pub fn starport_lonlat(map: &WorldMap) -> Option<(f64, f64)> {
                 let lon = p[1].atan2(p[0]).rem_euclid(2.0 * PI);
                 (lon, lat)
             })
+    })
+}
+
+/// A tide-locked world's substellar point as texture coordinates `(lon, lat)`
+/// in radians, in the same convention as [`starport_lonlat`]; `None` for a
+/// rotating world.
+pub fn substellar_lonlat(map: &WorldMap) -> Option<(f64, f64)> {
+    map.climate.substellar().map(|p| {
+        let lat = p[2].clamp(-1.0, 1.0).asin();
+        let lon = p[1].atan2(p[0]).rem_euclid(2.0 * PI);
+        (lon, lat)
     })
 }
 
@@ -1353,6 +1414,108 @@ fn encode_apng_rgba(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Brightness of the rendered pixel over body-frame point `p` at `spin`,
+    /// as a fraction of that point's own unlit albedo — so bright ice and dark
+    /// rock compare fairly — or `None` when `p` is on the far side.
+    fn lit_fraction(tex: &GlobeTexture, p: [f64; 3], spin: f64, size: u32) -> Option<f64> {
+        let (ca, sa) = (AXIAL_TILT.cos(), AXIAL_TILT.sin());
+        let (east, north, front) = ([1.0, 0.0, 0.0], [0.0, ca, sa], [0.0, -sa, ca]);
+        let lat = p[2].clamp(-1.0, 1.0).asin();
+        let lon_rel = p[1].atan2(p[0]) - spin;
+        let cl = lat.cos();
+        let (e, n, f) = (cl * lon_rel.sin(), lat.sin(), cl * lon_rel.cos());
+        let cam: Vec<f64> = (0..3)
+            .map(|k| e * east[k] + n * north[k] + f * front[k])
+            .collect();
+        if cam[2] < 0.3 {
+            return None; // behind, or too near the limb to read reliably
+        }
+        let c = size as f64 / 2.0;
+        let r = c * DISC_FILL;
+        let (x, y) = ((c + cam[0] * r) as u32, (c - cam[1] * r) as u32);
+        let mut buf = vec![0u8; (size * size * 4) as usize];
+        tex.warp_into(&mut buf, size, spin);
+        let i = ((y * size + x) * 4) as usize;
+        let shown: f64 = buf[i..i + 3].iter().map(|v| *v as f64).sum();
+        let (ar, ag, ab) = tex.sample(p).albedo;
+        Some(shown / (ar + ag + ab).max(1.0))
+    }
+
+    /// A tide-locked globe keeps its day side under the star as it spins.
+    ///
+    /// The light used to be fixed in camera space for every world, which is
+    /// right for a rotating one — its terrain turns through day and night —
+    /// and wrong for a locked one, whose sun never moves across its sky. At
+    /// every spin where they face the camera, the substellar point must read
+    /// lit and the antistellar point dark.
+    #[test]
+    fn a_locked_globe_keeps_its_sun_over_the_substellar_point() {
+        let lock = crate::decorations::WorldDecorations::tide_locked(
+            crate::decorations::TideLock::default(),
+        );
+        let map = super::super::generate_decorated("C530677-8", 11, None, &lock).unwrap();
+        let mut job = GlobeTextureJob::new(256, 128).without_clouds();
+        for (_, step) in GlobeTextureJob::STEPS {
+            step(&mut job, &map);
+        }
+        let tex = job.into_texture();
+        let sub = tex.sun.expect("a locked world's texture records its sun");
+        let anti = [-sub[0], -sub[1], -sub[2]];
+        let (mut lit_seen, mut dark_seen) = (0, 0);
+        for k in 0..12 {
+            let spin = k as f64 * std::f64::consts::TAU / 12.0;
+            if let Some(f) = lit_fraction(&tex, sub, spin, 160) {
+                // Lit ground reads ~0.5–0.6 of its albedo here, not 1: limb
+                // darkening (down to LIMB_FLOOR) and the rest of the shading
+                // apply on top of the sun. Night is NIGHT_LEVEL, ~0.18.
+                assert!(f > 0.4, "spin {k}: substellar point at {f:.2} of its albedo — not lit");
+                lit_seen += 1;
+            }
+            if let Some(f) = lit_fraction(&tex, anti, spin, 160) {
+                assert!(f < 0.25, "spin {k}: antistellar point at {f:.2} of its albedo — lit");
+                dark_seen += 1;
+            }
+        }
+        // Both points actually came round to face the camera.
+        assert!(lit_seen >= 3 && dark_seen >= 3, "saw {lit_seen} lit, {dark_seen} dark");
+    }
+
+    /// A rotating world records no sun, so its globe keeps the fixed view-space
+    /// light it always had; the golden pins hold its bytes.
+    #[test]
+    fn a_rotating_world_has_no_fixed_sun() {
+        let map = super::super::generate("C530677-8", 11, None).unwrap();
+        assert!(build_equirect_texture(&map, 64, 32).sun.is_none());
+        assert!(substellar_lonlat(&map).is_none());
+    }
+
+    /// The texture a WebGL client lights itself carries the substellar point
+    /// for a locked world, and nothing for a rotating one.
+    #[test]
+    fn a_locked_texture_carries_its_substellar_point() {
+        let chunks = |uwp: &str, lock: bool| {
+            let deco = if lock {
+                crate::decorations::WorldDecorations::tide_locked(
+                    crate::decorations::TideLock::default(),
+                )
+            } else {
+                Default::default()
+            };
+            let map = super::super::generate_decorated(uwp, 11, None, &deco).unwrap();
+            let png = render_globe_texture(&map, TexSize { w: 64, h: 32 }, false).unwrap();
+            let reader = png::Decoder::new(std::io::Cursor::new(png)).read_info().unwrap();
+            reader
+                .info()
+                .uncompressed_latin1_text
+                .iter()
+                .map(|c| c.keyword.clone())
+                .collect::<Vec<_>>()
+        };
+        assert!(chunks("C530677-8", true).contains(&"Substellar".to_string()));
+        assert!(!chunks("C530677-8", false).contains(&"Substellar".to_string()));
+    }
+
 
     fn tex() -> GlobeTexture {
         let map = super::super::generate("A788899-A", 1, None).unwrap();

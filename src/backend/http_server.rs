@@ -82,8 +82,8 @@ const PLANET_CANONICAL_SCALE: f32 = 2.0;
 const PLANET_CACHE_PREFIX: &str = "world/v2";
 
 /// Extra object-path segment for renders of a *decorated* world (e.g. a
-/// tidal lock), placed after the variant: `world/v2/deco-v1/…`,
-/// `world/v2/globe/deco-v1/…`. Undecorated worlds keep their old paths.
+/// tidal lock), placed after the variant: `world/v2/deco-v2/…`,
+/// `world/v2/globe/deco-v2/…`. Undecorated worlds keep their old paths.
 ///
 /// The decorations are already in the cache key, so this isn't needed to
 /// keep decorated and undecorated renders apart. It exists so that locked
@@ -91,7 +91,12 @@ const PLANET_CACHE_PREFIX: &str = "world/v2";
 /// climate model changes what a world looks like, and only decorated worlds
 /// re-render — bumping `PLANET_CACHE_PREFIX` would throw away every
 /// undecorated world in the bucket too.
-const DECO_CACHE_VERSION: &str = "deco-v1";
+///
+/// v2: a locked world's globe is lit from its substellar point, which turns
+/// with the planet, instead of a light fixed in view; and its texture
+/// carries that point in a `Substellar` chunk. Every v1 locked globe and
+/// texture had the old lighting and no chunk.
+const DECO_CACHE_VERSION: &str = "deco-v2";
 
 /// Globe (orthographic projection) render parameters for `?projection=globe`.
 /// Fixed server-side so the cache key stays `(seed, uwp, name, deco)` per variant
@@ -815,7 +820,17 @@ async fn handle_world_globe_texture(
     match cache_or_render_bytes(stream, &gcs, &cache_object, render).await? {
         Some((bytes, status)) => {
             let starport = read_starport_chunk(&bytes);
-            write_texture(stream, &bytes, head_only, Some(status), starport.as_deref(), &etag).await
+            let substellar = read_text_chunk(&bytes, "Substellar");
+            write_texture(
+                stream,
+                &bytes,
+                head_only,
+                Some(status),
+                starport.as_deref(),
+                substellar.as_deref(),
+                &etag,
+            )
+            .await
         }
         None => Ok(()), // an error response was already written
     }
@@ -897,13 +912,19 @@ async fn serve_planet_cached(
 /// Extract the `Starport` tEXt chunk's "lon,lat" payload from a globe-texture
 /// PNG, if present. Only decodes the PNG header/metadata, not the pixels.
 fn read_starport_chunk(png_bytes: &[u8]) -> Option<String> {
+    read_text_chunk(png_bytes, "Starport")
+}
+
+/// The payload of the tEXt chunk named `keyword`, if the PNG has one. Only
+/// decodes the header and metadata, not the pixels.
+fn read_text_chunk(png_bytes: &[u8], keyword: &str) -> Option<String> {
     let decoder = png::Decoder::new(std::io::Cursor::new(png_bytes));
     let reader = decoder.read_info().ok()?;
     reader
         .info()
         .uncompressed_latin1_text
         .iter()
-        .find(|c| c.keyword == "Starport")
+        .find(|c| c.keyword == keyword)
         .map(|c| c.text.clone())
 }
 
@@ -1132,7 +1153,7 @@ fn percent_decode(s: &str) -> String {
 const CORS_HEADERS: &str = "Access-Control-Allow-Origin: *\r\n\
      Access-Control-Allow-Methods: GET, HEAD, OPTIONS\r\n\
      Access-Control-Allow-Headers: *\r\n\
-     Access-Control-Expose-Headers: X-Cache, X-Starport\r\n";
+     Access-Control-Expose-Headers: X-Cache, X-Starport, X-Substellar\r\n";
 
 async fn write_simple(
     stream: &mut TcpStream,
@@ -1214,6 +1235,7 @@ async fn write_texture(
     head_only: bool,
     x_cache: Option<&str>,
     x_starport: Option<&str>,
+    x_substellar: Option<&str>,
     etag: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let x_cache_header = match x_cache {
@@ -1222,6 +1244,12 @@ async fn write_texture(
     };
     let starport_header = match x_starport {
         Some(v) => format!("X-Starport: {v}\r\n"),
+        None => String::new(),
+    };
+    // A locked world's substellar point, for clients that light the texture
+    // themselves; absent on a rotating world.
+    let substellar_header = match x_substellar {
+        Some(v) => format!("X-Substellar: {v}\r\n"),
         None => String::new(),
     };
     let headers = format!(
@@ -1233,6 +1261,7 @@ async fn write_texture(
          Connection: close\r\n\
          {x_cache_header}\
          {starport_header}\
+         {substellar_header}\
          {cors}\
          \r\n",
         len = bytes.len(),
@@ -1561,10 +1590,10 @@ mod tests {
     #[test]
     fn decorated_paths_sit_under_the_deco_namespace() {
         let d = locked(None);
-        assert_eq!(planet_cache_object(None, 0xab, &d), "world/v2/deco-v1/00000000000000ab.png");
+        assert_eq!(planet_cache_object(None, 0xab, &d), "world/v2/deco-v2/00000000000000ab.png");
         assert_eq!(
             planet_cache_object(Some("globe-tex"), 0xab, &d),
-            "world/v2/globe-tex/deco-v1/00000000000000ab.png",
+            "world/v2/globe-tex/deco-v2/00000000000000ab.png",
         );
     }
 
