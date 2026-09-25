@@ -933,9 +933,10 @@ fn planet_cache_object(variant: Option<&str>, key: u64, deco: &WorldDecorations)
 /// world `name` at `(sector, hex)`, and to no decorations when it states
 /// nothing.
 ///
-/// Auto-detection (a tidal lock inferred from the star and orbit) is *not*
-/// available here: this endpoint is never told the star. A client that
-/// wants an auto-detected lock has to pass `deco=tl` itself.
+/// That fallback is the whole answer: nothing in worldgen infers a tidal
+/// lock from the star and orbit (see `systems::astro::auto_tide_locked` for
+/// why), so a lock the overrides don't state only happens if the client
+/// passes `deco=tl` itself.
 ///
 /// A malformed value is an error, never ignored — a typo that quietly
 /// rendered the undecorated map would also cache it.

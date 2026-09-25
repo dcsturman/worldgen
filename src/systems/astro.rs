@@ -78,8 +78,20 @@ pub fn tidal_lock_radius_au(star: &Star) -> f32 {
     TIDAL_LOCK_COEFFICIENT_AU * get_solar_mass(star).cbrt()
 }
 
-/// Whether a body orbiting `star` directly at `orbit_distance_au` should be
-/// assumed tide-locked when nothing says otherwise.
+/// Whether physics alone would tide-lock a body orbiting `star` directly at
+/// `orbit_distance_au`.
+///
+/// **Not applied automatically, anywhere.** A world is tide-locked only when
+/// `data/overrides.json` says so. TravellerMap's UWPs were generated with no
+/// notion of tidal locking, and a red-dwarf main world only lands at orbit 0
+/// because Traveller's orbit grid is too coarse to place it anywhere closer
+/// — so "M-dwarf main world at orbit 0" is an artifact of the rules, not
+/// evidence of a lock. Measured against Trojan Reach, this rule locked 64 of
+/// 327 main worlds, Drinax among them; even restricted to M5–M9 V it locked
+/// 19, six of them with hydrographics 5–9 (Forandin, Gor, Aohfeau,
+/// Aiuiktiyr, Szirp, Janus) — worlds the published data describes as wet and
+/// temperate. Locking them would decide facts about the setting that belong
+/// to whoever runs it. The physics stays here, tested, for an opt-in later.
 ///
 /// Size V only: giants and white dwarfs never auto-lock. Their table masses
 /// say nothing useful about a planet's history — a giant has swollen through
@@ -88,8 +100,8 @@ pub fn tidal_lock_radius_au(star: &Star) -> f32 {
 /// — a moon locks to its planet, not its star, so its substellar point sweeps
 /// round once per month and the fixed-hot-spot climate model is wrong for it.
 ///
-/// Pure table lookups, no dice: an extra roll here would shift every later
-/// draw in the generator and reshuffle every system.
+/// Pure table lookups, no dice, so a future opt-in can't perturb the
+/// generator's random stream.
 pub fn auto_tide_locked(star: &Star, orbit_distance_au: f32) -> bool {
     star.size == StarSize::V && orbit_distance_au <= tidal_lock_radius_au(star)
 }

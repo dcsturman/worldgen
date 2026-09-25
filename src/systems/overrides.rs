@@ -160,9 +160,10 @@ pub enum BodySpec {
         /// thing sources describe.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         zone: Option<String>,
-        /// Whether this body keeps one face to its star. `true` locks it,
-        /// `false` clears a lock auto-detection would have given it, and
-        /// leaving it out lets auto-detection decide.
+        /// Whether this body keeps one face to its star. This is the *only*
+        /// way a world becomes tide-locked — generation never guesses (see
+        /// `systems::astro::auto_tide_locked` for why). `false` says so
+        /// explicitly; leaving it out means the same today.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tide_locked: Option<bool>,
         /// Where the star stands overhead on a locked body, `[lat, lon]` in
@@ -248,10 +249,9 @@ pub enum BodySpec {
         /// thing sources describe.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         zone: Option<String>,
-        /// Whether this moon keeps one face to the star. Moons are never
-        /// auto-locked — a moon locks to its planet, so its substellar point
-        /// sweeps round every orbit — but a source that says one is locked is
-        /// honoured.
+        /// Whether this moon keeps one face to the star. A moon normally
+        /// locks to its planet instead, so its substellar point sweeps round
+        /// every orbit — but a source that says one is locked is honoured.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tide_locked: Option<bool>,
         /// Where the star stands overhead on a locked body, `[lat, lon]` in
@@ -368,8 +368,8 @@ pub struct PostSpec {
     pub uwp: Option<PartialUwp>,
     pub facilities: Vec<crate::systems::world::Facility>,
     pub zone: Option<crate::trade::ZoneClassification>,
-    /// Stated decorations. `None` is no opinion — auto-detection's answer
-    /// stands; `Some(empty)` is an explicit "not locked" that clears it.
+    /// Stated decorations. `None` is no opinion; `Some(empty)` is an
+    /// explicit "not locked", which clears any lock set earlier.
     ///
     /// Carried on a spec of its own (see [`BodySpec::decoration_post`]),
     /// except on the spec that creates a moon, so [`apply_post`] can run
@@ -404,11 +404,10 @@ impl BodySpec {
 
     /// The decorations this body states, if it states any.
     ///
-    /// `None` is "no opinion" and leaves auto-detection's answer standing;
-    /// `Some(empty)` is an explicit "not locked", which beats it. That
-    /// three-way split is why `tide_locked` is an `Option<bool>` rather than
-    /// a `bool` defaulting to false — a default of false would clear every
-    /// auto lock in any system that has an override at all.
+    /// `None` is "no opinion"; `Some(empty)` is an explicit "not locked".
+    /// Nothing locks a world automatically today, so the two mean the same —
+    /// but `tide_locked` stays an `Option<bool>` so an explicit `false` keeps
+    /// meaning "the source says not" if an opt-in rule ever arrives.
     pub fn decorations(&self) -> Result<Option<WorldDecorations>, String> {
         let (locked, substellar) = match self {
             BodySpec::Planet {
@@ -447,10 +446,9 @@ impl BodySpec {
     /// the body ends up.
     ///
     /// Post-generation because a stated lock has to be the *last* word on
-    /// the body: auto-detection runs every time a world's astro data is
-    /// computed, and the post pass recomputes it when it rebuilds a world
-    /// from a UWP. Applied any earlier, an explicit `false` would be undone
-    /// by the rebuild re-detecting a lock.
+    /// the body: the post pass rebuilds a world from scratch when it applies
+    /// a UWP, and a lock applied any earlier would be discarded with the
+    /// world it was on.
     ///
     /// A name is preferred over an orbit or position, because post facts are
     /// resolved against the primary's orbits first: an unnamed "orbit 1" on
@@ -1170,9 +1168,8 @@ pub fn apply_post(
     specs: &[PostSpec],
 ) -> Vec<crate::systems::system::DroppedConstraint> {
     // Stated decorations go last, so nothing can undo them. A UWP rebuild
-    // recomputes astro data, which re-runs tide-lock auto-detection on a
-    // fresh world; a lock — or an explicit "not locked" — applied before a
-    // rebuild of the same body would be silently replaced by the guess.
+    // replaces the world with a fresh one; a lock applied before a rebuild
+    // of the same body would be silently thrown away with the old world.
     // Decoration specs carry nothing else, so moving them can't reorder any
     // other fact.
     let (decorations, rest): (Vec<PostSpec>, Vec<PostSpec>) =
@@ -1337,7 +1334,6 @@ fn apply_post_level(
                             // description is blank — and computing it for all of
                             // them would change every existing one. A locked moon
                             // needs it, though: its day length is read from it.
-                            // It is a satellite, so this can't auto-lock anything.
                             if moon.is_tide_locked() {
                                 moon.compute_astro_data(&star);
                             }
@@ -1503,8 +1499,8 @@ fn find_world_mut(
 /// coordinates and name, and never generates the system.
 ///
 /// `None` when there's no override or it says nothing about that world.
-/// `Some(empty)` is an explicit "not locked". A pure lookup: auto-detection
-/// needs stellar data the caller doesn't have, so it isn't reflected here.
+/// `Some(empty)` is an explicit "not locked". A pure lookup — and since
+/// only overrides lock worlds, it is the whole answer.
 pub fn decorations_for(sector: &str, hex: &str, name: &str) -> Option<WorldDecorations> {
     lookup(sector, hex)?.decorations_for(name)
 }
@@ -2452,7 +2448,8 @@ mod tests {
     }
 
     /// Dim: a C867977-8 main world around an M5 V. With no habitable zone to
-    /// go to, it lands at orbit 0 and auto-detection locks it.
+    /// go to, it lands at orbit 0 — exactly the case a physics rule would
+    /// lock, and that generation deliberately leaves alone.
     fn dim(bodies: &str, seed: u64) -> crate::systems::system::System {
         let stars = parse_stellar("M5 V");
         let cs = build_constraints("Dim", "C867977-8", &stars, 1, 1, 5).unwrap();
@@ -2465,24 +2462,30 @@ mod tests {
         crate::systems::system::System::generate_from_constraints_seeded(seed, cs).unwrap()
     }
 
+    /// A red dwarf's orbit-0 main world is not locked unless the file says
+    /// so — and when it does, that's the only thing that changes.
     #[test]
-    fn an_explicit_false_beats_auto_detection() {
-        let auto = dim("[]", 5);
-        assert!(main_world_of(&auto).is_tide_locked(), "precondition: auto-locked");
+    fn only_an_override_locks_a_red_dwarfs_orbit_zero_world() {
+        let plain = dim("[]", 5);
+        let mw = main_world_of(&plain);
+        assert_eq!(mw.orbit, 0, "precondition: the orbit-0 case");
+        assert!(!mw.is_tide_locked());
+        assert!(all_worlds(&plain).iter().all(|w| !w.is_tide_locked()));
 
-        let cleared = dim(r#"[ { "type": "main_world", "tide_locked": false } ]"#, 5);
-        assert_eq!(cleared.dropped_constraints(), Vec::new());
-        assert!(!main_world_of(&cleared).is_tide_locked());
-        assert_eq!(main_world_of(&cleared).day_length_years(), None);
-        // Everything else is the same system.
-        assert_eq!(format!("{auto}"), format!("{cleared}"));
+        let stated = dim(r#"[ { "type": "main_world", "tide_locked": true } ]"#, 5);
+        assert_eq!(stated.dropped_constraints(), Vec::new());
+        let mw = main_world_of(&stated);
+        assert!(mw.is_tide_locked());
+        assert_eq!(mw.day_length_years(), Some(mw.orbital_period_years()));
+        assert_eq!(format!("{plain}"), format!("{stated}"), "same system otherwise");
+
+        let denied = dim(r#"[ { "type": "main_world", "tide_locked": false } ]"#, 5);
+        assert_eq!(denied.dropped_constraints(), Vec::new());
+        assert!(!main_world_of(&denied).is_tide_locked());
     }
 
     #[test]
-    fn an_explicit_lock_applies_where_detection_would_not() {
-        // Torpol's F4 V reads as F0 V (1.7 M☉) and locks out to 0.46 AU —
-        // orbits 0 and 1. Its habitable-zone main world and orbit 2 are both
-        // well beyond that.
+    fn an_explicit_lock_applies_to_any_star() {
         assert!(!main_world_of(&generate(Vec::new())).is_tide_locked());
         let sys = generate(vec![BodySpec::MainWorld {
             tide_locked: Some(true),
@@ -2521,39 +2524,35 @@ mod tests {
         assert!(hot.is_tide_locked());
     }
 
-    /// A UWP rebuild recomputes astro data, which re-runs auto-detection. A
-    /// stated value has to survive that, whatever order the specs arrive in.
+    /// A UWP rebuild replaces the world outright. A stated lock has to
+    /// survive that, whatever order the specs arrive in.
     #[test]
     fn a_stated_lock_survives_a_later_rebuild_of_the_same_world() {
         let mut sys = dim("[]", 5);
-        let orbit = sys
-            .orbit_slots
-            .iter()
-            .position(|c| matches!(c, Some(crate::systems::system::OrbitContent::World(w)) if w.is_tide_locked()))
-            .expect("an auto-locked world in a planet slot");
-        let clear = PostSpec {
+        let orbit = main_world_of(&sys).orbit;
+        let lock = PostSpec {
             target: Target::AtOrbit(orbit as i32),
             satellite_orbit: None,
             name: None,
             uwp: None,
             facilities: Vec::new(),
             zone: None,
-            decorations: Some(WorldDecorations::default()),
+            decorations: Some(WorldDecorations::tide_locked(TideLock::default())),
         };
         let rebuild = PostSpec {
             decorations: None,
             uwp: Some(PartialUwp::parse("X867000-0").unwrap()),
-            ..clear.clone()
+            ..lock.clone()
         };
-        // Clear listed first, rebuild second: in list order the rebuild
-        // would re-detect the lock and win.
-        assert!(apply_post(&mut sys, &[clear, rebuild]).is_empty());
+        // Lock listed first, rebuild second: in list order the rebuild would
+        // throw the lock away with the world it replaced.
+        assert!(apply_post(&mut sys, &[lock, rebuild]).is_empty());
         let w = match &sys.orbit_slots[orbit] {
             Some(crate::systems::system::OrbitContent::World(w)) => w,
             other => panic!("{other:?}"),
         };
         assert_eq!(w.get_population(), 0, "the rebuild happened");
-        assert!(!w.is_tide_locked(), "and the stated value still had the last word");
+        assert!(w.is_tide_locked(), "and the stated lock still had the last word");
     }
 
     #[test]

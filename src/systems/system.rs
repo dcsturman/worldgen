@@ -1388,9 +1388,7 @@ impl System {
                     let orbit = gas_giant.gen_satellite_orbit(main_world.size == 0);
                     main_world.orbit = orbit;
                     main_world.position_in_system = habitable as usize;
-                    // A moon of the giant, even though `is_satellite` stays
-                    // false — so it locks to the giant, not the star.
-                    main_world.compute_astro_data_orbiting(&self.star, true);
+                    main_world.compute_astro_data(&self.star);
                     gas_giant.push_satellite(main_world);
                 }
                 Some(OrbitContent::Blocked) => {
@@ -3371,13 +3369,13 @@ mod tests {
         }
     }
 
-    // ---- Generation is unchanged by tide-lock detection ----
+    // ---- Generation is unchanged by tide locking ----
     //
-    // Pinned on 560525d, the commit before decorations existed. Auto-detection
-    // must draw no dice — one extra roll would shift every later draw and
-    // reshuffle every system — and must change nothing about a world it
-    // doesn't lock. Re-pin with `golden_print` only for a change that is
-    // *meant* to alter generation.
+    // Pinned on 560525d, the commit before decorations existed. Tide locks
+    // come only from overrides, so generation must be exactly what it was:
+    // no extra dice (one roll would shift every later draw and reshuffle
+    // every system) and no change to any world. Re-pin with `golden_print`
+    // only for a change that is *meant* to alter generation.
 
     /// Every world in a system, companions and satellites included, in a
     /// fixed order.
@@ -3456,56 +3454,22 @@ mod tests {
         (0x31e44892ffd570a8, 0xd7f42ff17360779a, 0xfe8d1c008831a812),
     ];
 
-    /// The cases with an auto-locked world. Named rather than counted so a
-    /// change to the lock rule says exactly which systems it moved: Dim and
-    /// Dimmer's main worlds sit at orbit 0 of an M dwarf. Oghma joined when
-    /// the rule became mass-scaled: it has a planet at orbit 0 of one of its
-    /// K5 V / M5 V stars, which the old 0.4 M☉ cap excluded.
-    const LOCKED_GOLDEN_CASES: &[&str] = &["Oghma", "Dim", "Dimmer"];
-
+    /// No world is tide-locked by generation — only an override locks one —
+    /// so every case, the red dwarfs included, must match 560525d exactly:
+    /// same dice, same astro text, same JSON.
     #[test]
-    fn tide_lock_detection_leaves_generation_unchanged() {
-        let mut locked_cases = Vec::new();
+    fn tide_locking_leaves_generation_unchanged() {
         for (case, &(display, astro, json)) in GOLDEN_CASES.iter().zip(GOLDEN_PINNED) {
             let (d, a, j, sys) = golden_fingerprint(case);
             let name = case.0;
-            // The dice: identical in every case, locked or not.
+            assert!(
+                golden_worlds(&sys).iter().all(|w| !w.is_tide_locked()),
+                "{name}: generation locked a world on its own"
+            );
             assert_eq!(golden_fnv(&d), display, "{name}: generation drew differently");
-
-            let locked = golden_worlds(&sys).iter().any(|w| w.is_tide_locked());
-            if !locked {
-                assert_eq!(golden_fnv(&a), astro, "{name}: astro description changed");
-                assert_eq!(golden_fnv(&j), json, "{name}: world JSON changed");
-                continue;
-            }
-            locked_cases.push(name);
-            // A locked world may differ by its lock and nothing else: strip
-            // the lock and every byte is back to what it was.
-            let unlocked_astro: String = golden_worlds(&sys)
-                .iter()
-                .map(|w| {
-                    let desc = w.get_astro_description();
-                    let desc = match desc.find("tide-locked") {
-                        Some(i) => desc[..i].trim_end_matches(", ").to_string(),
-                        None => desc,
-                    };
-                    format!("{}|{desc}\n", w.name)
-                })
-                .collect();
-            assert_eq!(golden_fnv(&unlocked_astro), astro, "{name}: more than the lock changed");
-            let unlocked_json: String = golden_worlds(&sys)
-                .iter()
-                .map(|w| {
-                    let mut w = (*w).clone();
-                    w.decorations = Default::default();
-                    serde_json::to_string(&w).unwrap() + "\n"
-                })
-                .collect();
-            assert_eq!(golden_fnv(&unlocked_json), json, "{name}: more than the lock changed");
+            assert_eq!(golden_fnv(&a), astro, "{name}: astro description changed");
+            assert_eq!(golden_fnv(&j), json, "{name}: world JSON changed");
         }
-        // Guards the guard: if no case locks anything, the branch above
-        // proves nothing.
-        assert_eq!(locked_cases, LOCKED_GOLDEN_CASES);
     }
 
     #[test]
