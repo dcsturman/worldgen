@@ -339,12 +339,12 @@
       "sector": "Trojan Reach",
       "hex": "2424",
       "world": "Hilfer",
-      "note": "Tide-locked by referee decision, not a citation: no published source says Hilfer is locked. It is the world the tide-lock climate model was built around, and it fits the model's dry case exactly — BA5077A-6 (thin atmosphere, hydrographics 0) around an M6 V, at orbit 0 where a red-dwarf main world lands. Nothing locks a world automatically; this entry is the only reason Hilfer's map is drawn as locked. The substellar point is left to the map seed. It orbits at 5 million km (0.033 AU), inside the orbit table's reach — orbit 0 is 29.9 Mkm, far outside an M6 V's habitable zone — so the distance is stated rather than taken from the slot; the world is still drawn on the innermost ring.",
+      "note": "Tide-locked by referee decision, not a citation: no published source says Hilfer is locked. It is the world the tide-lock climate model was built around, and it fits the model's dry case exactly — BA5077A-6 (thin atmosphere, hydrographics 0) around an M6 V, at orbit 0 where a red-dwarf main world lands. Nothing locks a world automatically; this entry is the only reason Hilfer's map is drawn as locked. The substellar point is left to the map seed. It orbits at 11.1 million km (0.074 AU): Book 6's habitable-zone distance for an M6 V, interpolated between its M5 V (0.1 AU) and M9 V (0.03 AU) figures, giving about +21 C and a 13.5-day day and year. 5 Mkm was considered first, but by Book 6's luminosities that makes Hilfer +166 C; Book 6 is the reference even where modern astronomy would put an M6 V's zone nearer. Orbit 0 is 29.9 Mkm, so the distance is stated rather than taken from the slot; the world is still drawn on the innermost ring.",
       "bodies": [
         {
           "type": "main_world",
           "tide_locked": true,
-          "distance_mkm": 5.0
+          "distance_mkm": 11.1
         }
       ]
     }

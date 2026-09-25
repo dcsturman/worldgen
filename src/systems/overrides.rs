@@ -1956,14 +1956,15 @@ mod tests {
         assert!(deco.tide_locked.is_some(), "Hilfer should be tide-locked");
         // The substellar point is left to the map seed.
         assert_eq!(deco.to_query(), "tl");
-        // And it sits at 5 million km, inside the orbit table's reach.
+        // And it sits at 11.1 million km — Book 6's habitable zone for an
+        // M6 V — inside the orbit table's reach (orbit 0 is 29.9).
         let hilfer = lookup("Trojan Reach", "2424").expect("Hilfer has an override");
         let distances: Vec<f32> = hilfer
             .bodies
             .iter()
             .filter_map(|b| b.distance_mkm().ok().flatten())
             .collect();
-        assert_eq!(distances, vec![5.0]);
+        assert_eq!(distances, vec![11.1]);
     }
 
     #[test]
