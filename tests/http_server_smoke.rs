@@ -320,20 +320,70 @@ async fn a_matching_etag_is_answered_with_304() {
     assert!(head3.starts_with("HTTP/1.1 200 OK"), "head:\n{head3}");
 }
 
-/// The planet endpoints keep `immutable`, and should: their URL carries the
-/// name, UWP and orbit, so the content really is fixed per URL.
+const NORICUM_WORLD: &str = "sector=Trojan+Reach&hex=2018&name=Noricum&uwp=D8867BB-1";
+
+/// The planet endpoints must not claim `immutable` either.
+///
+/// This test used to insist they should, on the grounds that the URL carries
+/// the name, UWP and orbit, so the content was fixed per URL. That stopped
+/// being true when a request without `deco` started taking its decorations
+/// from `data/overrides.json`: editing a lock changes what the URL shows, and
+/// `immutable` meant Hilfer's locked map never reached anyone who had opened
+/// it before — not even on a hard reload. A generator change behind a
+/// `world/v2` bump was the same problem all along. Every variant now
+/// revalidates after thirty minutes against an ETag.
 #[tokio::test]
-async fn planet_responses_stay_immutable() {
+async fn planet_responses_revalidate_not_immutable() {
     let addr = spawn_http_server().await;
-    let req = format!(
-        "GET /api/world?sector=Trojan+Reach&hex=2018&name=Noricum&uwp=D8867BB-1 HTTP/1.1\r\n\
-         Host: {addr}\r\nConnection: close\r\n\r\n"
+    for extra in ["", "&projection=globe&format=png", "&projection=globe&format=texture"] {
+        let req = format!(
+            "GET /api/world?{NORICUM_WORLD}{extra} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
+        );
+        let head = split_response(&send_request(addr, &req).await).0.to_lowercase();
+        assert!(head.starts_with("http/1.1 200 ok"), "{extra}:\n{head}");
+        assert!(!head.contains("immutable"), "{extra} still claims immutable:\n{head}");
+        assert!(
+            head.contains("cache-control: public, max-age=1800, must-revalidate"),
+            "{extra} lacks the 30-minute revalidating policy:\n{head}"
+        );
+        assert!(head.contains("etag:"), "{extra} has no ETag:\n{head}");
+    }
+}
+
+fn etag_of(head: &str) -> String {
+    head.lines()
+        .find_map(|l| {
+            l.split_once(':')
+                .filter(|(k, _)| k.trim().eq_ignore_ascii_case("etag"))
+                .map(|(_, v)| v.trim().to_string())
+        })
+        .expect("an ETag")
+}
+
+/// A browser holding the current world image gets a bodyless 304, and a
+/// different scale or lock is a different ETag — so an edit reaches it.
+#[tokio::test]
+async fn world_etag_revalidates_and_tracks_scale_and_lock() {
+    let addr = spawn_http_server().await;
+    let get = |extra: &str| {
+        format!(
+            "GET /api/world?{NORICUM_WORLD}{extra} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
+        )
+    };
+    let etag = etag_of(&split_response(&send_request(addr, &get("")).await).0);
+
+    let conditional = format!(
+        "GET /api/world?{NORICUM_WORLD} HTTP/1.1\r\nHost: {addr}\r\n\
+         If-None-Match: {etag}\r\nConnection: close\r\n\r\n"
     );
-    let head = split_response(&send_request(addr, &req).await).0;
-    assert!(
-        head.to_lowercase().contains("immutable"),
-        "planet renders should stay immutable:\n{head}"
-    );
+    let (head, body) = split_response(&send_request(addr, &conditional).await);
+    assert!(head.starts_with("HTTP/1.1 304 Not Modified"), "head:\n{head}");
+    assert!(body.is_empty(), "a 304 must carry no body");
+
+    let scaled = etag_of(&split_response(&send_request(addr, &get("&scale=2.0")).await).0);
+    let locked = etag_of(&split_response(&send_request(addr, &get("&deco=tl")).await).0);
+    assert_ne!(etag, scaled, "a different scale is a different image");
+    assert_ne!(etag, locked, "a lock is a different image");
 }
 
 #[tokio::test]

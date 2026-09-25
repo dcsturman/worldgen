@@ -143,9 +143,9 @@ pub async fn handle_http(
 
     // Drain headers, keeping the one we act on.
     //
-    // `If-None-Match` matters for the system endpoints: their ETag is built
-    // from the request's *inputs* rather than its output, so a match can be
-    // answered with a 304 without generating or rendering anything.
+    // `If-None-Match` matters for the system and world endpoints: their ETags
+    // are built from the request's *inputs* rather than its output, so a match
+    // can be answered with a 304 without generating or rendering anything.
     let mut consumed = request_line.len();
     let mut if_none_match: Option<String> = None;
     loop {
@@ -218,7 +218,9 @@ pub async fn handle_http(
         "/api/system_svg" => {
             handle_system_svg(reader.get_mut(), query, head_only, if_none_match.as_deref()).await
         }
-        "/api/world" => handle_world(reader.get_mut(), query, head_only, gcs).await,
+        "/api/world" => {
+            handle_world(reader.get_mut(), query, head_only, if_none_match.as_deref(), gcs).await
+        }
         _ => write_simple(reader.get_mut(), 404, "Not Found", "Unknown endpoint").await,
     }
 }
@@ -387,7 +389,7 @@ async fn handle_system(
     // so a client that already holds this response costs nothing to serve.
     let etag = system_etag(query);
     if etag_matches(if_none_match, &etag) {
-        return write_not_modified(stream, &etag).await;
+        return write_not_modified(stream, &etag, SYSTEM_CACHE_CONTROL).await;
     }
     let req = match parse_system_request(query) {
         Ok(r) => r,
@@ -420,7 +422,7 @@ async fn handle_system_svg(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let etag = system_etag(query);
     if etag_matches(if_none_match, &etag) {
-        return write_not_modified(stream, &etag).await;
+        return write_not_modified(stream, &etag, SYSTEM_CACHE_CONTROL).await;
     }
     let req = match parse_system_request(query) {
         Ok(r) => r,
@@ -472,6 +474,7 @@ async fn handle_world(
     stream: &mut TcpStream,
     query: &str,
     head_only: bool,
+    if_none_match: Option<&str>,
     gcs: Arc<GcsClient>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let params = parse_query(query);
@@ -532,8 +535,18 @@ async fn handle_world(
     {
         let sys_seed = system_seed(sector, hex_x, hex_y);
         let seed = planet_seed(sys_seed, orbit, name);
-        return handle_world_globe(stream, &params, seed, uwp, name, &deco, head_only, gcs)
-            .await;
+        return handle_world_globe(
+            stream,
+            &params,
+            seed,
+            uwp,
+            name,
+            &deco,
+            head_only,
+            if_none_match,
+            gcs,
+        )
+        .await;
     }
 
     // Requested scale: defaults to 1.0 to match `generate_planet_png`'s
@@ -559,6 +572,12 @@ async fn handle_world(
     let seed = planet_seed(sys_seed, orbit, name);
     let cache_key = planet_cache_key(seed, uwp, name, &deco);
     let cache_object = planet_cache_object(None, cache_key, &deco);
+    // The flat map is the one variant resized after it leaves the cache, so
+    // the requested scale is part of what the client holds.
+    let etag = world_etag(&cache_object, Some(output_scale));
+    if etag_matches(if_none_match, &etag) {
+        return write_not_modified(stream, &etag, WORLD_CACHE_CONTROL).await;
+    }
 
     // Try cache first. Disabled-mode GCS returns Ok(None) here so the
     // cache_status will be "DISABLED" rather than "HIT".
@@ -647,7 +666,7 @@ async fn handle_world(
         }
     };
 
-    write_png(stream, &response_bytes, head_only, Some(cache_status)).await
+    write_png(stream, &response_bytes, head_only, Some(cache_status), &etag).await
 }
 
 /// Globe sub-handler for `GET /api/world?projection=globe`.
@@ -668,6 +687,7 @@ async fn handle_world_globe(
     name: &str,
     deco: &WorldDecorations,
     head_only: bool,
+    if_none_match: Option<&str>,
     gcs: Arc<GcsClient>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let format = params
@@ -688,8 +708,18 @@ async fn handle_world_globe(
             params.get("clouds").map(|s| s.trim().to_ascii_lowercase()).as_deref(),
             Some("0") | Some("false") | Some("no") | Some("off")
         );
-        return handle_world_globe_texture(stream, gcs, seed, uwp, name, deco, head_only, clouds)
-            .await;
+        return handle_world_globe_texture(
+            stream,
+            gcs,
+            seed,
+            uwp,
+            name,
+            deco,
+            head_only,
+            if_none_match,
+            clouds,
+        )
+        .await;
     }
 
     // Animated by default; `format=png`/`static` asks for a single frame.
@@ -697,6 +727,10 @@ async fn handle_world_globe(
     let variant = if animated { "globe-anim" } else { "globe" };
     let cache_key = planet_cache_key(seed, uwp, name, deco);
     let cache_object = planet_cache_object(Some(variant), cache_key, deco);
+    let etag = world_etag(&cache_object, None);
+    if etag_matches(if_none_match, &etag) {
+        return write_not_modified(stream, &etag, WORLD_CACHE_CONTROL).await;
+    }
 
     let uwp_owned = uwp.to_string();
     let name_owned = name.to_string();
@@ -729,7 +763,7 @@ async fn handle_world_globe(
         }
     };
 
-    serve_planet_cached(stream, &gcs, &cache_object, head_only, render).await
+    serve_planet_cached(stream, &gcs, &cache_object, head_only, &etag, render).await
 }
 
 /// Cache-or-render-then-serve for planet PNG/APNG bytes. Mirrors the flat
@@ -751,6 +785,7 @@ async fn handle_world_globe_texture(
     name: &str,
     deco: &WorldDecorations,
     head_only: bool,
+    if_none_match: Option<&str>,
     clouds: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let cache_key = planet_cache_key(seed, uwp, name, deco);
@@ -758,6 +793,10 @@ async fn handle_world_globe_texture(
     // world, so they must not share a cache slot.
     let variant = if clouds { "globe-tex" } else { "globe-tex-clear" };
     let cache_object = planet_cache_object(Some(variant), cache_key, deco);
+    let etag = world_etag(&cache_object, None);
+    if etag_matches(if_none_match, &etag) {
+        return write_not_modified(stream, &etag, WORLD_CACHE_CONTROL).await;
+    }
 
     let uwp_owned = uwp.to_string();
     let name_owned = name.to_string();
@@ -776,7 +815,7 @@ async fn handle_world_globe_texture(
     match cache_or_render_bytes(stream, &gcs, &cache_object, render).await? {
         Some((bytes, status)) => {
             let starport = read_starport_chunk(&bytes);
-            write_texture(stream, &bytes, head_only, Some(status), starport.as_deref()).await
+            write_texture(stream, &bytes, head_only, Some(status), starport.as_deref(), &etag).await
         }
         None => Ok(()), // an error response was already written
     }
@@ -846,10 +885,11 @@ async fn serve_planet_cached(
     gcs: &Arc<GcsClient>,
     cache_object: &str,
     head_only: bool,
+    etag: &str,
     render: impl Fn() -> Result<Vec<u8>, crate::api::WorldgenError>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     match cache_or_render_bytes(stream, gcs, cache_object, render).await? {
-        Some((bytes, status)) => write_png(stream, &bytes, head_only, Some(status)).await,
+        Some((bytes, status)) => write_png(stream, &bytes, head_only, Some(status), etag).await,
         None => Ok(()),
     }
 }
@@ -1137,6 +1177,7 @@ async fn write_png(
     bytes: &[u8],
     head_only: bool,
     x_cache: Option<&str>,
+    etag: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let x_cache_header = match x_cache {
         Some(v) => format!("X-Cache: {v}\r\n"),
@@ -1146,12 +1187,14 @@ async fn write_png(
         "HTTP/1.1 200 OK\r\n\
          Content-Type: image/png\r\n\
          Content-Length: {len}\r\n\
-         Cache-Control: public, max-age=31536000, immutable\r\n\
+         ETag: {etag}\r\n\
+         {cache}\
          Connection: close\r\n\
          {x_cache_header}\
          {cors}\
          \r\n",
         len = bytes.len(),
+        cache = WORLD_CACHE_CONTROL,
         cors = CORS_HEADERS,
     );
     stream.write_all(headers.as_bytes()).await?;
@@ -1171,6 +1214,7 @@ async fn write_texture(
     head_only: bool,
     x_cache: Option<&str>,
     x_starport: Option<&str>,
+    etag: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let x_cache_header = match x_cache {
         Some(v) => format!("X-Cache: {v}\r\n"),
@@ -1184,13 +1228,15 @@ async fn write_texture(
         "HTTP/1.1 200 OK\r\n\
          Content-Type: image/png\r\n\
          Content-Length: {len}\r\n\
-         Cache-Control: public, max-age=31536000, immutable\r\n\
+         ETag: {etag}\r\n\
+         {cache}\
          Connection: close\r\n\
          {x_cache_header}\
          {starport_header}\
          {cors}\
          \r\n",
         len = bytes.len(),
+        cache = WORLD_CACHE_CONTROL,
         cors = CORS_HEADERS,
     );
     stream.write_all(headers.as_bytes()).await?;
@@ -1278,6 +1324,7 @@ fn etag_matches(if_none_match: Option<&str>, etag: &str) -> bool {
 async fn write_not_modified(
     stream: &mut TcpStream,
     etag: &str,
+    cache_control: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let headers = format!(
         "HTTP/1.1 304 Not Modified\r\n\
@@ -1286,12 +1333,48 @@ async fn write_not_modified(
          Connection: close\r\n\
          {cors}\
          \r\n",
-        cache = SYSTEM_CACHE_CONTROL,
+        cache = cache_control,
         cors = CORS_HEADERS,
     );
     stream.write_all(headers.as_bytes()).await?;
     stream.shutdown().await.ok();
     Ok(())
+}
+
+/// Cache policy for `/api/world` (flat map, globe, APNG and texture).
+///
+/// These used to be `immutable` for a year, on the grounds that a world's
+/// image was a pure function of its URL. It stopped being one: a request
+/// without `deco` takes its decorations from `data/overrides.json`, so
+/// editing a lock changes what a URL shows while the URL stays the same —
+/// and a generator change behind a `world/v2` bump did the same all along.
+/// `immutable` told every browser never to ask again, so Hilfer's locked
+/// map, for one, never reached anyone who'd opened it before the lock
+/// shipped, even on a hard reload.
+///
+/// Thirty minutes of freshness, then a conditional request. The ETag
+/// ([`world_etag`]) comes from the inputs, so a still-current world is
+/// answered with a bodyless 304 before any GCS read or render.
+const WORLD_CACHE_CONTROL: &str = "Cache-Control: public, max-age=1800, must-revalidate\r\n";
+
+/// ETag for a `/api/world` response: a hash of the object's cache path and,
+/// for the flat map, the requested scale.
+///
+/// The cache path already holds everything that decides the image — the
+/// variant, the `world/v2` generator version, the decoration namespace, and
+/// the hash of seed, UWP, name and resolved decorations — so a lock edited in
+/// the override file and a generator version bump both change it. The flat
+/// map is resized after it leaves the cache, so its scale is added; the
+/// other variants are served exactly as cached.
+fn world_etag(cache_object: &str, scale: Option<f32>) -> String {
+    let mut h = SipHasher24::new_with_keys(CACHE_SIP_KEY_0, CACHE_SIP_KEY_1);
+    h.write(b"world_etag\0");
+    h.write(cache_object.as_bytes());
+    h.write_u8(0);
+    if let Some(sc) = scale {
+        h.write_u32(sc.to_bits());
+    }
+    format!("\"{:016x}\"", h.finish())
 }
 
 /// Cache policy for the system endpoints.
