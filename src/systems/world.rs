@@ -188,25 +188,28 @@ impl World {
 
     /// Converts the world's characteristics to a Traveller UWP string
     pub fn to_uwp(&self) -> String {
+        // Columns past `F` (15) — Tech Level can be `G` (16) and a few
+        // attributes occasionally exceed 15 — must use Traveller ehex, not
+        // plain hex (`{:X}` would render 16 as "10" and corrupt the UWP).
+        use crate::util::value_to_ehex;
+        // Size goes through ehex like every other column. It used to be
+        // `self.size.to_string()`, which is only safe for 1–9: size A (10)
+        // came out as "10", pushing every later column one place right, so
+        // Hilfer's B A 5 0 7 7 A-6 rendered as "B105077A-6" — ten characters,
+        // no longer a UWP.
         let size_digit = if self.is_satellite && self.size == -1 {
-            "S"
+            'S'
         } else if self.is_satellite && self.size == 0 {
-            "R"
+            'R'
         } else if self.size <= 0
             && !self.is_mainworld
             && !self.is_satellite
             && !self.name.contains("Planetoid")
         {
-            "S"
-        } else if self.size == 0 {
-            "0"
+            'S'
         } else {
-            &self.size.to_string()
+            value_to_ehex(self.size.max(0) as u32)
         };
-        // Columns past `F` (15) — Tech Level can be `G` (16) and a few
-        // attributes occasionally exceed 15 — must use Traveller ehex, not
-        // plain hex (`{:X}` would render 16 as "10" and corrupt the UWP).
-        use crate::util::value_to_ehex;
         format!(
             "{}{}{}{}{}{}{}-{}",
             self.port,
@@ -1234,4 +1237,16 @@ mod tests {
         let main = main_with_tl(12);
         assert_eq!(subordinate_tech_level(0, 6, &main), 0);
     }
+
+    /// Size 10 and above renders as one ehex digit. `to_string()` made size A
+    /// "10" and shifted every later column — Hilfer came out "B105077A-6".
+    #[test]
+    fn to_uwp_encodes_size_ten_as_a_single_ehex_digit() {
+        let w = World::from_uwp("Hilfer", "BA5077A-6", false, true).expect("parses");
+        assert_eq!(w.to_uwp(), "BA5077A-6");
+        assert_eq!(w.to_uwp().len(), 9);
+        let w = World::from_uwp("Regina", "A788899-A", false, true).expect("parses");
+        assert_eq!(w.to_uwp(), "A788899-A", "ordinary sizes unchanged");
+    }
+
 }
