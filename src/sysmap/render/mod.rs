@@ -932,11 +932,71 @@ struct LegendRow {
     kind: Option<String>,
     color: (u8, u8, u8),
     dist: String,
-    /// Distance the travel-time columns are computed over. `None` prints a
-    /// dash: the primary itself, a contact companion (no distance to
-    /// travel) and a far companion (no stated distance).
+    /// This row's distance from the primary. Orders the jump-limit row among
+    /// the bodies; `None` for companions with no orbital position.
+    radius_mkm: Option<f32>,
+    /// Distance the travel-time columns are computed over — to the main
+    /// world, see [`legend_rows`]. `None` prints a dash: the main world
+    /// itself (and a body hosting it as a moon), companions with no stated
+    /// distance, and the jump limit when the main world is already clear of
+    /// it.
     travel_mkm: Option<f32>,
     jump_limit: bool,
+}
+
+/// Where the times are measured to: the main world's name, and its distance
+/// from the primary — its own orbit, or its host's when it is a moon.
+struct TravelOrigin {
+    name: String,
+    radius_mkm: f32,
+    /// Orbit slot holding the main world or its host.
+    orbit: usize,
+}
+
+/// Find the main world among the primary's bodies and their moons.
+///
+/// `None` when it isn't there — a main world placed around a companion
+/// star has no single distance from *this* primary — in which case the
+/// legend falls back to times from the primary rather than inventing one.
+fn travel_origin(system: &System) -> Option<TravelOrigin> {
+    system.orbit_slots.iter().enumerate().find_map(|(orbit, slot)| {
+        let name = match slot.as_ref()? {
+            OrbitContent::World(w) if w.is_mainworld() => Some(w.name.clone()),
+            OrbitContent::World(w) => w
+                .satellites
+                .sats
+                .iter()
+                .find(|m| m.is_mainworld())
+                .map(|m| m.name.clone()),
+            OrbitContent::GasGiant(gg) => gg
+                .satellites()
+                .iter()
+                .find(|m| m.is_mainworld())
+                .map(|m| m.name.clone()),
+            _ => None,
+        }?;
+        Some(TravelOrigin {
+            name,
+            radius_mkm: slot_distance_mkm(orbit),
+            orbit,
+        })
+    })
+}
+
+/// Typical straight-line distance between bodies at `r1` and `r2` from the
+/// primary.
+///
+/// The map doesn't know where either body is in its orbit — the angles the
+/// diagram draws them at are decorative — so the real separation could be
+/// anything from `|r1 - r2|` (same side) to `r1 + r2` (opposite sides).
+/// Averaged over every relative position of two circular, coplanar orbits,
+/// the *squared* separation is exactly `r1² + r2²` (the cross term
+/// `-2·r1·r2·cos φ` averages to zero), so its root is an honest single
+/// "typical" figure rather than a guess — and it's what the legend caption
+/// says it is. For the primary itself (`r = 0`) it reduces to the exact
+/// distance.
+fn typical_separation_mkm(r1: f32, r2: f32) -> f32 {
+    r1.hypot(r2)
 }
 
 /// The legend's rows, top to bottom.
@@ -949,24 +1009,44 @@ struct LegendRow {
 /// footer would make the reader compare its Mkm against every row's by eye.
 ///
 /// A body exactly at the limit sorts below it — at 100D a ship can jump.
+///
+/// Times are measured **to the main world**, since that's where a ship is
+/// going or coming from most of the time: each body at the typical
+/// separation ([`typical_separation_mkm`]), the primary at its exact
+/// distance. The jump-limit row is the exception — it's the radial burn
+/// from the main world out to the primary's 100D sphere (equally, from
+/// arriving there in to the main world), which is exact, and a dash when
+/// the main world is already outside it. With no main world among the
+/// primary's bodies, times fall back to distances from the primary.
 fn legend_rows(system: &System) -> Vec<LegendRow> {
     // Same radius the map's "Jump Shadow" ring is drawn at, so the row and
     // the ring can never disagree.
     let jump_mkm = jump_shadow_mkm(&system.star);
+    let origin = travel_origin(system);
+    let travel_to = |radius: f32| -> Option<f32> {
+        Some(origin.as_ref().map_or(radius, |o| typical_separation_mkm(radius, o.radius_mkm)))
+    };
     let mut rows = vec![LegendRow {
         name: system.name.clone(),
         kind: None,
         color: LABEL,
         dist: "0.0".to_string(),
-        travel_mkm: None,
+        radius_mkm: Some(0.0),
+        travel_mkm: origin.as_ref().map(|o| o.radius_mkm),
         jump_limit: false,
     }];
+    let jump_travel = match &origin {
+        Some(o) if o.radius_mkm < jump_mkm => Some(jump_mkm - o.radius_mkm),
+        Some(_) => None,
+        None => Some(jump_mkm),
+    };
     let mut jump_row = Some(LegendRow {
         name: "Jump limit (100D)".to_string(),
         kind: None,
         color: LABEL_DIM,
         dist: format_mkm(jump_mkm),
-        travel_mkm: Some(jump_mkm),
+        radius_mkm: Some(jump_mkm),
+        travel_mkm: jump_travel,
         jump_limit: true,
     });
 
@@ -1003,7 +1083,14 @@ fn legend_rows(system: &System) -> Vec<LegendRow> {
             kind: Some(kind.to_string()),
             color,
             dist: format_mkm(dist),
-            travel_mkm: Some(dist),
+            radius_mkm: Some(dist),
+            // The main world (or the body it orbits) is where the times are
+            // measured to, so its own row has nothing to show.
+            travel_mkm: if origin.as_ref().is_some_and(|o| o.orbit == orbit) {
+                None
+            } else {
+                travel_to(dist)
+            },
             jump_limit: false,
         });
     }
@@ -1028,6 +1115,7 @@ fn legend_rows(system: &System) -> Vec<LegendRow> {
             kind: Some(format!("Star, {orbit_label}")),
             color: LABEL,
             dist: dist.to_string(),
+            radius_mkm: None,
             travel_mkm: None,
             jump_limit: false,
         });
@@ -1072,8 +1160,10 @@ fn draw_right<R: Renderer + ?Sized>(r: &mut R, right: f32, y: f32, text: &str, r
 fn draw_legend<R: Renderer + ?Sized>(r: &mut R, system: &System) {
     r.fill_text(LEGEND_X, LEGEND_TITLE_Y, 14.0, "System Objects", LABEL);
     // Caption over the thrust columns, so "1G 2G 6G" reads as travel times
-    // rather than as a property of each body.
-    let caption = "Travel time from primary";
+    // rather than as a property of each body — and says "typical", because
+    // the separations are averaged over orbital positions, not measured.
+    let caption = travel_caption(system);
+    let caption = caption.as_str();
     r.fill_text(
         LEGEND_RIGHT - text_width(caption, 10.0),
         LEGEND_TITLE_Y,
@@ -1126,6 +1216,36 @@ fn draw_legend<R: Renderer + ?Sized>(r: &mut R, system: &System) {
     }
 }
 
+/// Longest the caption may run: from the right edge back to just clear of
+/// the "System Objects" title.
+const CAPTION_MAX_W: f32 = 230.0;
+
+/// Caption over the time columns. Shortens rather than colliding with the
+/// title when the main world has a long name.
+fn travel_caption(system: &System) -> String {
+    let Some(origin) = travel_origin(system) else {
+        return "Travel time from primary".to_string();
+    };
+    let fits = |c: &str| text_width(c, 10.0) <= CAPTION_MAX_W;
+    let full = format!("Typical travel time to {}", origin.name);
+    if fits(&full) {
+        return full;
+    }
+    let short = format!("Typical time to {}", origin.name);
+    if fits(&short) {
+        return short;
+    }
+    let chars: Vec<char> = origin.name.chars().collect();
+    (1..chars.len())
+        .rev()
+        .map(|n| {
+            let head: String = chars[..n].iter().collect();
+            format!("Typical time to {}…", head.trim_end())
+        })
+        .find(|c| fits(c))
+        .unwrap_or(short)
+}
+
 fn format_mkm(d: f32) -> String {
     if d < 1000.0 {
         format!("{d:.1}")
@@ -1156,16 +1276,65 @@ mod tests {
             .iter()
             .position(|r| r.jump_limit)
             .expect("legend has a jump-limit row");
-        assert_eq!(rows[idx].travel_mkm, Some(jump));
+        assert_eq!(rows[idx].radius_mkm, Some(jump));
         // Everything listed above the limit is inside it; everything below
         // with a distance is at or beyond it.
-        assert!(rows[..idx].iter().filter_map(|r| r.travel_mkm).all(|d| d < jump));
+        assert!(rows[..idx].iter().filter_map(|r| r.radius_mkm).all(|d| d < jump));
         assert!(
             rows[idx + 1..]
                 .iter()
-                .filter_map(|r| r.travel_mkm)
+                .filter_map(|r| r.radius_mkm)
                 .all(|d| d >= jump)
         );
+    }
+
+    /// Times are to the main world: its own row is a dash, the primary is
+    /// its exact distance, every other body the typical separation.
+    #[test]
+    fn times_are_measured_to_the_main_world() {
+        let sys = regina();
+        let origin = travel_origin(&sys).expect("Regina is the main world");
+        assert_eq!(origin.name, "Regina");
+        let rows = legend_rows(&sys);
+        let main = rows
+            .iter()
+            .find(|r| r.name == "Regina" && r.kind.is_some())
+            .expect("main world row");
+        assert_eq!(main.travel_mkm, None);
+        assert_eq!(rows[0].travel_mkm, Some(origin.radius_mkm), "primary row");
+        for r in rows.iter().filter(|r| !r.jump_limit && r.kind.is_some()) {
+            if let (Some(rad), Some(t)) = (r.radius_mkm, r.travel_mkm) {
+                assert!((t - rad.hypot(origin.radius_mkm)).abs() < 1e-3, "{}", r.name);
+            }
+        }
+        // The jump-limit row is the radial burn, or a dash once clear.
+        let jump = jump_shadow_mkm(&sys.star);
+        let jr = rows.iter().find(|r| r.jump_limit).unwrap();
+        let expect = (origin.radius_mkm < jump).then_some(jump - origin.radius_mkm);
+        assert_eq!(jr.travel_mkm, expect);
+    }
+
+    #[test]
+    fn typical_separation_is_the_rms_over_orbital_phase() {
+        // Mean of |r1 - r2·e^{iφ}|² over φ is r1² + r2². Check numerically.
+        let (r1, r2) = (150.0_f32, 60.0_f32);
+        let n = 3600;
+        let mean_sq: f32 = (0..n)
+            .map(|i| {
+                let phi = i as f32 / n as f32 * std::f32::consts::TAU;
+                r1 * r1 + r2 * r2 - 2.0 * r1 * r2 * phi.cos()
+            })
+            .sum::<f32>()
+            / n as f32;
+        assert!((mean_sq.sqrt() - typical_separation_mkm(r1, r2)).abs() < 0.5);
+        assert_eq!(typical_separation_mkm(0.0, 149.6), 149.6);
+    }
+
+    #[test]
+    fn the_caption_names_the_main_world_and_says_typical() {
+        let c = travel_caption(&regina());
+        assert_eq!(c, "Typical travel time to Regina");
+        assert!(text_width(&c, 10.0) <= CAPTION_MAX_W);
     }
 
     #[test]

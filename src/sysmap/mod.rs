@@ -204,7 +204,7 @@ mod tests {
             ">1G<",
             ">2G<",
             ">6G<",
-            ">Travel time from primary<",
+            ">Typical travel time to Regina<",
         ] {
             assert!(svg.contains(header), "legend missing {header}");
         }
