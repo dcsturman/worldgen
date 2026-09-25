@@ -12,14 +12,15 @@
 pub const G_MS2: f64 = 9.81;
 
 /// Thrust ratings the legend tabulates. 1G and 2G are the common civilian
-/// drives; 6G is the ceiling for warships and the fastest thing a player
-/// can plausibly be aboard. 3G and 4G would be useful too, but the panel
-/// only has ~340 px beside the orbit diagram, and each 40 px column takes
-/// about six characters from the name column — ordinary names with a
-/// `(Gas Giant)` suffix would start truncating, which costs more at the
-/// table than the in-between thrusts buy (they can be read off by eye: time
-/// scales as 1/sqrt(G)).
-pub const THRUSTS_G: [u32; 3] = [1, 2, 6];
+/// drives, 4G the usual patrol and courier rating, and 6G the ceiling for
+/// warships — the fastest thing a player can plausibly be aboard.
+///
+/// Each column costs the name column about six characters of the ~340 px
+/// panel beside the orbit diagram, so a long generated name with a
+/// `(Gas Giant)` suffix does ellipsise; the kind is always kept (see
+/// `fit_row_label`). 3G is left out: time scales as 1/sqrt(G), so it sits
+/// between the 2G and 4G columns closely enough to read off by eye.
+pub const THRUSTS_G: [u32; 4] = [1, 2, 4, 6];
 
 /// Seconds to cover `distance_mkm` (millions of km) from rest to rest at a
 /// constant `thrust_g`, flipping at the midpoint.
