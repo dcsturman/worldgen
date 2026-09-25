@@ -149,6 +149,11 @@ pub struct TectonicField {
     /// Along-boundary modulation of continental rift depth. See
     /// [`RIFT_MIN`] for why a rift can't be a constant.
     rift: Fbm<Simplex>,
+    /// Substellar unit vector on a tidally locked world, where the prevailing
+    /// wind blows toward it instead of along latitude bands. Set after
+    /// construction by [`Self::with_substellar`] so building the field draws
+    /// exactly what it always has from its RNG.
+    substellar: Option<[f64; 3]>,
 }
 
 /// Domain-warp amplitude (sphere units). Boundaries visibly bend on the
@@ -323,7 +328,15 @@ impl TectonicField {
             wobble,
             fine_warp,
             rift,
+            substellar: None,
         }
+    }
+
+    /// Steer [`Self::rain_shadow_at`]'s wind toward a substellar point.
+    /// `None` keeps the rotating world's latitude bands.
+    pub fn with_substellar(mut self, substellar: Option<[f64; 3]>) -> Self {
+        self.substellar = substellar;
+        self
     }
 
     /// Apply 3D domain warp to a unit-sphere point. Each output component
@@ -548,30 +561,16 @@ impl TectonicField {
             return 0.0;
         }
 
-        // Latitude band → prevailing wind direction in geographic east-axis units.
-        // sphere_pos = (x, y, z) with z = sin(lat).
-        let lat = sphere_pos[2].clamp(-1.0, 1.0).asin();
-        let lat_abs = lat.abs();
-        let east_sign = if lat_abs < std::f64::consts::FRAC_PI_6 {
-            -1.0 // tropical easterlies (wind blows toward west)
-        } else if lat_abs < std::f64::consts::FRAC_PI_3 {
-            1.0 // mid-latitude westerlies
-        } else {
-            -1.0 // polar easterlies
+        let wind = match &self.substellar {
+            None => latitude_wind(sphere_pos),
+            // A locked world has no Coriolis-banded circulation to speak of:
+            // the dominant surface flow is night-side air converging on the
+            // substellar upwelling. So the wind at any point is the direction
+            // along the surface toward the substellar point — zero exactly at
+            // it and at the antistellar point, which reads as "no rain
+            // shadow" there and nowhere else.
+            Some(s) => normalize(&project_to_tangent(s, sphere_pos)),
         };
-        // East unit vector in sphere coords at this point: derivative of position
-        // w.r.t. longitude, normalized. = (-sin φ, cos φ, 0).
-        let r_xy = (sphere_pos[0] * sphere_pos[0] + sphere_pos[1] * sphere_pos[1]).sqrt();
-        let east = if r_xy < 1e-6 {
-            [1.0, 0.0, 0.0]
-        } else {
-            [-sphere_pos[1] / r_xy, sphere_pos[0] / r_xy, 0.0]
-        };
-        let wind = [
-            east[0] * east_sign,
-            east[1] * east_sign,
-            east[2] * east_sign,
-        ];
 
         // Boundary normal points from plate a (this side) toward plate b. If wind
         // has a component toward b, this point is upwind (wind hits ridge after
@@ -584,6 +583,35 @@ impl TectonicField {
             -mag // downwind / dry
         }
     }
+}
+
+/// Prevailing wind on a rotating world, from latitude bands, as a unit
+/// tangent vector at `sphere_pos`.
+fn latitude_wind(sphere_pos: &[f64; 3]) -> [f64; 3] {
+    // Latitude band → prevailing wind direction in geographic east-axis units.
+    // sphere_pos = (x, y, z) with z = sin(lat).
+    let lat = sphere_pos[2].clamp(-1.0, 1.0).asin();
+    let lat_abs = lat.abs();
+    let east_sign = if lat_abs < std::f64::consts::FRAC_PI_6 {
+        -1.0 // tropical easterlies (wind blows toward west)
+    } else if lat_abs < std::f64::consts::FRAC_PI_3 {
+        1.0 // mid-latitude westerlies
+    } else {
+        -1.0 // polar easterlies
+    };
+    // East unit vector in sphere coords at this point: derivative of position
+    // w.r.t. longitude, normalized. = (-sin φ, cos φ, 0).
+    let r_xy = (sphere_pos[0] * sphere_pos[0] + sphere_pos[1] * sphere_pos[1]).sqrt();
+    let east = if r_xy < 1e-6 {
+        [1.0, 0.0, 0.0]
+    } else {
+        [-sphere_pos[1] / r_xy, sphere_pos[0] / r_xy, 0.0]
+    };
+    [
+        east[0] * east_sign,
+        east[1] * east_sign,
+        east[2] * east_sign,
+    ]
 }
 
 fn cross(a: &[f64; 3], b: &[f64; 3]) -> [f64; 3] {

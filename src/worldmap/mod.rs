@@ -29,8 +29,15 @@ pub mod render;
 pub mod rivers;
 pub mod tectonics;
 
+#[cfg(test)]
+mod golden;
+#[cfg(test)]
+mod tide_locked;
+
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
+
+pub use crate::decorations::{LatLon, TideLock, WorldDecorations};
 
 /// Parsed UWP. `digits` holds the base-16 numerics for size, atmo,
 /// hydro, pop, gov, law, tech (indices 1..=7). Index 0 is also kept
@@ -153,11 +160,41 @@ pub struct WorldMap {
     /// Major rivers as polylines in unfolded sheet coords. Computed after
     /// elevation is finalized so it sees tectonic-uplifted terrain.
     pub rivers: Vec<rivers::RiverPath>,
+    /// Facts beyond the UWP this map was generated with (e.g. a tidal
+    /// lock). Empty for every map that existed before decorations did, and
+    /// an empty value must produce exactly the map [`generate`] always has.
+    pub decorations: WorldDecorations,
+    /// The climate the map was painted with, derived from `decorations`.
+    /// Kept on the map because the per-pixel renderers (flat raster, globe
+    /// texture, clouds) must apply the same rule the per-hex biomes did.
+    /// On a locked world `sea_level` is a threshold on
+    /// [`climate::ClimateModel::water_potential`], not on raw elevation.
+    pub climate: climate::ClimateModel,
 }
 
 /// Generate a complete world map from a UWP and seed.
+///
+/// The undecorated map — identical to [`generate_decorated`] with
+/// [`WorldDecorations::default()`].
 pub fn generate(uwp: &str, seed: u64, name: Option<&str>) -> Result<WorldMap, MapError> {
+    generate_decorated(uwp, seed, name, &WorldDecorations::default())
+}
+
+/// Generate a world map from a UWP, seed, and the world's decorations.
+///
+/// Decorations never draw from the generator's RNG: every sub-seed below is
+/// taken in the same order whatever `decorations` holds, so a decoration can
+/// only change the passes that read it, never reshuffle the ones that don't.
+pub fn generate_decorated(
+    uwp: &str,
+    seed: u64,
+    name: Option<&str>,
+    decorations: &WorldDecorations,
+) -> Result<WorldMap, MapError> {
     let uwp = Uwp::parse(uwp)?;
+    // Pure arithmetic on the decorations and the bare seed: resolving a
+    // lock must not draw from `rng` below, or every sub-seed would shift.
+    let mut climate = climate::ClimateModel::from_decorations(decorations, &uwp, seed);
     let mix = uwp.digits.iter().enumerate().fold(0u64, |a, (i, b)| {
         a.wrapping_add((*b as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15 ^ (i as u64)))
     });
@@ -175,7 +212,8 @@ pub fn generate(uwp: &str, seed: u64, name: Option<&str>) -> Result<WorldMap, Ma
     // Tectonics first — its field is owned by the elevation field so every
     // downstream sample (per-hex, per-pixel raster, sub-samples) gets the
     // tectonic uplift baked in.
-    let tectonic_field = tectonics::TectonicField::from_uwp(&uwp, tectonic_seed);
+    let tectonic_field = tectonics::TectonicField::from_uwp(&uwp, tectonic_seed)
+        .with_substellar(climate.substellar());
     let elev_field =
         noise::ElevationField::from_uwp(&uwp, elev_seed).with_tectonics(tectonic_field);
     let humidity_field = climate::HumidityField::from_uwp(&uwp, humidity_seed);
@@ -183,13 +221,15 @@ pub fn generate(uwp: &str, seed: u64, name: Option<&str>) -> Result<WorldMap, Ma
 
     let mut grid = grid::Grid::build();
     noise::compute_elevation(&mut grid, &elev_field);
-    climate::compute_climate(&mut grid, &uwp, &humidity_field);
+    climate::compute_climate(&mut grid, &uwp, &climate, &humidity_field);
 
     let mut sea_level_rng = ChaCha8Rng::seed_from_u64(sea_level_seed);
-    let sea_level = biome::compute_sea_level(&grid, &uwp, &mut sea_level_rng);
+    let sea_level =
+        biome::compute_sea_level(&grid, &uwp, &mut climate, &temp_field, &mut sea_level_rng);
     biome::assign_biomes(
         &mut grid,
         &uwp,
+        &climate,
         &elev_field,
         &humidity_field,
         &temp_field,
@@ -199,6 +239,7 @@ pub fn generate(uwp: &str, seed: u64, name: Option<&str>) -> Result<WorldMap, Ma
     features::place_features(
         &mut grid,
         &uwp,
+        &climate,
         &mut ChaCha8Rng::seed_from_u64(feature_seed),
     );
 
@@ -212,6 +253,8 @@ pub fn generate(uwp: &str, seed: u64, name: Option<&str>) -> Result<WorldMap, Ma
         temp_field,
         sea_level,
         rivers: Vec::new(),
+        decorations: decorations.clone(),
+        climate,
     };
     // Rivers depend on finalized elevation, so compute last.
     map.rivers = rivers::compute_rivers(&map);
@@ -346,6 +389,26 @@ mod tests {
         let bytes = render_png(&map).unwrap();
         assert!(bytes.len() > 1000);
         assert_eq!(&bytes[0..8], b"\x89PNG\r\n\x1a\n");
+    }
+
+    #[test]
+    fn empty_decorations_generate_the_undecorated_map() {
+        // The contract every cached world relies on: `generate_decorated`
+        // with nothing set is `generate`, pixel for pixel.
+        for (uwp, seed) in [("A788899-A", 1), ("C886977-8", 0xDEADBEEF)] {
+            let plain = generate(uwp, seed, Some("Test")).unwrap();
+            let deco =
+                generate_decorated(uwp, seed, Some("Test"), &WorldDecorations::default()).unwrap();
+            assert!(deco.decorations.is_empty());
+            assert_eq!(render_svg(&plain), render_svg(&deco), "{uwp} seed {seed}");
+        }
+    }
+
+    #[test]
+    fn decorated_map_keeps_its_decorations() {
+        let lock = WorldDecorations::tide_locked(TideLock::default());
+        let map = generate_decorated("C530677-8", 1, None, &lock).unwrap();
+        assert_eq!(map.decorations, lock);
     }
 
     #[test]

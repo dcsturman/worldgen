@@ -7,8 +7,9 @@
 
 use worldgen::seed::{planet_seed, system_seed};
 use worldgen::{
-    Constraint, PartialUwp, StarSize, StarSpec, StarType, SystemConstraints, WorldgenError,
-    build_constraints, generate_planet_png, generate_planet_png_scaled, generate_system_png,
+    Constraint, PartialUwp, StarSize, StarSpec, StarType, SystemConstraints, TideLock,
+    WorldDecorations, WorldgenError, build_constraints, generate_planet_png,
+    generate_planet_png_scaled, generate_planet_png_scaled_decorated, generate_system_png,
     generate_system_png_scaled,
 };
 
@@ -86,6 +87,35 @@ fn planet_png_scaled_at_1_0_matches_unscaled_byte_for_byte() {
     let a = generate_planet_png(42, "A788899-A", Some("Regina")).unwrap();
     let b = generate_planet_png_scaled(42, "A788899-A", Some("Regina"), 1.0).unwrap();
     assert_eq!(a, b, "scale=1.0 must be byte-identical to unscaled render");
+}
+
+#[test]
+fn planet_png_with_empty_decorations_matches_undecorated_byte_for_byte() {
+    // Every world cached before decorations existed was rendered without
+    // them; an empty value must reproduce those bytes exactly.
+    for (seed, uwp) in [(42, "A788899-A"), (7, "C530677-8")] {
+        let a = generate_planet_png(seed, uwp, Some("Regina")).unwrap();
+        let b = generate_planet_png_scaled_decorated(
+            seed,
+            uwp,
+            Some("Regina"),
+            1.0,
+            &WorldDecorations::default(),
+        )
+        .unwrap();
+        assert_eq!(a, b, "{uwp} seed {seed}: empty decorations changed the render");
+    }
+}
+
+#[test]
+fn decorations_are_reachable_from_the_crate_root() {
+    // Compile-time check as much as anything: an external consumer can name
+    // and build a decorated request with only root imports.
+    let lock = WorldDecorations::tide_locked(TideLock::default());
+    assert_eq!(lock.to_query(), "tl");
+    let bytes =
+        generate_planet_png_scaled_decorated(42, "C530677-8", Some("Regina"), 1.0, &lock).unwrap();
+    assert_eq!(&bytes[..8], PNG_MAGIC);
 }
 
 #[test]

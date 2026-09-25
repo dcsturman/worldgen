@@ -17,6 +17,8 @@
 //!   resolution-independent). See [`handle_system_svg`]. Both share
 //!   [`parse_system_request`] for parsing/validation.
 //! - `GET /api/world?…` → `200 image/png` of a planet surface (GCS-cached).
+//!   An optional `deco=…` (e.g. `deco=tl`) renders the world with
+//!   decorations beyond its UWP; see [`resolve_decorations`].
 //!
 //! All responses include permissive CORS headers (`*` origin, GET + OPTIONS
 //! allowed) so a browser client served from a different origin (e.g. the
@@ -39,13 +41,16 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
 use crate::api::{
-    generate_globe_apng, generate_globe_png, generate_globe_texture, generate_planet_png_scaled,
-    generate_system_png_scaled, generate_system_svg, parse_hex_quad,
+    generate_globe_apng, generate_globe_png, generate_globe_texture,
+    generate_planet_png_scaled_decorated, generate_system_png_scaled, generate_system_svg,
+    parse_hex_quad,
 };
 use crate::backend::gcs::GcsClient;
+use crate::decorations::{DecorationError, WorldDecorations};
 use crate::worldmap::{ApngTiming, TexSize};
 use crate::seed::{planet_seed, system_seed};
 use crate::systems::constraint::SystemConstraints;
+use crate::systems::overrides;
 
 /// Always render planet PNGs at this scale, regardless of the request's
 /// `scale` query param. On cache-hit we decode the cached PNG and
@@ -62,7 +67,7 @@ const PLANET_CANONICAL_SCALE: f32 = 2.0;
 /// (`v2`) lets us bust the cache on a worldgen version bump by
 /// changing the prefix instead of deleting objects.
 ///
-/// The cache key is `(seed, uwp, name)` — pure world *identity*, with nothing
+/// The cache key is `(seed, uwp, name, deco)` — pure world *identity*, with nothing
 /// about the generator that produced the image — so a change to worldgen does
 /// not invalidate anything on its own. Without a bump, a world someone had
 /// already viewed would keep serving its old terrain indefinitely while a
@@ -76,8 +81,20 @@ const PLANET_CANONICAL_SCALE: f32 = 2.0;
 /// than deleted, so this is reversible by putting the prefix back.
 const PLANET_CACHE_PREFIX: &str = "world/v2";
 
+/// Extra object-path segment for renders of a *decorated* world (e.g. a
+/// tidal lock), placed after the variant: `world/v2/deco-v1/…`,
+/// `world/v2/globe/deco-v1/…`. Undecorated worlds keep their old paths.
+///
+/// The decorations are already in the cache key, so this isn't needed to
+/// keep decorated and undecorated renders apart. It exists so that locked
+/// renders can be invalidated on their own: bump it whenever the decorated
+/// climate model changes what a world looks like, and only decorated worlds
+/// re-render — bumping `PLANET_CACHE_PREFIX` would throw away every
+/// undecorated world in the bucket too.
+const DECO_CACHE_VERSION: &str = "deco-v1";
+
 /// Globe (orthographic projection) render parameters for `?projection=globe`.
-/// Fixed server-side so the cache key stays `(seed, uwp, name)` per variant
+/// Fixed server-side so the cache key stays `(seed, uwp, name, deco)` per variant
 /// rather than fanning out over arbitrary sizes. The static PNG renders a bit
 /// larger than the animation, which is kept smaller to bound the APNG size
 /// (one full RGBA frame per `GLOBE_FRAMES`).
@@ -432,18 +449,25 @@ async fn handle_system_svg(
 /// ```text
 /// (sector, hex_x, hex_y)  →  seed::system_seed       →  sys_seed
 /// (sys_seed, orbit, name) →  seed::planet_seed       →  seed
-/// generate_planet_png_scaled(seed, uwp, Some(name), CANONICAL_SCALE)
-///   └─ worldmap::generate(uwp, seed, name)
+/// generate_planet_png_scaled_decorated(seed, uwp, Some(name), CANONICAL_SCALE, deco)
+///   └─ worldmap::generate_decorated(uwp, seed, name, deco)
 ///       └─ ChaCha8Rng::seed_from_u64(seed)
 /// ```
+///
+/// `deco` is the world's decorations (see [`resolve_decorations`]): the
+/// `deco` query param when given, otherwise whatever `data/overrides.json`
+/// states for the named world at `(sector, hex)`. It isn't part of the
+/// seed — adding a tidal lock changes the climate, not the terrain seed —
+/// but it is part of the cache key and path ([`planet_cache_object`]).
 ///
 /// `scale` is **not** part of the seed or the cache key — the bucket
 /// only ever stores the canonical-scale PNG, and the response is
 /// downsampled on-the-fly. `scale > CANONICAL_SCALE` is clamped (we
 /// don't upsample).
 ///
-/// Error mapping mirrors `/api/system`: 400 missing param, 422 invalid
-/// UWP (from `worldmap::generate` → `MapError`), 500 render failure.
+/// Error mapping mirrors `/api/system`: 400 missing param or bad `deco`,
+/// 422 invalid UWP (from `worldmap::generate` → `MapError`), 500 render
+/// failure.
 async fn handle_world(
     stream: &mut TcpStream,
     query: &str,
@@ -490,6 +514,13 @@ async fn handle_world(
         .and_then(|s| s.trim().parse::<i32>().ok())
         .unwrap_or(3);
 
+    let deco = match resolve_decorations(&params, sector, hex, name) {
+        Ok(d) => d,
+        Err(e) => {
+            return write_simple(stream, 400, "Bad Request", &format!("bad deco: {e}")).await;
+        }
+    };
+
     // Projection: `flat` (default — the equirectangular map every existing
     // consumer already gets) or `globe` (orthographic spinning planet). The
     // globe path has its own cache namespace and output (static PNG or
@@ -501,7 +532,8 @@ async fn handle_world(
     {
         let sys_seed = system_seed(sector, hex_x, hex_y);
         let seed = planet_seed(sys_seed, orbit, name);
-        return handle_world_globe(stream, &params, seed, uwp, name, head_only, gcs).await;
+        return handle_world_globe(stream, &params, seed, uwp, name, &deco, head_only, gcs)
+            .await;
     }
 
     // Requested scale: defaults to 1.0 to match `generate_planet_png`'s
@@ -525,8 +557,8 @@ async fn handle_world(
 
     let sys_seed = system_seed(sector, hex_x, hex_y);
     let seed = planet_seed(sys_seed, orbit, name);
-    let cache_key = planet_cache_key(seed, uwp, name);
-    let cache_object = format!("{PLANET_CACHE_PREFIX}/{cache_key:016x}.png");
+    let cache_key = planet_cache_key(seed, uwp, name, &deco);
+    let cache_object = planet_cache_object(None, cache_key, &deco);
 
     // Try cache first. Disabled-mode GCS returns Ok(None) here so the
     // cache_status will be "DISABLED" rather than "HIT".
@@ -535,7 +567,13 @@ async fn handle_world(
         Ok(None) if gcs.is_disabled() => {
             let bytes =
                 match catch_render(|| {
-                    generate_planet_png_scaled(seed, uwp, Some(name), PLANET_CANONICAL_SCALE)
+                    generate_planet_png_scaled_decorated(
+                        seed,
+                        uwp,
+                        Some(name),
+                        PLANET_CANONICAL_SCALE,
+                        &deco,
+                    )
                 }) {
                     Ok(Ok(b)) => b,
                     Ok(Err(e)) => return classify_render_error(stream, e).await,
@@ -548,7 +586,13 @@ async fn handle_world(
         Ok(None) => {
             let bytes =
                 match catch_render(|| {
-                    generate_planet_png_scaled(seed, uwp, Some(name), PLANET_CANONICAL_SCALE)
+                    generate_planet_png_scaled_decorated(
+                        seed,
+                        uwp,
+                        Some(name),
+                        PLANET_CANONICAL_SCALE,
+                        &deco,
+                    )
                 }) {
                     Ok(Ok(b)) => b,
                     Ok(Err(e)) => return classify_render_error(stream, e).await,
@@ -564,7 +608,13 @@ async fn handle_world(
             log::warn!("GCS get failed for {cache_object}: {e}; regenerating");
             let bytes =
                 match catch_render(|| {
-                    generate_planet_png_scaled(seed, uwp, Some(name), PLANET_CANONICAL_SCALE)
+                    generate_planet_png_scaled_decorated(
+                        seed,
+                        uwp,
+                        Some(name),
+                        PLANET_CANONICAL_SCALE,
+                        &deco,
+                    )
                 }) {
                     Ok(Ok(b)) => b,
                     Ok(Err(e)) => return classify_render_error(stream, e).await,
@@ -607,14 +657,16 @@ async fn handle_world(
 /// `format=apng`). Both are cached in GCS under a projection-specific path
 /// (`world/v2/globe[-anim]/…`) so they never collide with the flat map's
 /// cache. The render size and frame count are fixed server-side
-/// ([`GLOBE_PNG_SIZE`] etc.) so the cache key stays `(seed, uwp, name)` per
-/// variant.
+/// ([`GLOBE_PNG_SIZE`] etc.) so the cache key stays `(seed, uwp, name, deco)`
+/// per variant.
+#[allow(clippy::too_many_arguments)]
 async fn handle_world_globe(
     stream: &mut TcpStream,
     params: &HashMap<String, String>,
     seed: u64,
     uwp: &str,
     name: &str,
+    deco: &WorldDecorations,
     head_only: bool,
     gcs: Arc<GcsClient>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -636,17 +688,19 @@ async fn handle_world_globe(
             params.get("clouds").map(|s| s.trim().to_ascii_lowercase()).as_deref(),
             Some("0") | Some("false") | Some("no") | Some("off")
         );
-        return handle_world_globe_texture(stream, gcs, seed, uwp, name, head_only, clouds).await;
+        return handle_world_globe_texture(stream, gcs, seed, uwp, name, deco, head_only, clouds)
+            .await;
     }
 
     // Animated by default; `format=png`/`static` asks for a single frame.
     let animated = !matches!(format.as_deref(), Some("png") | Some("static"));
     let variant = if animated { "globe-anim" } else { "globe" };
-    let cache_key = planet_cache_key(seed, uwp, name);
-    let cache_object = format!("{PLANET_CACHE_PREFIX}/{variant}/{cache_key:016x}.png");
+    let cache_key = planet_cache_key(seed, uwp, name, deco);
+    let cache_object = planet_cache_object(Some(variant), cache_key, deco);
 
     let uwp_owned = uwp.to_string();
     let name_owned = name.to_string();
+    let deco = deco.clone();
     let render = move || {
         if animated {
             generate_globe_apng(
@@ -660,6 +714,7 @@ async fn handle_world_globe(
                     delay_den: GLOBE_DELAY_DEN,
                 },
                 TexSize::HIGH,
+                &deco,
             )
         } else {
             generate_globe_png(
@@ -669,6 +724,7 @@ async fn handle_world_globe(
                 GLOBE_PNG_SIZE,
                 0.0,
                 TexSize::HIGH,
+                &deco,
             )
         }
     };
@@ -686,25 +742,36 @@ async fn handle_world_globe(
 /// client-side rendering, cached under `world/v2/globe-tex/`, with the
 /// starport's `(lon, lat)` echoed back in an `X-Starport` header (read from the
 /// PNG's `Starport` tEXt chunk so it survives a cache hit).
+#[allow(clippy::too_many_arguments)]
 async fn handle_world_globe_texture(
     stream: &mut TcpStream,
     gcs: Arc<GcsClient>,
     seed: u64,
     uwp: &str,
     name: &str,
+    deco: &WorldDecorations,
     head_only: bool,
     clouds: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let cache_key = planet_cache_key(seed, uwp, name);
+    let cache_key = planet_cache_key(seed, uwp, name, deco);
     // Separate namespaces: the two variants are different images for the same
     // world, so they must not share a cache slot.
     let variant = if clouds { "globe-tex" } else { "globe-tex-clear" };
-    let cache_object = format!("{PLANET_CACHE_PREFIX}/{variant}/{cache_key:016x}.png");
+    let cache_object = planet_cache_object(Some(variant), cache_key, deco);
 
     let uwp_owned = uwp.to_string();
     let name_owned = name.to_string();
-    let render =
-        move || generate_globe_texture(seed, &uwp_owned, Some(&name_owned), TexSize::HIGH, clouds);
+    let deco = deco.clone();
+    let render = move || {
+        generate_globe_texture(
+            seed,
+            &uwp_owned,
+            Some(&name_owned),
+            TexSize::HIGH,
+            clouds,
+            &deco,
+        )
+    };
 
     match cache_or_render_bytes(stream, &gcs, &cache_object, render).await? {
         Some((bytes, status)) => {
@@ -822,14 +889,75 @@ async fn classify_render_error(
 /// derived purely from the inputs that determine the canonical-scale
 /// PNG bytes — not from `scale` (the bucket only ever stores the
 /// canonical render).
-fn planet_cache_key(seed: u64, uwp: &str, name: &str) -> u64 {
+///
+/// Empty decorations hash exactly as they did before decorations existed
+/// — nothing is written for them — so every undecorated world keeps the
+/// cache slot it already has. A non-empty value appends its canonical
+/// query encoding, which is one spelling per value, so `tl` and
+/// `tl:0:10` (different substellar points, different maps) never share a
+/// slot and no two spellings of one value can split it.
+fn planet_cache_key(seed: u64, uwp: &str, name: &str, deco: &WorldDecorations) -> u64 {
     let mut h = SipHasher24::new_with_keys(CACHE_SIP_KEY_0, CACHE_SIP_KEY_1);
     h.write(b"world_v1\0");
     h.write_u64(seed);
     h.write(uwp.trim().to_ascii_uppercase().as_bytes());
     h.write_u8(0);
     h.write(name.trim().to_lowercase().as_bytes());
+    if !deco.is_empty() {
+        h.write(b"\0deco\0");
+        h.write(deco.to_query().as_bytes());
+    }
     h.finish()
+}
+
+/// GCS object path for a cached planet render: `variant` is `None` for the
+/// flat map, else the globe variant's segment (`globe`, `globe-anim`,
+/// `globe-tex`, `globe-tex-clear`). Decorated worlds get the
+/// [`DECO_CACHE_VERSION`] segment after the variant; undecorated ones keep
+/// exactly the path they had before decorations existed.
+fn planet_cache_object(variant: Option<&str>, key: u64, deco: &WorldDecorations) -> String {
+    let variant = variant.map_or(String::new(), |v| format!("/{v}"));
+    let deco_segment = if deco.is_empty() {
+        String::new()
+    } else {
+        format!("/{DECO_CACHE_VERSION}")
+    };
+    format!("{PLANET_CACHE_PREFIX}{variant}{deco_segment}/{key:016x}.png")
+}
+
+/// The decorations a `/api/world` request renders with.
+///
+/// An explicit `deco` param wins — including `deco=none`, which forces an
+/// undecorated render even for a world the overrides lock. A missing or
+/// blank param falls back to what `data/overrides.json` states for the
+/// world `name` at `(sector, hex)`, and to no decorations when it states
+/// nothing.
+///
+/// Auto-detection (a tidal lock inferred from the star and orbit) is *not*
+/// available here: this endpoint is never told the star. A client that
+/// wants an auto-detected lock has to pass `deco=tl` itself.
+///
+/// A malformed value is an error, never ignored — a typo that quietly
+/// rendered the undecorated map would also cache it.
+fn resolve_decorations(
+    params: &HashMap<String, String>,
+    sector: &str,
+    hex: &str,
+    name: &str,
+) -> Result<WorldDecorations, DecorationError> {
+    decorations_or_else(params, || overrides::decorations_for(sector, hex, name))
+}
+
+/// [`resolve_decorations`] with the override lookup passed in, so tests can
+/// exercise the fallback without a locked world in `data/overrides.json`.
+fn decorations_or_else(
+    params: &HashMap<String, String>,
+    stated: impl FnOnce() -> Option<WorldDecorations>,
+) -> Result<WorldDecorations, DecorationError> {
+    match params.get(WorldDecorations::QUERY_PARAM) {
+        Some(q) if !q.trim().is_empty() => WorldDecorations::parse_query(q),
+        _ => Ok(stated().unwrap_or_default()),
+    }
 }
 
 /// Decode a PNG, draw it into a pixmap scaled by `factor`, re-encode.
@@ -1299,5 +1427,91 @@ mod tests {
         assert_eq!(crate::api::digit_at("804", 3), None);
         // Non-digit char yields None.
         assert_eq!(crate::api::digit_at("8X4", 1), None);
+    }
+
+    /// A tide-locked value for the cache-key tests.
+    fn locked(substellar: Option<(f64, f64)>) -> WorldDecorations {
+        WorldDecorations::tide_locked(crate::decorations::TideLock {
+            substellar: substellar
+                .map(|(lat, lon)| crate::decorations::LatLon::from_degrees(lat, lon).unwrap()),
+        })
+    }
+
+    /// The Noricum request the smoke tests use, through the real seed chain.
+    fn noricum_seed() -> u64 {
+        planet_seed(system_seed("Trojan Reach", 20, 18), 3, "Noricum")
+    }
+
+    #[test]
+    fn undecorated_cache_key_and_paths_are_unchanged() {
+        // Pinned from `planet_cache_key(seed, uwp, name)` as it was before
+        // decorations existed. If this moves, every world already in the
+        // bucket is orphaned and re-renders on its next view.
+        let key = planet_cache_key(noricum_seed(), "D8867BB-1", "Noricum", &Default::default());
+        assert_eq!(key, 0x44c4_61aa_baca_9b93);
+
+        let none = WorldDecorations::default();
+        assert_eq!(planet_cache_object(None, key, &none), "world/v2/44c461aabaca9b93.png");
+        for variant in ["globe", "globe-anim", "globe-tex", "globe-tex-clear"] {
+            assert_eq!(
+                planet_cache_object(Some(variant), key, &none),
+                format!("world/v2/{variant}/44c461aabaca9b93.png"),
+            );
+        }
+    }
+
+    #[test]
+    fn decorated_cache_keys_are_distinct() {
+        let seed = noricum_seed();
+        let key = |d: &WorldDecorations| planet_cache_key(seed, "D8867BB-1", "Noricum", d);
+        let plain = key(&WorldDecorations::default());
+        let tl = key(&locked(None));
+        let tl_0_10 = key(&locked(Some((0.0, 10.0))));
+        assert_ne!(plain, tl);
+        assert_ne!(plain, tl_0_10);
+        assert_ne!(tl, tl_0_10, "different substellar points are different maps");
+        // One value, one slot, however it was spelled on the way in.
+        assert_eq!(tl_0_10, key(&WorldDecorations::parse_query("tl:0.00:370").unwrap()));
+    }
+
+    #[test]
+    fn decorated_paths_sit_under_the_deco_namespace() {
+        let d = locked(None);
+        assert_eq!(planet_cache_object(None, 0xab, &d), "world/v2/deco-v1/00000000000000ab.png");
+        assert_eq!(
+            planet_cache_object(Some("globe-tex"), 0xab, &d),
+            "world/v2/globe-tex/deco-v1/00000000000000ab.png",
+        );
+    }
+
+    #[test]
+    fn deco_param_parses_and_rejects_unknown_tokens() {
+        let never = || -> Option<WorldDecorations> { panic!("override consulted") };
+        let q = |s: &str| parse_query(s);
+        assert_eq!(decorations_or_else(&q("deco=tl"), never).unwrap(), locked(None));
+        assert_eq!(
+            decorations_or_else(&q("deco=tl:12.5:270"), never).unwrap(),
+            locked(Some((12.5, 270.0))),
+        );
+        assert!(decorations_or_else(&q("deco=bogus"), never).is_err());
+        assert!(decorations_or_else(&q("deco=tl,tl"), never).is_err());
+    }
+
+    #[test]
+    fn missing_deco_falls_back_to_the_override() {
+        let stated = || Some(locked(None));
+        // Absent or blank → whatever the override states.
+        assert_eq!(decorations_or_else(&parse_query("uwp=x"), stated).unwrap(), locked(None));
+        assert_eq!(decorations_or_else(&parse_query("deco="), stated).unwrap(), locked(None));
+        // `none` is an explicit answer and beats the override.
+        assert!(decorations_or_else(&parse_query("deco=none"), stated).unwrap().is_empty());
+        // No override statement → undecorated.
+        assert!(decorations_or_else(&parse_query(""), || None).unwrap().is_empty());
+        // And the real lookup: a world with no override says nothing.
+        assert!(
+            resolve_decorations(&parse_query(""), "Nowhere", "0101", "Anything")
+                .unwrap()
+                .is_empty()
+        );
     }
 }

@@ -18,7 +18,9 @@
 use ::noise::{Fbm, MultiFractal, NoiseFn, Simplex};
 
 use super::WorldMap;
+use super::climate::{ClimateModel, TempField};
 use super::grid::{Face, HEXES_PER_EDGE, SHEET_WIDTH, sphere_to_xy};
+use super::noise::ElevationField;
 
 /// One river polyline in unfolded sheet coordinates. Multi-segment because
 /// the same logical river may cross the equator-zigzag seam and need to be
@@ -48,9 +50,9 @@ struct Sample {
     drainage: f64,
 }
 
-/// Compute major rivers for a finished map. Reads `map.elev_field` and
-/// `map.sea_level`; everything tectonics has done is already baked into
-/// the elevation samples.
+/// Compute major rivers for a finished map. Reads `map.elev_field` (through
+/// [`WaterTable`]) and `map.sea_level`; everything tectonics has done is
+/// already baked into the elevation samples.
 pub fn compute_rivers(map: &WorldMap) -> Vec<RiverPath> {
     // Hyd 0/1 worlds (Mars-like deserts) don't have flowing surface
     // water. Whatever liquid exists is in scattered lakes; no rivers.
@@ -87,7 +89,7 @@ pub fn compute_rivers(map: &WorldMap) -> Vec<RiverPath> {
         map.sea_level,
         threshold,
         map.seed,
-        &map.elev_field,
+        &WaterTable::of(map),
     )
 }
 
@@ -112,7 +114,7 @@ fn build_samples(map: &WorldMap) -> Vec<Sample> {
                 bary[0] * canon[0].1 + bary[1] * canon[1].1 + bary[2] * canon[2].1,
             );
             let sphere = super::grid::xy_to_sphere(canon_2d.0, canon_2d.1);
-            let elev = map.elev_field.sample(&sphere);
+            let elev = WaterTable::of(map).sample(&sphere);
             out.push(Sample {
                 face_idx: face.idx,
                 sphere_pos: sphere,
@@ -123,6 +125,41 @@ fn build_samples(map: &WorldMap) -> Vec<Sample> {
         }
     }
     out
+}
+
+/// Terrain height as the water sees it: the elevation field passed through
+/// [`ClimateModel::water_potential`], so "land" here is exactly what the
+/// renderers draw as land. On a rotating world that is the raw elevation, bit
+/// for bit; on a locked world the sea sits in a ring around the substellar
+/// point rather than below one global level, and a river that tested raw
+/// elevation would run straight across it.
+///
+/// A locked world's antistellar ice sheet reads as sea here too: nothing
+/// flows on a sheet held below freezing, so a river that reaches one ends at
+/// its edge, as it would at a coast.
+struct WaterTable<'a> {
+    field: &'a ElevationField,
+    climate: &'a ClimateModel,
+    temp_field: &'a TempField,
+    sea_level: f64,
+}
+
+impl<'a> WaterTable<'a> {
+    fn of(map: &'a WorldMap) -> Self {
+        Self {
+            field: &map.elev_field,
+            climate: &map.climate,
+            temp_field: &map.temp_field,
+            sea_level: map.sea_level,
+        }
+    }
+
+    fn sample(&self, p: &[f64; 3]) -> f64 {
+        if self.climate.under_ice_sheet(p, self.temp_field) {
+            return self.sea_level - 1.0;
+        }
+        self.climate.water_potential(self.field.sample(p), p)
+    }
 }
 
 /// Same shape as `iter_face_hex_barycentric` but for arbitrary `n`. We
@@ -250,7 +287,7 @@ fn trace_rivers(
     sea_level: f64,
     threshold: f64,
     seed: u64,
-    elev_field: &super::noise::ElevationField,
+    elev_field: &WaterTable,
 ) -> Vec<RiverPath> {
     // Compute upstream presence: a sample has any-thresholded-upstream if
     // there exists a sample whose flow_to chain reaches it AND has drainage
@@ -401,7 +438,7 @@ const MAX_DEPTH: u32 = 6;
 fn meander_polyline(
     poly: &[(f64, f64)],
     warp: &Fbm<Simplex>,
-    elev_field: &super::noise::ElevationField,
+    elev_field: &WaterTable,
     sea_level: f64,
 ) -> Vec<(f64, f64)> {
     if poly.len() < 2 {
@@ -424,7 +461,7 @@ fn subdivide(
     warp: &Fbm<Simplex>,
     depth: u32,
     out: &mut Vec<(f64, f64)>,
-    elev_field: &super::noise::ElevationField,
+    elev_field: &WaterTable,
     sea_level: f64,
 ) {
     let dx = b.0 - a.0;
@@ -458,7 +495,7 @@ fn subdivide(
     subdivide(m, b, warp, depth + 1, out, elev_field, sea_level);
 }
 
-fn is_land(elev_field: &super::noise::ElevationField, sea_level: f64, x: f64, y: f64) -> bool {
+fn is_land(elev_field: &WaterTable, sea_level: f64, x: f64, y: f64) -> bool {
     let sphere = super::grid::xy_to_sphere(x, y);
     elev_field.sample(&sphere) > sea_level
 }
@@ -468,7 +505,7 @@ fn is_land(elev_field: &super::noise::ElevationField, sea_level: f64, x: f64, y:
 /// the last point still on land, so the river polyline ends right at the
 /// shore rather than ~one sub-grid cell short of it.
 fn find_coast(
-    elev_field: &super::noise::ElevationField,
+    elev_field: &WaterTable,
     sea_level: f64,
     land: [f64; 3],
     ocean: [f64; 3],

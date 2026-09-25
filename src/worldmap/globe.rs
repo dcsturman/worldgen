@@ -365,7 +365,13 @@ fn elevation_band(
             let sphere = xy_to_sphere(sx, sy);
             let warped = map.elev_field.warp(&sphere);
             let e = map.elev_field.sample_prewarped(&sphere, &warped);
-            let above = climate::amplify_elevation(e - map.sea_level, map.uwp.hydrographics());
+            let above = map.climate.above_sea(
+                e,
+                &sphere,
+                map.sea_level,
+                map.uwp.hydrographics(),
+                &map.temp_field,
+            );
             e_row[tx] = above as f32;
             if let Some(tec) = tectonics {
                 r_row[tx] = tec.rain_shadow_at_warped(&warped) as f32;
@@ -397,16 +403,14 @@ fn color_band(
             let sphere = xy_to_sphere(sx, sy);
             let above = elev[ty * w + tx] as f64;
 
-            let raw_t = climate::temperature_at_wobbled(&sphere, &map.temp_field);
-            let t = climate::apply_lapse(
-                climate::adjust_temperature(raw_t, &map.uwp),
-                above,
-                &map.uwp,
-            );
+            let raw_t = map
+                .climate
+                .surface_temperature(&sphere, &map.temp_field, &map.uwp);
+            let t = climate::apply_lapse(raw_t, above, &map.uwp);
 
             // Rain shadow was computed in step_elevation, which already
             // had the warped point in hand.
-            let mut hu = map.humidity_field.sample(&sphere, &map.uwp);
+            let mut hu = map.climate.humidity(&sphere, &map.humidity_field, &map.uwp);
             hu = colormap::rain_shadow_adjustment(hu, rain[ty * w + tx] as f64);
             hu = climate::apply_altitude_drying(hu, above);
             if above > 0.0 {
@@ -568,6 +572,7 @@ impl GlobeTextureJob {
         let Some(field) = CloudField::from_uwp(&map.uwp, map.seed) else {
             return;
         };
+        let field = field.with_substellar(map.climate.substellar());
         let (w, h) = (self.width as usize, self.height as usize);
         let rows = band_rows(h, self.workers);
         let chunk = rows * w;

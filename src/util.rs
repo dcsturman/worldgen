@@ -342,6 +342,19 @@ pub fn offset_to_cube(col: i32, row: i32) -> (i32, i32, i32) {
 /// seed string stays short (≤10 decimal digits) — full u64 hashes
 /// overflow the on-map seed badge.
 pub fn worldmap_url(name: &str, uwp: &str) -> String {
+    worldmap_url_decorated(name, uwp, &crate::decorations::WorldDecorations::default())
+}
+
+/// [`worldmap_url`] for a world with decorations (e.g. a tidal lock),
+/// appended as `&deco=…` only when there are any — an undecorated world's
+/// URL is exactly what [`worldmap_url`] always produced. The seed still
+/// comes from `name + uwp` alone, so locking a world changes its climate,
+/// not its terrain.
+pub fn worldmap_url_decorated(
+    name: &str,
+    uwp: &str,
+    deco: &crate::decorations::WorldDecorations,
+) -> String {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
     let mut h = DefaultHasher::new();
@@ -349,12 +362,20 @@ pub fn worldmap_url(name: &str, uwp: &str) -> String {
     uwp.hash(&mut h);
     let seed = h.finish() as u32 as u64;
     let n = if name.is_empty() { "World" } else { name };
-    format!(
+    let mut url = format!(
         "/worldmap?uwp={}&seed={}&name={}",
         urlencode_minimal(uwp),
         seed,
         urlencode_minimal(n)
-    )
+    );
+    if !deco.is_empty() {
+        url.push_str(&format!(
+            "&{}={}",
+            crate::decorations::WorldDecorations::QUERY_PARAM,
+            deco.to_query()
+        ));
+    }
+    url
 }
 
 /// Tiny URL encoder — covers the few characters our names/UWPs realistically
@@ -539,5 +560,32 @@ mod travellermap_url_tests {
             !travellermap_base_url().ends_with('/'),
             "base URL must not end with '/' so callers can concat \"/path\""
         );
+    }
+}
+
+#[cfg(test)]
+mod worldmap_url_tests {
+    use super::*;
+    use crate::decorations::{TideLock, WorldDecorations};
+
+    #[test]
+    fn undecorated_worldmap_url_is_unchanged() {
+        let plain = worldmap_url("Noricum", "D8867BB-1");
+        assert!(!plain.contains("deco"), "{plain}");
+        assert_eq!(
+            plain,
+            worldmap_url_decorated("Noricum", "D8867BB-1", &WorldDecorations::default())
+        );
+    }
+
+    #[test]
+    fn decorated_worldmap_url_appends_deco_and_keeps_the_seed() {
+        let plain = worldmap_url("Noricum", "D8867BB-1");
+        let locked = worldmap_url_decorated(
+            "Noricum",
+            "D8867BB-1",
+            &WorldDecorations::tide_locked(TideLock::default()),
+        );
+        assert_eq!(locked, format!("{plain}&deco=tl"));
     }
 }

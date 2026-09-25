@@ -23,6 +23,7 @@ pub mod backend;
 // depending on worldgen as a Cargo dep (with `default-features = false`)
 // sees these and nothing else.
 pub mod api;
+pub mod decorations;
 pub mod seed;
 pub mod sysmap;
 pub mod systems;
@@ -37,8 +38,10 @@ pub mod worldmap;
 // in one `use` statement.
 pub use api::{
     StarSpec, WorldgenError, build_constraints, generate_planet_png, generate_planet_png_scaled,
-    generate_system_png, generate_system_png_scaled, generate_system_svg, parse_stellar,
+    generate_planet_png_scaled_decorated, generate_system_png, generate_system_png_scaled,
+    generate_system_svg, parse_stellar,
 };
+pub use decorations::{LatLon, TideLock, WorldDecorations};
 pub use systems::constraint::{Constraint, PartialUwp, SystemConstraints};
 pub use systems::gas_giant::GasGiantSize;
 pub use systems::system::{StarOrbit, StarSize, StarType};

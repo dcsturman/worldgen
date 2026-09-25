@@ -12,6 +12,7 @@
 
 use crate::systems::constraint::{Constraint, ConstraintError, SystemConstraints};
 use crate::systems::system::{StarOrbit, StarSize, StarType, System};
+use crate::decorations::WorldDecorations;
 use crate::worldmap::{ApngTiming, MapError, TexSize, WorldMap};
 
 /// Unified error type for the public library API.
@@ -148,7 +149,20 @@ pub fn generate_planet_png_scaled(
     name: Option<&str>,
     scale: f32,
 ) -> Result<Vec<u8>, WorldgenError> {
-    let map: WorldMap = crate::worldmap::generate(uwp, seed, name)?;
+    generate_planet_png_scaled_decorated(seed, uwp, name, scale, &WorldDecorations::default())
+}
+
+/// [`generate_planet_png_scaled`] for a world with decorations beyond its
+/// UWP (e.g. a tidal lock). Empty `decorations` is byte-identical to the
+/// undecorated call.
+pub fn generate_planet_png_scaled_decorated(
+    seed: u64,
+    uwp: &str,
+    name: Option<&str>,
+    scale: f32,
+    decorations: &WorldDecorations,
+) -> Result<Vec<u8>, WorldgenError> {
+    let map: WorldMap = crate::worldmap::generate_decorated(uwp, seed, name, decorations)?;
     crate::worldmap::render_png_scaled(&map, scale).map_err(WorldgenError::Render)
 }
 
@@ -156,8 +170,9 @@ pub fn generate_planet_png_scaled(
 /// projection of the same terrain the flat map shows, rendered as a square
 /// PNG of side `size`, viewed at sub-viewer longitude `spin` (radians).
 ///
-/// Same `(seed, uwp, name)` always produces the same globe — the projection
-/// is a deterministic re-view of the deterministic surface, no extra RNG.
+/// Same `(seed, uwp, name, decorations)` always produces the same globe —
+/// the projection is a deterministic re-view of the deterministic surface,
+/// no extra RNG.
 pub fn generate_globe_png(
     seed: u64,
     uwp: &str,
@@ -165,8 +180,9 @@ pub fn generate_globe_png(
     size: u32,
     spin: f64,
     tex_size: TexSize,
+    decorations: &WorldDecorations,
 ) -> Result<Vec<u8>, WorldgenError> {
-    let map: WorldMap = crate::worldmap::generate(uwp, seed, name)?;
+    let map: WorldMap = crate::worldmap::generate_decorated(uwp, seed, name, decorations)?;
     crate::worldmap::render_globe_png(&map, size, spin, tex_size).map_err(WorldgenError::Render)
 }
 
@@ -175,7 +191,8 @@ pub fn generate_globe_png(
 /// `delay_num/delay_den` seconds, looping forever. APNG is a PNG (served as
 /// `image/png`) and animates natively in every modern browser.
 ///
-/// Deterministic for fixed `(seed, uwp, name, size, timing, tex_size)`.
+/// Deterministic for fixed `(seed, uwp, name, size, timing, tex_size,
+/// decorations)`.
 pub fn generate_globe_apng(
     seed: u64,
     uwp: &str,
@@ -183,8 +200,9 @@ pub fn generate_globe_apng(
     size: u32,
     timing: ApngTiming,
     tex_size: TexSize,
+    decorations: &WorldDecorations,
 ) -> Result<Vec<u8>, WorldgenError> {
-    let map: WorldMap = crate::worldmap::generate(uwp, seed, name)?;
+    let map: WorldMap = crate::worldmap::generate_decorated(uwp, seed, name, decorations)?;
     crate::worldmap::render_globe_apng(&map, size, timing, tex_size)
         .map_err(WorldgenError::Render)
 }
@@ -194,16 +212,17 @@ pub fn generate_globe_apng(
 /// surface; alpha is the night-side city-light emissive intensity. The
 /// starport's `(lon, lat)` is embedded as a `Starport` tEXt chunk when present.
 ///
-/// Deterministic for a fixed `(seed, uwp, name)` — the texture is a
-/// deterministic function of the generated world.
+/// Deterministic for a fixed `(seed, uwp, name, decorations)` — the texture
+/// is a deterministic function of the generated world.
 pub fn generate_globe_texture(
     seed: u64,
     uwp: &str,
     name: Option<&str>,
     tex_size: TexSize,
     clouds: bool,
+    decorations: &WorldDecorations,
 ) -> Result<Vec<u8>, WorldgenError> {
-    let map: WorldMap = crate::worldmap::generate(uwp, seed, name)?;
+    let map: WorldMap = crate::worldmap::generate_decorated(uwp, seed, name, decorations)?;
     crate::worldmap::render_globe_texture(&map, tex_size, clouds).map_err(WorldgenError::Render)
 }
 

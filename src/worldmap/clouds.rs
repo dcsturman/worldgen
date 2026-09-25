@@ -148,6 +148,10 @@ pub struct CloudField {
     warp: Fbm<Simplex>,
     /// Base coverage from the UWP, before latitude banding.
     coverage: f64,
+    /// Substellar unit vector on a tidally locked world, whose weather is
+    /// banded by distance from the hot spot instead of by latitude. `None`
+    /// for a rotating world.
+    substellar: Option<[f64; 3]>,
 }
 
 impl CloudField {
@@ -208,12 +212,28 @@ impl CloudField {
             detail,
             warp,
             coverage,
+            substellar: None,
         })
+    }
+
+    /// Band the deck around a substellar point rather than by latitude.
+    /// `None` leaves the rotating world's bands untouched.
+    pub fn with_substellar(mut self, substellar: Option<[f64; 3]>) -> Self {
+        self.substellar = substellar;
+        self
     }
 
     /// Cloud opacity at a unit-sphere position, in `[0, MAX_OPACITY]`.
     pub fn opacity_at(&self, p: &[f64; 3]) -> f64 {
-        let target = (self.coverage * band(p[2].clamp(-1.0, 1.0).asin())).clamp(0.0, 1.0);
+        let banding = match &self.substellar {
+            None => band(p[2].clamp(-1.0, 1.0).asin()),
+            Some(s) => locked_band(
+                (p[0] * s[0] + p[1] * s[1] + p[2] * s[2])
+                    .clamp(-1.0, 1.0)
+                    .acos(),
+            ),
+        };
+        let target = (self.coverage * banding).clamp(0.0, 1.0);
         if target <= 0.0 {
             return 0.0;
         }
@@ -253,6 +273,22 @@ fn band(lat: f64) -> f64 {
     // Baseline, plus the two wet bands. The subtropical dry zone emerges from
     // the gap between them rather than being subtracted explicitly.
     (0.42 + 0.85 * gauss(0.0, 11.0) + 0.70 * gauss(55.0, 19.0)).min(1.35)
+}
+
+/// Cloud weighting on a tidally locked world, `theta` in radians from the
+/// substellar point.
+///
+/// Circulation models of locked planets agree on the shape: air rises in one
+/// permanent convective cell over the substellar point, which builds a thick
+/// deck there (it is what keeps such worlds' day sides from cooking), then
+/// flows out toward the terminator and sinks on the night side, where
+/// descending dry air leaves the sky nearly clear. So the deck thins
+/// outward from the hot spot into a thin terminator fringe and all but
+/// vanishes past it — concentric, like the climate under it.
+fn locked_band(theta: f64) -> f64 {
+    let d = theta.to_degrees();
+    let gauss = |mu: f64, sigma: f64| (-((d - mu) / sigma).powi(2) * 0.5).exp();
+    (0.12 + 1.10 * gauss(0.0, 32.0) + 0.30 * gauss(85.0, 14.0)).min(1.35)
 }
 
 fn smoothstep(e0: f64, e1: f64, x: f64) -> f64 {

@@ -195,7 +195,7 @@ use crate::systems::system::{
     OrbitContent, OrbitContentStoreFields, StarOrbit, System, SystemStoreFields,
 };
 use crate::systems::world::{Satellites, SatellitesStoreFields, World, WorldStoreFields};
-use crate::util::worldmap_url;
+use crate::util::worldmap_url_decorated;
 
 /// Main world list component displaying complete star system information
 ///
@@ -544,7 +544,11 @@ pub fn WorldView(#[prop(into)] world: Field<World>, satellite: bool) -> impl Int
                         if world.size <= 0 {
                             view! { <span /> }.into_any()
                         } else {
-                            let href = worldmap_url(&world.name, &world.to_uwp());
+                            let href = worldmap_url_decorated(
+                                &world.name,
+                                &world.to_uwp(),
+                                world.decorations(),
+                            );
                             view! {
                                 <a class="map-link" href=href target="_blank" title="Open this world's map in a new tab">"Map"</a>
                             }.into_any()

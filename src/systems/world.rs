@@ -12,7 +12,8 @@ use std::fmt::Display;
 #[allow(unused_imports)]
 use log::debug;
 
-use crate::systems::astro::AstroData;
+use crate::decorations::{TideLock, WorldDecorations};
+use crate::systems::astro::{AstroData, auto_tide_locked};
 use crate::systems::constraint::PartialUwp;
 use crate::systems::has_satellites::HasSatellites;
 use crate::systems::name_tables::{gen_moon_name, gen_planet_name};
@@ -49,6 +50,18 @@ pub struct World {
     pub travel_zone: ZoneClassification,
     astro_data: AstroData,
     pub coordinates: Option<(i32, i32)>,
+    /// Facts beyond the UWP that change how this world's map is drawn —
+    /// today, only a tidal lock. Set by auto-detection when the world is
+    /// placed (see [`World::compute_astro_data`]) and by overrides after
+    /// generation, which win.
+    ///
+    /// `serde(default)` is load-bearing: `World` has no container-level
+    /// default and is deserialized from stored Firestore documents and from
+    /// `TradeState` messages written before this field existed. Skipping it
+    /// when empty keeps every unlocked world's JSON byte-identical to what it
+    /// was.
+    #[serde(default, skip_serializing_if = "WorldDecorations::is_empty")]
+    pub decorations: WorldDecorations,
 }
 
 /// Enum for facilities that can be present on a world
@@ -119,6 +132,7 @@ impl World {
             travel_zone: ZoneClassification::Green,
             astro_data: AstroData::new(),
             coordinates: None,
+            decorations: WorldDecorations::default(),
         }
     }
     /// Generates a name for the world based on system name and orbital position
@@ -526,14 +540,69 @@ impl World {
     /// # Arguments
     ///
     /// * `star` - Reference to the star this world orbits
+    ///
+    /// Also auto-detects a tidal lock (see [`auto_tide_locked`]), since this
+    /// is the one call every placement path already makes once the world's
+    /// orbit is known. Satellites are skipped: a moon locks to its planet,
+    /// not its star.
     pub fn compute_astro_data(&mut self, star: &Star) {
+        self.compute_astro_data_orbiting(star, self.is_satellite);
+    }
+
+    /// [`compute_astro_data`](Self::compute_astro_data) for a world whose
+    /// moon-ness isn't recorded in `is_satellite` — the main world placed
+    /// around a gas giant keeps `is_satellite = false` (flipping it would
+    /// change how its UWP renders), but it is still a moon and must not be
+    /// auto-locked to the star.
+    pub(crate) fn compute_astro_data_orbiting(&mut self, star: &Star, is_moon: bool) {
         let astro = AstroData::compute(star, self);
+        // Only ever *sets* a lock. A "no" leaves the field alone so it can't
+        // undo anything else; an explicit override is what clears one, and
+        // it's applied after the last time this runs.
+        //
+        // Size 0 in a planet slot is a planetoid belt (and S a body too small
+        // to map): a swarm of rocks has no face to keep toward anything.
+        if !is_moon && self.size > 0 && auto_tide_locked(star, astro.orbit_distance_au()) {
+            self.decorations.tide_locked = Some(TideLock::default());
+        }
         self.astro_data = astro;
     }
 
     /// Returns a formatted description of the world's astronomical characteristics
     pub fn get_astro_description(&self) -> String {
         self.astro_data.get_astro_description(self)
+    }
+
+    /// Everything beyond the UWP that shapes this world's map.
+    pub fn decorations(&self) -> &WorldDecorations {
+        &self.decorations
+    }
+
+    /// Whether the world keeps one face to its star.
+    pub fn is_tide_locked(&self) -> bool {
+        self.decorations.tide_locked.is_some()
+    }
+
+    /// Orbital period in Earth years. Zero until the world has been placed
+    /// and [`compute_astro_data`](Self::compute_astro_data) has run.
+    pub fn orbital_period_years(&self) -> f32 {
+        self.astro_data.orbital_period_years()
+    }
+
+    /// Length of a solar day in Earth years, where it's known.
+    ///
+    /// A tide-locked world turns once per orbit, so its day *is* its year.
+    /// Nothing else has a rotation model in this codebase, so `None` means
+    /// "not modelled", not "zero".
+    ///
+    /// Reads the period from `AstroData` rather than recomputing it, so the
+    /// day inherits whatever that computes — including its Kepler formula,
+    /// which is `sqrt(M·a³)` where Kepler's third law is `sqrt(a³/M)`. For a
+    /// 0.33 M☉ star at orbit 0 that reports ~18 days instead of ~57. It's
+    /// left alone here because fixing it changes every world's description;
+    /// when it is fixed, this follows automatically.
+    pub fn day_length_years(&self) -> Option<f32> {
+        self.is_tide_locked().then(|| self.orbital_period_years())
     }
 
     /// Constraint-aware version of [`World::generate`]: every UWP
@@ -1233,5 +1302,140 @@ mod tests {
         assert_eq!(subordinate_tech_level(0, 0, &main), 0);
         let main = main_with_tl(12);
         assert_eq!(subordinate_tech_level(0, 6, &main), 0);
+    }
+
+    // ---- Tidal locking ----
+
+    fn star(class: &str) -> Star {
+        let spec = crate::api::parse_stellar(class)
+            .into_iter()
+            .next()
+            .expect("a parseable class");
+        Star {
+            star_type: spec.spectral,
+            subtype: spec.subtype.unwrap_or(0),
+            size: spec.size,
+        }
+    }
+
+    /// A size-7 planet placed directly around `class` at `orbit`.
+    fn placed(class: &str, orbit: usize, is_satellite: bool) -> World {
+        let mut w = World::new("Test".into(), orbit, orbit, 7, 6, 5, 5, is_satellite, false);
+        w.compute_astro_data(&star(class));
+        w
+    }
+
+    #[test]
+    fn an_auto_lock_uses_the_seed_derived_substellar_point() {
+        let w = placed("M5 V", 0, false);
+        assert_eq!(w.decorations().tide_locked, Some(TideLock::default()));
+    }
+
+    /// The lock radius is 0.38·M^(1/3) AU; orbit 0 is 0.1999 AU, orbit 1
+    /// 0.3997 AU, orbit 2 0.70 AU.
+    #[test]
+    fn the_lock_radius_grows_with_stellar_mass() {
+        for (class, deepest_locked) in [
+            ("M5 V", 0),
+            ("M9 V", 0),
+            ("M0 V", 0),
+            ("K5 V", 0),
+            // G2 rounds to G0 (1.04 M☉): 0.385 AU, just short of orbit 1.
+            // Mercury isn't locked either.
+            ("G2 V", 0),
+            // 1.3 M☉: 0.415 AU.
+            ("F5 V", 1),
+            // 3.2 M☉: 0.56 AU.
+            ("A0 V", 1),
+        ] {
+            for orbit in 0..=2 {
+                assert_eq!(
+                    placed(class, orbit, false).is_tide_locked(),
+                    orbit <= deepest_locked,
+                    "{class} orbit {orbit}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn only_main_sequence_stars_auto_lock() {
+        for class in ["M5 D", "K0 III", "G5 III", "M0 D"] {
+            assert!(!placed(class, 0, false).is_tide_locked(), "{class}");
+        }
+    }
+
+    #[test]
+    fn moons_and_belts_are_never_auto_locked() {
+        // A moon locks to its planet, not the star.
+        assert!(!placed("M5 V", 0, true).is_tide_locked());
+        // Size 0 in a planet slot is a belt.
+        let mut belt = World::new("Belt".into(), 0, 0, 0, 0, 0, 0, false, false);
+        belt.compute_astro_data(&star("M5 V"));
+        assert!(!belt.is_tide_locked());
+        // The main world placed as a gas giant's moon keeps
+        // `is_satellite = false`, so it has to be told.
+        let mut mw = World::new("Main".into(), 3, 0, 7, 6, 5, 5, false, true);
+        mw.compute_astro_data_orbiting(&star("M5 V"), true);
+        assert!(!mw.is_tide_locked());
+    }
+
+    /// Auto-detection only ever adds a lock. Clearing one is an override's
+    /// job, so a "no" from detection can't erase a stated lock.
+    #[test]
+    fn auto_detection_never_clears_a_lock() {
+        let mut w = World::new("Test".into(), 0, 0, 7, 6, 5, 5, false, false);
+        w.decorations = WorldDecorations::tide_locked(TideLock::default());
+        w.compute_astro_data(&star("M5 D"));
+        assert!(w.is_tide_locked());
+    }
+
+    #[test]
+    fn a_locked_worlds_day_is_its_year() {
+        let locked = placed("M5 V", 0, false);
+        let period = locked.orbital_period_years();
+        assert!(period > 0.0);
+        assert_eq!(locked.day_length_years(), Some(period));
+
+        let free = placed("G2 V", 1, false);
+        assert!(free.orbital_period_years() > 0.0, "period is exposed either way");
+        assert_eq!(free.day_length_years(), None);
+    }
+
+    #[test]
+    fn the_description_mentions_a_lock_only_when_there_is_one() {
+        let locked = placed("M5 V", 0, false);
+        let desc = locked.get_astro_description();
+        assert!(desc.contains(", tide-locked (day = year = "), "{desc}");
+        assert!(desc.ends_with(" days)"), "{desc}");
+
+        let free = placed("G2 V", 1, false);
+        assert!(!free.get_astro_description().contains("tide-locked"));
+
+        // A vacuum world gets no climate line, but a lock is still a fact.
+        let mut rock = World::new("Rock".into(), 0, 0, 4, 0, 0, 0, false, false);
+        rock.compute_astro_data(&star("M5 V"));
+        assert!(rock.get_astro_description().starts_with("tide-locked"));
+        let mut free_rock = World::new("Rock".into(), 1, 1, 4, 0, 0, 0, false, false);
+        free_rock.compute_astro_data(&star("G2 V"));
+        assert_eq!(free_rock.get_astro_description(), "");
+    }
+
+    /// Stored Firestore documents and `TradeState` messages predate the
+    /// field; they must load, and an unlocked world must write exactly what
+    /// it always did.
+    #[test]
+    fn decorations_are_invisible_in_json_until_set() {
+        let free = placed("G2 V", 1, false);
+        let json = serde_json::to_string(&free).unwrap();
+        assert!(!json.contains("decorations"), "{json}");
+        let back: World = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, free);
+
+        let locked = placed("M5 V", 0, false);
+        let json = serde_json::to_string(&locked).unwrap();
+        assert!(json.contains(r#""decorations":{"tide_locked":{}}"#), "{json}");
+        let back: World = serde_json::from_str(&json).unwrap();
+        assert!(back.is_tide_locked());
     }
 }
