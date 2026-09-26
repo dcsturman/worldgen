@@ -78,6 +78,39 @@ pub struct Physics {
     /// A place to land and melt ice for fuel (Section 5.5).
     #[serde(default)]
     pub ice_source: bool,
+    /// Mean surface temperature and band (Section 7.5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<crate::callisto::temperature::Temperature>,
+    /// How well the published facts and the physics agree (IMPLEMENTATION.md
+    /// §7).
+    #[serde(default)]
+    pub fit: Fit,
+    /// Oddities with an easy story (rulebook Section 13.2), and what the
+    /// rules left odd: on the record, but not strained.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub oddities: Vec<String>,
+}
+
+/// How a world's published facts and the physics agree.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Fit {
+    /// Nothing adjusted.
+    Exact,
+    /// Only unstated quantities were set: the normal case.
+    #[default]
+    Tuned,
+    /// An unconstrained star or orbit was chosen to suit the world, or a
+    /// companion was moved.
+    Adjusted { what: String, why: String },
+    /// A constraint forced a physically unviable result; the story is what
+    /// the generator settled on. These go to the review file.
+    Strained { story: String },
+}
+
+impl Fit {
+    pub fn is_strained(&self) -> bool {
+        matches!(self, Fit::Strained { .. })
+    }
 }
 
 /// The kinds of giant planet (Table 17).

@@ -7,7 +7,9 @@
 //! yet; giants, belts and other worlds arrive with the later stages, so the
 //! PBG and world counts only size the orbit list for now.
 
-use crate::callisto::body::{BodyClass, GiantKind, IceAvailability, Physics};
+use crate::callisto::body::{BodyClass, Fit, GiantKind, IceAvailability, Physics};
+use crate::callisto::fit::assess;
+use crate::callisto::temperature::temperature;
 use crate::callisto::dice::{Rng, Roller};
 use crate::callisto::fill::{
     composition, first_giant, giant_kind, giants_present, gravity, ice, number_of_giants,
@@ -314,7 +316,62 @@ pub fn generate(
         gravity: mw_composition.map(|c| gravity(main_world.size, c)),
         hydro_is_ice: matches!(mw_zone, Zone::Cold | Zone::Outer) && main_world.hydro >= 1,
         ice_source: false,
+        temperature: None,
+        fit: Fit::Tuned,
+        oddities: Vec::new(),
     }));
+
+    // What the main world's placement had to do or couldn't (Section 13.2),
+    // settled into its fit once its temperature is known.
+    let mut mw_oddities = crate::callisto::fit::uwp_oddities(
+        main_world.size,
+        main_world.atmosphere,
+        main_world.hydro,
+        mw_zone,
+    );
+    let mut mw_strains = Vec::new();
+    let mut mw_adjustments = Vec::new();
+    if !primary.can_host_main_world() {
+        match host {
+            Some(i) => mw_adjustments.push((
+                "host star".to_string(),
+                format!(
+                    "the listed {} cannot host a main world, so it orbits the {} companion",
+                    primary.star, companions[i].star.star
+                ),
+            )),
+            None => mw_strains.push(format!(
+                "The listed {} cannot host a main world (Section 3.5) and no main-sequence \
+                 companion can; the world orbits it anyway",
+                primary.star
+            )),
+        }
+    }
+    if host.is_none() && primary_gaps.iter().any(|g| g.contains(mw_position)) {
+        if stated_mkm.is_some() {
+            mw_strains.push(format!(
+                "Its published orbit, {mw_position:.2} HD, lies where a companion leaves no \
+                 stable orbit; kept, and the companion's orbit must be more eccentric or more \
+                 inclined than the rules assume"
+            ));
+        } else {
+            mw_oddities.push(format!(
+                "At {mw_position:.2} HD it sits where a companion leaves no stable orbit: the \
+                 rules move a companion only for a habitable main world"
+            ));
+        }
+    }
+    if let Some(c) = companions.iter().find(|c| c.moved.is_some()) {
+        mw_adjustments.push((
+            "companion star".to_string(),
+            format!("the {} was moved to keep the habitable zone stable", c.star.star),
+        ));
+    }
+    let mut mw_fit = Some(MainWorldFit {
+        strains: mw_strains,
+        adjustments: mw_adjustments,
+        oddities: mw_oddities,
+    });
 
     // Build the systems, innermost structure first.
     let system_name = constraints
@@ -367,6 +424,7 @@ pub fn generate(
                 notes,
                 &companion_plans[i],
                 if hosted { host_fuel.take() } else { None },
+                if hosted { mw_fit.take() } else { None },
             )
         })
         .collect();
@@ -379,6 +437,7 @@ pub fn generate(
         primary_notes,
         &primary_plan,
         host_fuel.take(),
+        mw_fit.take(),
     );
     if let Some(layout) = system.callisto.as_mut() {
         layout.gaps = primary_gaps;
@@ -718,7 +777,17 @@ fn populate_host(
     (ice, ice_in_moons)
 }
 
+/// What the main world's placement strained, adjusted or left odd, settled
+/// into its fit once its temperature is known.
+#[derive(Debug, Default)]
+struct MainWorldFit {
+    strains: Vec<String>,
+    adjustments: Vec<(String, String)>,
+    oddities: Vec<String>,
+}
+
 /// One star's `System`: its slots materialized as orbit contents.
+#[allow(clippy::too_many_arguments)]
 fn build_system(
     cstar: &CStar,
     name: String,
@@ -727,7 +796,9 @@ fn build_system(
     notes: Vec<String>,
     plan: &OrbitPlan,
     fuel: Option<(IceAvailability, bool)>,
+    mw_fit: Option<MainWorldFit>,
 ) -> System {
+    let mut mw_fit = mw_fit;
     let data = cstar.data();
     let star = cstar.star;
     let mut system = System::new(star.star_type, star.subtype, star.size, StarOrbit::Primary, 0);
@@ -747,6 +818,16 @@ fn build_system(
                 w.orbit_distance_mkm = Some(distance);
                 w.compute_astro_data(&star);
                 mw_slot = Some(i);
+                let (atm, hyd) = (w.atmosphere, w.hydro);
+                if let Some(p) = w.callisto.as_deref_mut() {
+                    let t = temperature(slot.position, atm, hyd, p.hydro_is_ice);
+                    let MainWorldFit { mut strains, adjustments, oddities } =
+                        mw_fit.take().unwrap_or_default();
+                    strains.extend(crate::callisto::fit::habitability_strain(atm, hyd, &t));
+                    p.temperature = Some(t);
+                    p.fit = assess(strains, adjustments);
+                    p.oddities = oddities;
+                }
                 OrbitContent::World(w)
             }),
             Fill::Giant { kind, name } => {
@@ -787,6 +868,29 @@ fn build_system(
                     None => w.gen_name(&system.name, i),
                 }
                 w.orbit_distance_mkm = Some(distance);
+                // A source's UWP is published data; a pinned orbit that had to
+                // move to a Callisto orbit is an adjustment.
+                let published = b.uwp.as_ref().is_some_and(|u| u.size.is_some() || u.atmosphere.is_some());
+                let oddities = if published {
+                    crate::callisto::fit::uwp_oddities(c.size, c.atmosphere, c.hydro, slot.zone())
+                } else {
+                    Vec::new()
+                };
+                let adjustments: Vec<(String, String)> = slot
+                    .pinned_orbit
+                    .map(crate::callisto::layout::book6_orbit_mkm)
+                    .filter(|stated| (distance / stated).ln().abs() > 0.1_f32.ln_1p())
+                    .map(|stated| {
+                        (
+                            "orbit".to_string(),
+                            format!(
+                                "the source's Book 6 orbit ({stated:.0} Mkm) is the Callisto orbit \
+                                 at {distance:.0} Mkm"
+                            ),
+                        )
+                    })
+                    .into_iter()
+                    .collect();
                 w.callisto = Some(Box::new(Physics {
                     class: b.class,
                     zone: slot.zone(),
@@ -795,6 +899,9 @@ fn build_system(
                     gravity: c.gravity,
                     hydro_is_ice: c.hydro_is_ice,
                     ice_source: is_ice_source(slot, ice),
+                    temperature: Some(temperature(slot.position, c.atmosphere, c.hydro, c.hydro_is_ice)),
+                    fit: assess(Vec::new(), adjustments),
+                    oddities,
                 }));
                 Some(OrbitContent::World(w))
             }
@@ -1180,6 +1287,67 @@ mod tests {
             let (g, b, _) = census(&generate_from_constraints_seeded(seed, cs).unwrap());
             assert_eq!((g, b), (3, 1), "{hex} pbg 213, no W");
         }
+    }
+
+    /// IMPLEMENTATION.md §1's second invariant. Main worlds rolled freely by
+    /// the Core Rulebook come out habitable (atmosphere 4–9, hydrographics
+    /// 1+) about 53% of the time; Callisto builds the system around the main
+    /// world and never touches its UWP, so the fraction can't fall. And the
+    /// point of fitting the system to the world: nearly every habitable one
+    /// should come out Temperate.
+    #[test]
+    fn habitable_main_worlds_stay_habitable() {
+        use crate::callisto::temperature::TempBand;
+        let n = 5_000u64;
+        let (mut habitable, mut temperate) = (0u32, 0u32);
+        for seed in 0..n {
+            // A Core Rulebook main world: size 2D − 2, atmosphere 2D − 7 +
+            // size, hydrographics 2D − 7 + atmosphere (−4 for 0, 1 or A+;
+            // none at size 0–1).
+            let _g = crate::util::RngScope::new(seed ^ 0x5eed);
+            let size = (crate::util::roll_2d6() - 2).max(0);
+            let atm = if size == 0 { 0 } else { (crate::util::roll_2d6() - 7 + size).clamp(0, 15) };
+            let dm = if atm <= 1 || atm >= 10 { -4 } else { 0 };
+            let hyd = if size <= 1 { 0 } else { (crate::util::roll_2d6() - 7 + atm + dm).clamp(0, 10) };
+            drop(_g);
+            let uwp = format!(
+                "C{}{}{}777-9",
+                crate::util::value_to_ehex(size as u32),
+                crate::util::value_to_ehex(atm as u32),
+                crate::util::value_to_ehex(hyd as u32)
+            );
+            let mut cs = SystemConstraints::from_main_world("Test", &uwp).unwrap();
+            cs.counts = PublishedCounts::None;
+            // A few rolled combinations fail the UWP consistency check every
+            // generator applies (atmosphere B with hydrographics A, say).
+            let Ok(s) = generate_from_constraints_seeded(seed, cs) else { continue };
+            let mw = std::iter::once(&s)
+                .chain(s.secondary.as_deref())
+                .chain(s.tertiary.as_deref())
+                .flat_map(|x| x.orbit_slots.iter().flatten())
+                .find_map(|c| match c {
+                    OrbitContent::World(w) if w.is_mainworld() => Some(w),
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(&mw.to_uwp()[..4], &uwp[..4], "seed {seed}: the main world's UWP changed");
+            if (4..=9).contains(&atm) && hyd >= 1 {
+                habitable += 1;
+                let band = mw.callisto.as_deref().unwrap().temperature.unwrap().band;
+                if band == TempBand::Temperate {
+                    temperate += 1;
+                }
+            }
+        }
+        let rate = f64::from(habitable) / n as f64;
+        assert!((0.48..=0.58).contains(&rate), "habitable main worlds: {:.1}%", rate * 100.0);
+        // Not an invariant: Table 10's bands leave the outer half of a cloudy
+        // (hydrographics 9–A) world's band Cold, and the inner end of a dry
+        // (hydrographics 1–3) world's band Hot, so about four in five come
+        // out Temperate. Printed so a change to Table 10 shows up here.
+        let t = f64::from(temperate) / f64::from(habitable);
+        println!("habitable main worlds Temperate: {:.1}%", t * 100.0);
+        assert!(t >= 0.75, "only {:.1}% of habitable main worlds came out Temperate", t * 100.0);
     }
 
     #[test]
