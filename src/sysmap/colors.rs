@@ -60,6 +60,22 @@ pub fn zone_color(orbit: usize, inner: i32, habitable: i32) -> (u8, u8, u8) {
     }
 }
 
+/// Callisto body colours: one per kind of body, so a system reads at a
+/// glance — metal, rock and ice worlds, the envelope worlds between, and the
+/// three kinds of giant.
+pub const IRON_RICH: (u8, u8, u8) = (160, 125, 110);
+pub const ROCKY: (u8, u8, u8) = (190, 175, 150);
+pub const ICE_ROCK: (u8, u8, u8) = (185, 215, 240);
+pub const SUB_NEPTUNE: (u8, u8, u8) = (95, 190, 195);
+pub const ICY_DWARF: (u8, u8, u8) = (230, 238, 250);
+pub const ICE_GIANT: (u8, u8, u8) = (110, 165, 235);
+pub const SATURN_CLASS: (u8, u8, u8) = (225, 205, 145);
+pub const JUPITER_CLASS: (u8, u8, u8) = (215, 160, 110);
+/// An ice belt's scatter, where a rock belt uses the belt tones.
+pub const ICE_BELT: (u8, u8, u8) = (170, 205, 235);
+/// The ring marking a body a ship can land on and melt for fuel.
+pub const ICE_SOURCE_MARK: (u8, u8, u8, u8) = (140, 220, 255, 170);
+
 /// A Callisto orbit position crossed out by a companion's gap: faint red.
 pub const CROSSED_OUT: (u8, u8, u8, u8) = (190, 80, 80, 70);
 

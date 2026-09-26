@@ -28,6 +28,9 @@ pub struct Layout {
     /// record (a companion moved to keep the habitable zone stable, a main
     /// world hosted by a companion). Stage 3 turns these into `Fit`.
     pub notes: Vec<String>,
+    /// The refuelling line, on the star that hosts the main world (or the
+    /// primary, without one).
+    pub fuel: Option<crate::callisto::body::Fuel>,
 }
 
 /// Where an orbit slot sits.

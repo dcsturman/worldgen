@@ -1243,11 +1243,20 @@ fn apply_post_pass(
     // so a moon of Khazha — which orbits the secondary — is invisible from
     // the primary's slots. Recursing is what lets a source table describe
     // the whole system rather than only the part orbiting the primary star.
-    let unresolved = apply_post_level(system, specs);
-    if unresolved.is_empty() {
-        return Vec::new();
-    }
-    let mut still = unresolved;
+    apply_post_tree(system, specs)
+        .into_iter()
+        .map(|(_, d)| d)
+        .collect()
+}
+
+/// [`apply_post_level`] on `system`, then on its companions and theirs, all
+/// the way down: a companion can have a companion of its own (Callisto's
+/// close pairs, Table 9), and its bodies are as real as anyone's.
+fn apply_post_tree(
+    system: &mut crate::systems::system::System,
+    specs: &[PostSpec],
+) -> Vec<(PostSpec, crate::systems::system::DroppedConstraint)> {
+    let mut still = apply_post_level(system, specs);
     for child in [system.secondary.as_deref_mut(), system.tertiary.as_deref_mut()]
         .into_iter()
         .flatten()
@@ -1256,9 +1265,9 @@ fn apply_post_pass(
             break;
         }
         let retry: Vec<PostSpec> = still.into_iter().map(|(s, _)| s).collect();
-        still = apply_post_level(child, &retry);
+        still = apply_post_tree(child, &retry);
     }
-    still.into_iter().map(|(_, d)| d).collect()
+    still
 }
 
 /// Apply what this one system can, returning the specs it couldn't resolve
@@ -1285,6 +1294,10 @@ fn apply_post_level(
         // heuristic, but it is *the* heuristic this codebase already relies on
         // to draw the map, and a second, disagreeing one would be worse.
         fn is_belt(w: &crate::systems::world::World) -> bool {
+            // A Callisto belt says so; a Book 6 one is known by its name.
+            if let Some(p) = w.callisto.as_deref() {
+                return p.class == crate::callisto::body::BodyClass::Belt;
+            }
             w.size <= 0 && w.name.to_lowercase().contains("planetoid")
         }
         let matches_kind = |c: &OrbitContent, kind: PostKind| match (c, kind) {

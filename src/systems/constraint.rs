@@ -297,6 +297,12 @@ pub struct SystemConstraints {
     /// Where the main world sits, when a source states it. `None` uses the
     /// habitable-zone default.
     pub main_world_orbit: Option<i32>,
+    /// Callisto only: the body counts are *not* published, so Callisto rolls
+    /// how many giants, belts and worlds there are. `false` (the default)
+    /// means the `GasGiant`, `Belt` and `Planet` constraints above are the
+    /// whole list — TravellerMap's PBG and `W` digits — and must be matched
+    /// exactly, which is also how Book 6 has always read them.
+    pub free_counts: bool,
     /// The main world's total satellite count. `None` rolls it.
     ///
     /// Counted as a *total*: a moon named explicitly in an override is
@@ -316,6 +322,7 @@ impl SystemConstraints {
             tertiary_bodies: Vec::new(),
             main_world_orbit: None,
             main_world_num_satellites: None,
+            free_counts: false,
             bodies: vec![Constraint::Planet {
                 name: Some(name.to_string()),
                 orbit: None,
@@ -575,6 +582,7 @@ mod tests {
             tertiary_bodies: Vec::new(),
             main_world_orbit: None,
             main_world_num_satellites: None,
+            free_counts: false,
         };
         let errs = cs.validate();
         assert!(
@@ -607,6 +615,7 @@ mod tests {
             tertiary_bodies: Vec::new(),
             main_world_orbit: None,
             main_world_num_satellites: None,
+            free_counts: false,
         };
         let errs = cs.validate();
         assert!(
@@ -632,6 +641,7 @@ mod tests {
             tertiary_bodies: Vec::new(),
             main_world_orbit: None,
             main_world_num_satellites: None,
+            free_counts: false,
         };
         let errs = cs.validate();
         assert!(

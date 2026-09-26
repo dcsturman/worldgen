@@ -7,7 +7,15 @@
 //! yet; giants, belts and other worlds arrive with the later stages, so the
 //! PBG and world counts only size the orbit list for now.
 
+use crate::callisto::body::{BodyClass, GiantKind, IceAvailability, Physics};
 use crate::callisto::dice::{Rng, Roller};
+use crate::callisto::fill::{
+    composition, first_giant, giant_kind, giants_present, gravity, ice, number_of_giants,
+};
+use crate::callisto::populate::{
+    Body, Fill, Pin, Slot, fill_open, fuel_line, is_ice_source, match_counts, place_giants,
+    place_ice_belt, place_pins, roll_codes,
+};
 use crate::callisto::layout::{Layout, OrbitInfo, Separation, book6_orbit_mkm};
 use crate::callisto::orbits::{
     Gap, MAX_POSITION_HD, OrbitPlan, Zone, lay_out, main_world_position, number_of_orbits,
@@ -17,7 +25,9 @@ use crate::callisto::stars::{
     number_of_stars, primary_luminosity, primary_spectral, roll_separation, subtype, third_star,
     white_dwarf_age,
 };
-use crate::systems::constraint::{Constraint, ConstraintError, SystemConstraints};
+use crate::systems::constraint::{Constraint, ConstraintError, PartialUwp, SystemConstraints};
+use crate::systems::gas_giant::{GasGiant, GasGiantSize};
+use crate::trade::PortCode;
 use crate::systems::overrides::Target;
 use crate::systems::system::{OrbitContent, Star, StarOrbit, StarSize, StarType, System};
 use crate::systems::world::World;
@@ -55,6 +65,8 @@ struct Companion {
     moved: Option<Move>,
     /// Set when the separation came from a constraint rather than a roll.
     pinned: bool,
+    /// Bodies a source lists around this companion, orbit numbers its own.
+    bodies: Vec<Constraint>,
 }
 
 /// Generate a Callisto system, rolling on `roller`.
@@ -99,11 +111,19 @@ pub fn generate(
     };
 
     // Steps 3 and 4: star data, then each companion's star and separation.
+    // A companion carries the bodies a source lists for it (Book 6's
+    // secondary and tertiary sub-systems, in listing order).
     let pdata = primary.data();
     let mut companions: Vec<Companion> = (1..star_count)
         .map(|i| {
             let spec = listed.get(i).cloned().unwrap_or_default();
-            resolve_companion(&spec, &primary, habitable, roller)
+            let mut c = resolve_companion(&spec, &primary, habitable, roller);
+            c.bodies = match i {
+                1 => constraints.secondary_bodies.clone(),
+                2 => constraints.tertiary_bodies.clone(),
+                _ => Vec::new(),
+            };
+            c
         })
         .collect();
 
@@ -207,8 +227,9 @@ pub fn generate(
             let data = c.star.data();
             let limit_hd = partner_hd * pdata.hd_mkm / 3.0 / data.hd_mkm;
             let hosted = host == Some(i);
+            let known = if hosted { known_bodies } else { c.bodies.len() };
             let plan = lay_out(
-                number_of_orbits(if hosted { known_bodies } else { 0 }, roller),
+                number_of_orbits(known, roller),
                 hosted.then_some(mw_position),
                 data.innermost_hd,
                 &[],
@@ -218,6 +239,62 @@ pub fn generate(
         })
         .collect();
 
+    // Steps 9 to 13: fill the orbits. The host star takes every body the
+    // constraints name; the other stars' orbits are only filled when the
+    // counts are free, since a published count describes the charted system.
+    let mut primary_slots = slots_from(&primary_plan);
+    let mut companion_slots: Vec<Vec<Slot>> = companion_plans.iter().map(slots_from).collect();
+    let host_gaps = if host.is_none() { primary_gaps.clone() } else { Vec::new() };
+    let host_notes_start = primary_notes.len();
+    let host_fuel = {
+        let (host_slots, host_star) = match host {
+            None => (&mut primary_slots, pdata),
+            Some(i) => (&mut companion_slots[i], companions[i].star.data()),
+        };
+        populate_host(host_slots, &host_star, &host_gaps, &constraints, &mut primary_notes, roller)
+    };
+    let small_star = |d: &crate::callisto::star::StarData| d.mass < 0.3;
+    // A companion a source lists bodies for gets exactly those.
+    for (i, (c, slots)) in companions.iter().zip(companion_slots.iter_mut()).enumerate() {
+        if host != Some(i) && !c.bodies.is_empty() {
+            let own = SystemConstraints {
+                bodies: c.bodies.clone(),
+                ..Default::default()
+            };
+            let mut ignored = Vec::new();
+            populate_host(slots, &c.star.data(), &[], &own, &mut ignored, roller);
+        }
+    }
+    if constraints.free_counts {
+        if host.is_some() {
+            fill_open(&mut primary_slots, small_star(&pdata), roller);
+            roll_codes(&mut primary_slots, small_star(&pdata), roller);
+        }
+        for (i, (c, slots)) in companions.iter().zip(companion_slots.iter_mut()).enumerate() {
+            if host != Some(i) && c.bodies.is_empty() {
+                let d = c.star.data();
+                fill_open(slots, small_star(&d), roller);
+                roll_codes(slots, small_star(&d), roller);
+            }
+        }
+    }
+    // The main world's own rolls: its composition (its UWP is fixed).
+    let mw_zone = Zone::at(mw_position);
+    let mw_composition = if main_world.size >= 1 {
+        Some(composition(mw_zone, 0, roller))
+    } else {
+        None
+    };
+    main_world.callisto = Some(Box::new(Physics {
+        class: if main_world.size == 0 { BodyClass::Belt } else { BodyClass::World },
+        zone: mw_zone,
+        position_hd: mw_position,
+        composition: mw_composition,
+        gravity: mw_composition.map(|c| gravity(main_world.size, c)),
+        hydro_is_ice: matches!(mw_zone, Zone::Cold | Zone::Outer) && main_world.hydro >= 1,
+        ice_source: false,
+    }));
+
     // Build the systems, innermost structure first.
     let system_name = constraints
         .system_name
@@ -225,13 +302,23 @@ pub fn generate(
         .unwrap_or_else(|| main_world.name.trim().to_string());
     main_world.gen_trade_classes();
     let mut mw = Some(main_world);
+    // The host's notes about filling it travel with the host.
+    let host_notes: Vec<String> = primary_notes.drain(host_notes_start..).collect();
+    let (mut primary_extra, mut hosted_extra) = (Vec::new(), Vec::new());
+    if host.is_none() {
+        primary_extra = host_notes;
+    } else {
+        hosted_extra = host_notes;
+    }
+    primary_notes.extend(primary_extra);
 
+    let mut host_fuel = Some(host_fuel);
     let mut built: Vec<System> = companions
         .iter()
-        .zip(&companion_plans)
+        .zip(companion_slots)
         .enumerate()
-        .map(|(i, (c, plan))| {
-            let notes = match c.moved {
+        .map(|(i, (c, slots))| {
+            let mut notes = match c.moved {
                 Some(m) => vec![format!(
                     "Moved {} to keep the habitable zone stable",
                     match m {
@@ -241,28 +328,36 @@ pub fn generate(
                 )],
                 None => Vec::new(),
             };
-            let mut s = build_system(
-                &c.star,
-                c.name.clone(),
-                plan,
-                if host == Some(i) { mw.take() } else { None },
-                notes,
-            );
             if c.pinned {
-                s.callisto.as_mut().expect("just built").notes.push(
-                    "Separation stated by the source".to_string(),
-                );
+                notes.push("Separation stated by the source".to_string());
             }
-            s
+            let hosted = host == Some(i);
+            if hosted {
+                notes.append(&mut hosted_extra);
+            }
+            let name = c.name.clone().unwrap_or_else(|| {
+                crate::systems::name_tables::gen_star_system_name()
+            });
+            build_system(
+                &c.star,
+                name,
+                slots,
+                if hosted { mw.take() } else { None },
+                notes,
+                &companion_plans[i],
+                if hosted { host_fuel.take() } else { None },
+            )
         })
         .collect();
 
     let mut system = build_system(
         &primary,
-        Some(system_name),
-        &primary_plan,
+        system_name,
+        primary_slots,
         mw.take(),
         primary_notes,
+        &primary_plan,
+        host_fuel.take(),
     );
     if let Some(layout) = system.callisto.as_mut() {
         layout.gaps = primary_gaps;
@@ -282,6 +377,9 @@ pub fn generate(
         }
     }
 
+    // Override facts aimed at a Book 6 orbit number now aim at wherever that
+    // pinned body landed.
+    let constraints = retarget_pins(constraints, &system);
     if !constraints.post.is_empty() {
         let unresolved = crate::systems::overrides::apply_post(&mut system, &constraints.post);
         system.dropped.extend(unresolved);
@@ -410,6 +508,7 @@ fn resolve_companion(
         contact,
         moved,
         pinned: pinned_hd.is_some(),
+        bodies: Vec::new(),
     }
 }
 
@@ -429,42 +528,251 @@ fn clip(plan: OrbitPlan, limit_hd: f32) -> OrbitPlan {
     }
 }
 
-/// One star's `System`: its orbits as slots, the main world in its own.
+/// Slots for a laid-out plan, the main world's marked.
+fn slots_from(plan: &OrbitPlan) -> Vec<Slot> {
+    plan.positions
+        .iter()
+        .enumerate()
+        .map(|(i, &position)| Slot {
+            position,
+            fill: if plan.main_world == Some(i) { Fill::MainWorld } else { Fill::Open },
+            pinned_orbit: None,
+        })
+        .collect()
+}
+
+/// Fill the host star's orbits (steps 9 to 13) from the constraints, and
+/// return its refuelling line's inputs.
+fn populate_host(
+    slots: &mut Vec<Slot>,
+    star: &crate::callisto::star::StarData,
+    gaps: &[Gap],
+    constraints: &SystemConstraints,
+    notes: &mut Vec<String>,
+    roller: &mut impl Roller,
+) -> (IceAvailability, bool) {
+    let small_star = star.mass < 0.3;
+    let free = constraints.free_counts;
+
+    // Bodies a source pins to a Book 6 orbit go in first.
+    let mut pins = Vec::new();
+    let (mut giants, mut belts_total, mut others_total) = (Vec::new(), 0usize, 0usize);
+    let (mut pinned_belts, mut pinned_others) = (0usize, 0usize);
+    let mut unpinned: Vec<(BodyClass, Option<String>, Option<PartialUwp>)> = Vec::new();
+    for b in &constraints.bodies {
+        match b {
+            Constraint::GasGiant { name, orbit, size, .. } => {
+                let kind = match size {
+                    Some(GasGiantSize::Large) => GiantKind::JupiterClass,
+                    // A source's "small" giant is an ice giant or a
+                    // Saturn-class one: roll which, as Table 17 would.
+                    Some(GasGiantSize::Small) => {
+                        if roller.d2() <= 7 { GiantKind::IceGiant } else { GiantKind::SaturnClass }
+                    }
+                    None => giant_kind(roller),
+                };
+                match orbit {
+                    Some(n) => pins.push(Pin {
+                        book6_orbit: *n,
+                        position_hd: book6_orbit_mkm(*n) / star.hd_mkm,
+                        fill: Fill::Giant { kind, name: name.clone() },
+                    }),
+                    None => giants.push((kind, name.clone())),
+                }
+            }
+            Constraint::Belt { name, orbit, uwp, .. } => {
+                belts_total += 1;
+                match orbit {
+                    Some(n) => {
+                        pinned_belts += 1;
+                        let mut body = Body::new(BodyClass::Belt);
+                        body.name = name.clone();
+                        body.uwp = uwp.clone();
+                        pins.push(Pin {
+                            book6_orbit: *n,
+                            position_hd: book6_orbit_mkm(*n) / star.hd_mkm,
+                            fill: Fill::Body(body),
+                        });
+                    }
+                    None => unpinned.push((BodyClass::Belt, name.clone(), uwp.clone())),
+                }
+            }
+            Constraint::Planet { is_mainworld: false, name, orbit, uwp, .. } => {
+                others_total += 1;
+                let class = match uwp.as_ref().and_then(|u| u.size) {
+                    Some(s) if s > 10 => BodyClass::SubNeptune,
+                    _ => BodyClass::World,
+                };
+                match orbit {
+                    Some(n) => {
+                        pinned_others += 1;
+                        let mut body = Body::new(class);
+                        body.name = name.clone();
+                        body.uwp = uwp.clone();
+                        pins.push(Pin {
+                            book6_orbit: *n,
+                            position_hd: book6_orbit_mkm(*n) / star.hd_mkm,
+                            fill: Fill::Body(body),
+                        });
+                    }
+                    None => unpinned.push((class, name.clone(), uwp.clone())),
+                }
+            }
+            Constraint::Empty { orbit } => pins.push(Pin {
+                book6_orbit: *orbit,
+                position_hd: book6_orbit_mkm(*orbit) / star.hd_mkm,
+                fill: Fill::Empty,
+            }),
+            _ => {}
+        }
+    }
+    place_pins(slots, pins, notes);
+
+    // Step 9: giants. A published count (even zero) is used as it stands.
+    if free && giants_present(roller) {
+        let n = number_of_giants(roller);
+        giants.extend((0..n).map(|_| (giant_kind(roller), None)));
+    }
+    let any_pinned_giant = slots.iter().any(|s| matches!(s.fill, Fill::Giant { .. }));
+    let first = (!giants.is_empty() && !any_pinned_giant).then(|| first_giant(roller));
+    place_giants(slots, giants, first, !free, gaps, notes);
+
+    // Step 10: ice. Under a published belt count the charted ice belt is one
+    // of the published belts, so it needs one to spare.
+    let ice = ice(roller);
+    let belts_left = belts_total - pinned_belts;
+    let belt_allowed = ice != IceAvailability::Sparse && (free || belts_left >= 1);
+    let ice_belt = place_ice_belt(slots, belt_allowed);
+    let ice_in_moons = ice != IceAvailability::Sparse && !ice_belt;
+
+    // Steps 11 and 12: fill the rest, then meet the published counts.
+    fill_open(slots, small_star, roller);
+    if !free {
+        match_counts(
+            slots,
+            Some(belts_left - usize::from(ice_belt)),
+            Some(others_total - pinned_others),
+            gaps,
+        );
+    }
+    // Named or partly-specified bodies without an orbit take the first
+    // generated body of their kind.
+    for (class, name, uwp) in unpinned {
+        if name.is_none() && uwp.is_none() {
+            continue;
+        }
+        let target = slots.iter_mut().find_map(|s| match &mut s.fill {
+            Fill::Body(b) if b.rolled && b.name.is_none() && b.uwp.is_none() && (b.class == class || (class == BodyClass::World && b.class != BodyClass::Belt)) => Some(b),
+            _ => None,
+        });
+        if let Some(b) = target {
+            b.name = name;
+            b.uwp = uwp;
+        }
+    }
+
+    // Step 13: each body's codes.
+    roll_codes(slots, small_star, roller);
+    (ice, ice_in_moons)
+}
+
+/// One star's `System`: its slots materialized as orbit contents.
 fn build_system(
     cstar: &CStar,
-    name: Option<String>,
-    plan: &OrbitPlan,
+    name: String,
+    slots: Vec<Slot>,
     main_world: Option<World>,
     notes: Vec<String>,
+    plan: &OrbitPlan,
+    fuel: Option<(IceAvailability, bool)>,
 ) -> System {
     let data = cstar.data();
     let star = cstar.star;
-    let mut system = System::new(
-        star.star_type,
-        star.subtype,
-        star.size,
-        StarOrbit::Primary,
-        plan.positions.len(),
-    );
-    if let Some(n) = name {
-        system.name = n;
+    let mut system = System::new(star.star_type, star.subtype, star.size, StarOrbit::Primary, 0);
+    system.name = name;
+    let ice = fuel.map_or(IceAvailability::Sparse, |f| f.0);
+    let mut main_world = main_world;
+    let mut names = Vec::with_capacity(slots.len());
+    let mut mw_slot = None;
+    for (i, slot) in slots.iter().enumerate() {
+        let distance = slot.position * data.hd_mkm;
+        let content = match &slot.fill {
+            Fill::Open => None,
+            Fill::Empty => Some(OrbitContent::Blocked),
+            Fill::MainWorld => main_world.take().map(|mut w| {
+                w.orbit = i;
+                w.position_in_system = i;
+                w.orbit_distance_mkm = Some(distance);
+                w.compute_astro_data(&star);
+                mw_slot = Some(i);
+                OrbitContent::World(w)
+            }),
+            Fill::Giant { kind, name } => {
+                let size = match kind {
+                    GiantKind::JupiterClass => GasGiantSize::Large,
+                    _ => GasGiantSize::Small,
+                };
+                let mut g = GasGiant::new(size, i);
+                g.radius_km = crate::util::rng_random_range(kind.diameter_km()) / 2;
+                g.callisto = Some(*kind);
+                match name {
+                    Some(n) => g.name = n.clone(),
+                    None => g.gen_name(&system.name, i),
+                }
+                Some(OrbitContent::GasGiant(g))
+            }
+            Fill::Body(b) => {
+                let c = b.codes.unwrap_or(crate::callisto::fill::Codes {
+                    size: 0,
+                    atmosphere: 0,
+                    hydro: 0,
+                    composition: None,
+                    gravity: None,
+                    hydro_is_ice: false,
+                });
+                let mut w = World::new(String::new(), i, i, c.size, c.atmosphere, c.hydro, 0, false, false);
+                let u = b.uwp.clone().unwrap_or_default();
+                w.set_subordinate_stats(
+                    u.port.unwrap_or(PortCode::Y),
+                    u.government.map_or(0, i32::from),
+                    u.law.map_or(0, i32::from),
+                    u.tech.map_or(0, i32::from),
+                    Vec::new(),
+                );
+                w.set_population(u.population.map_or(0, i32::from));
+                match &b.name {
+                    Some(n) => w.name = n.clone(),
+                    None => w.gen_name(&system.name, i),
+                }
+                w.orbit_distance_mkm = Some(distance);
+                w.callisto = Some(Box::new(Physics {
+                    class: b.class,
+                    zone: slot.zone(),
+                    position_hd: slot.position,
+                    composition: c.composition,
+                    gravity: c.gravity,
+                    hydro_is_ice: c.hydro_is_ice,
+                    ice_source: is_ice_source(slot, ice),
+                }));
+                Some(OrbitContent::World(w))
+            }
+        };
+        names.push(match &content {
+            Some(OrbitContent::World(w)) => w.name.clone(),
+            Some(OrbitContent::GasGiant(g)) => g.name.clone(),
+            _ => String::new(),
+        });
+        system.orbit_slots.push(content);
     }
-    let orbits = plan
-        .positions
+    let fuel = fuel.map(|(ice, in_moons)| fuel_line(&slots, &names, ice, in_moons, &data, mw_slot));
+    let orbits = slots
         .iter()
-        .map(|&p| OrbitInfo {
-            position_hd: p,
-            distance_mkm: p * data.hd_mkm,
-            zone: Zone::at(p),
+        .map(|s| OrbitInfo {
+            position_hd: s.position,
+            distance_mkm: s.position * data.hd_mkm,
+            zone: s.zone(),
         })
         .collect();
-    if let (Some(mut w), Some(slot)) = (main_world, plan.main_world) {
-        w.orbit = slot;
-        w.position_in_system = slot;
-        w.orbit_distance_mkm = Some(plan.positions[slot] * data.hd_mkm);
-        w.compute_astro_data(&star);
-        system.orbit_slots[slot] = Some(OrbitContent::World(w));
-    }
     let mut notes = notes;
     if plan.shortfall > 0 {
         notes.push(format!(
@@ -479,8 +787,37 @@ fn build_system(
         gaps: Vec::new(),
         separation: None,
         notes,
+        fuel,
     }));
     system
+}
+
+/// Rewrite override facts aimed at a Book 6 orbit number (`AtOrbit`) to the
+/// slot the body pinned there landed in. Positions identify the slot, since
+/// companions inserted after filling shift the indices.
+fn retarget_pins(mut constraints: SystemConstraints, system: &System) -> SystemConstraints {
+    let Some(layout) = system.callisto.as_deref() else {
+        return constraints;
+    };
+    let hd = layout.star.hd_mkm;
+    for p in constraints.post.iter_mut() {
+        if let Target::AtOrbit(n) = p.target {
+            let want = book6_orbit_mkm(n) / hd;
+            if let Some(slot) = layout
+                .orbits
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| matches!(system.orbit_slots.get(*i), Some(Some(_))))
+                .min_by(|a, b| {
+                    (a.1.position_hd / want).ln().abs().total_cmp(&(b.1.position_hd / want).ln().abs())
+                })
+                .map(|(i, _)| i)
+            {
+                p.target = Target::AtOrbit(slot as i32);
+            }
+        }
+    }
+    constraints
 }
 
 /// Hang `companion` off `parent` at `separation_mkm`: as a contact pair, as an
@@ -546,9 +883,13 @@ fn insert_slot(system: &mut System, slot: usize, info: OrbitInfo, content: Orbit
         l.orbits.insert(slot, info);
     }
     for (i, s) in system.orbit_slots.iter_mut().enumerate().skip(slot + 1) {
-        if let Some(OrbitContent::World(w)) = s {
-            w.orbit = i;
-            w.position_in_system = i;
+        match s {
+            Some(OrbitContent::World(w)) => {
+                w.orbit = i;
+                w.position_in_system = i;
+            }
+            Some(OrbitContent::GasGiant(g)) => g.orbit = i,
+            _ => {}
         }
     }
     for companion in [system.secondary.as_deref_mut(), system.tertiary.as_deref_mut()]
@@ -567,9 +908,11 @@ fn insert_slot(system: &mut System, slot: usize, info: OrbitInfo, content: Orbit
 mod tests {
     use super::*;
     use crate::api::{StarSpec as ApiStar, build_constraints};
+    use crate::callisto::body::{Composition, TransitFuel};
     use crate::callisto::dice::{Kind::*, Scripted};
+    use crate::callisto::star::days_at_thrust_1;
 
-    fn noricum() -> SystemConstraints {
+    fn noricum_constraints() -> SystemConstraints {
         build_constraints(
             "Noricum",
             "D8867BB-1",
@@ -585,10 +928,11 @@ mod tests {
         .unwrap()
     }
 
-    /// Rulebook 12.3, stars and orbits: the rolls it lists, in the order the
-    /// generator makes them.
+    /// Rulebook 12.3, Noricum, as far as stage 2 goes: the rolls it lists, in
+    /// the order the generator makes them. Where the example and the rules
+    /// part (see below) the rules win.
     #[test]
-    fn noricum_stars_and_orbits() {
+    fn noricum() {
         let mut r = Scripted::new(&[
             (D2, 9), // M9 separation: 200 HD
             (D2, 6), // M6 separation: 6 HD
@@ -601,30 +945,67 @@ mod tests {
             // The companions' own orbits (the example leaves them unrolled).
             (D2, 2), (D2, 2),
             (D2, 2), (D2, 2),
+            (D2, 4), (D2, 3), // giants: ice, ice
+            (D1, 1), // first giant: Outer
+            (D2, 5), // ice: charted
+            (D2, 6), (D2, 8), // fill 0.36 and 0.74: worlds
+            (D2, 10), (D1, 6), (D2, 4), // 0.36: size, composition, atmosphere
+            (D2, 8), (D1, 4), (D2, 4), (D2, 6), // 0.74
+            (D2, 5), (D1, 3), (D2, 8), (D2, 3), // the icy outer world
+            (D1, 3), // main world composition
         ]);
-        let system = generate(noricum(), &mut r).unwrap();
+        let system = generate(noricum_constraints(), &mut r).unwrap();
+        assert_eq!(r.remaining(), 0);
         let layout = system.callisto.as_deref().unwrap();
         let positions: Vec<f32> = layout.orbits.iter().map(|o| o.position_hd).collect();
-        // The M6 at 6 HD takes an orbit slot of its own among the planets';
-        // the M9 at 200 HD is beyond them.
-        //
         // The example keeps 76 and 100, but the M9 at 200 HD has a gap of its
-        // own, 67 to 600, which the example overlooks: by the rules both are
-        // crossed out, and the 100 HD cap leaves two of the seven orbits
-        // unplaced.
-        assert_eq!(positions, [0.36, 0.74, 1.4, 2.0, 6.0, 34.0]);
+        // own, 67 to 600, which the example overlooks: both are crossed out.
+        // The seven published bodies still need orbits, so the second giant
+        // takes the free Cold orbit at 2.0 (where the example put the belt),
+        // and the belt and the icy world go beyond the M9's gap.
         assert_eq!(layout.crossed_out, [4.5, 7.9, 18.0, 76.0, 100.0]);
+        assert_eq!(positions[..6], [0.36, 0.74, 1.4, 2.0, 6.0, 34.0]);
+        let kinds: Vec<String> = system
+            .orbit_slots
+            .iter()
+            .map(|s| match s {
+                Some(OrbitContent::World(w)) if w.is_mainworld() => "main".to_string(),
+                Some(OrbitContent::World(w)) => {
+                    let p = w.callisto.as_deref().unwrap();
+                    format!("{} {}", p.class.name(), w.to_uwp())
+                }
+                Some(OrbitContent::GasGiant(g)) => g.callisto.unwrap().name().to_string(),
+                Some(OrbitContent::Tertiary) => "M6".to_string(),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                "World Y610000-0",
+                "World Y633000-0",
+                "main",
+                "Ice giant",
+                "M6",
+                "Ice giant",
+                "Belt Y000000-0",
+                "World Y320000-0",
+            ]
+        );
+        // The main world: rocky, 1 g.
         let mw = system.orbit_slots[2].as_ref().unwrap();
-        assert!(matches!(mw, OrbitContent::World(w) if w.name == "Noricum"));
-        assert!(matches!(system.orbit_slots[4], Some(OrbitContent::Tertiary)));
-        assert_eq!(system.secondary.as_ref().unwrap().orbit, StarOrbit::Far);
-        assert_eq!(system.tertiary.as_ref().unwrap().orbit, StarOrbit::System(4));
-        assert_eq!(r.remaining(), 0);
+        let OrbitContent::World(mw) = mw else { panic!() };
+        let p = mw.callisto.as_deref().unwrap();
+        assert_eq!((p.composition, p.gravity), (Some(Composition::Rocky), Some(1.0)));
+        // Fuel: a giant for transit; the nearer giant, at 2.0 HD, is 4 days out.
+        let fuel = layout.fuel.as_ref().unwrap();
+        assert_eq!(fuel.transit, TransitFuel::GiantPlanet);
+        assert!((fuel.local_days.unwrap() - days_at_thrust_1(2.0 * 150.0)).abs() < 1e-4);
     }
 
     #[test]
     fn a_stated_distance_places_the_main_world() {
-        let mut cs = noricum();
+        let mut cs = noricum_constraints();
         cs.main_world_orbit = Some(3); // Book 6 orbit 3 = 149.6 Mkm ≈ 1.0 HD
         let system = generate_from_constraints_seeded(7, cs).unwrap();
         let layout = system.callisto.as_deref().unwrap();
@@ -636,10 +1017,35 @@ mod tests {
         assert!((layout.orbits[mw_slot].position_hd - 149.6 / 150.0).abs() < 1e-4);
     }
 
+    /// IMPLEMENTATION.md §1's fuel invariant over 5,000 free systems: giant
+    /// planets in 83% ± 2% of them (Traveller's rate), and a refuelling line
+    /// in every one.
+    #[test]
+    fn giants_in_83_percent_of_free_systems() {
+        let n = 5_000;
+        let mut with_giants = 0;
+        for seed in 0..n {
+            let mut cs = SystemConstraints::from_main_world("Test", "A867977-C").unwrap();
+            cs.free_counts = true;
+            let s = generate_from_constraints_seeded(seed, cs).unwrap();
+            let host = std::iter::once(&s)
+                .chain(s.secondary.as_deref())
+                .chain(s.tertiary.as_deref())
+                .find(|x| x.callisto.as_ref().is_some_and(|l| l.fuel.is_some()))
+                .expect("some star carries the fuel line");
+            if host.orbit_slots.iter().any(|o| matches!(o, Some(OrbitContent::GasGiant(_)))) {
+                with_giants += 1;
+            }
+        }
+        let rate = f64::from(with_giants) / n as f64;
+        assert!((0.81..=0.85).contains(&rate), "giants in {:.1}% of systems", rate * 100.0);
+    }
+
     #[test]
     fn free_systems_are_deterministic_and_well_formed() {
         for seed in 0..300 {
-            let cs = SystemConstraints::from_main_world("Test", "A867977-C").unwrap();
+            let mut cs = SystemConstraints::from_main_world("Test", "A867977-C").unwrap();
+            cs.free_counts = true;
             let a = generate_from_constraints_seeded(seed, cs.clone()).unwrap();
             let b = generate_from_constraints_seeded(seed, cs).unwrap();
             let la = a.callisto.as_deref().unwrap();

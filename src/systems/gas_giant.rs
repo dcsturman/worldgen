@@ -77,6 +77,8 @@ pub struct GasGiant {
     satellites: Satellites,
     /// Orbital position within the star system
     pub orbit: usize,
+    /// Callisto's kind of giant (Table 17); `None` on a Book 6 giant.
+    pub callisto: Option<crate::callisto::body::GiantKind>,
 }
 
 /// Size classification for gas giants
@@ -117,6 +119,7 @@ impl GasGiant {
             radius_km,
             satellites: Satellites { sats: Vec::new() },
             orbit,
+            callisto: None,
         }
     }
 

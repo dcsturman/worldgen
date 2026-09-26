@@ -23,8 +23,10 @@ pub fn sig2(x: f32) -> f32 {
     (scaled.round_ties_even() / scale) as f32
 }
 
-/// The zones of Table 13.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+/// The zones of Table 13. Their order is Table 21's column order.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub enum Zone {
     Inner,
     Hot,
