@@ -44,6 +44,7 @@ yarn-error.log*
 # into the binary with include_str!, so if it isn't committed the build
 # fails on any fresh clone.
 !data/overrides.json
+!docs/callisto/tables.json
 
 # Per-machine deploy settings (see scripts/deploy.env.example).
 scripts/deploy.env

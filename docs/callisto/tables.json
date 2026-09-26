@@ -1,0 +1,3413 @@
+[
+ {
+  "number": 1,
+  "title": "Procedure",
+  "note": "",
+  "header": [
+   "Step",
+   "Roll or lookup",
+   "Section"
+  ],
+  "rows": [
+   [
+    "1 Q. Number of stars",
+    "Table 2; known if the stars are listed",
+    "Section 3.1"
+   ],
+   [
+    "2 Q. Primary star: spectral class, subtype, luminosity class",
+    "Tables 3 and 4; known if listed",
+    "Sections 3.2, 3.3"
+   ],
+   [
+    "3 Q. Star data",
+    "Table 5 (Table 6 for stars that are not class V)",
+    "Section 3.4"
+   ],
+   [
+    "4 Q. Companion stars: mass and separation",
+    "Tables 7, 8, 9; check which star hosts the main world",
+    "Section 3.5"
+   ],
+   [
+    "5 Q. Main world position",
+    "Table 10, from its UWP",
+    "Section 4.1"
+   ],
+   [
+    "6 Q. Number of orbits",
+    "2D − 2",
+    "Section 4.2"
+   ],
+   [
+    "7 Q. Orbit positions",
+    "Table 11 and Table 12, outward from the first orbit or in both directions from the main world; cross out orbits in a companion's gap",
+    "Sections 4.3, 4.4"
+   ],
+   [
+    "8 Q. Orbit zones",
+    "Table 13",
+    "Section 4.5"
+   ],
+   [
+    "9 Q. Giant planets: presence, number, kind, placement",
+    "Tables 15 to 18; known if the count is listed",
+    "Sections 5.1 to 5.4"
+   ],
+   [
+    "10 Q. Ice",
+    "Table 19",
+    "Section 5.5"
+   ],
+   [
+    "11 Q. Refuelling line",
+    "Table 20",
+    "Section 5.6"
+   ],
+   [
+    "12 Q. What fills each remaining orbit",
+    "Tables 21, 22",
+    "Section 6"
+   ],
+   [
+    "13 Q. Each world: size, composition, gravity, atmosphere, hydrographics",
+    "Table 23",
+    "Sections 7.1 to 7.4"
+   ],
+   [
+    "14 F. Temperature",
+    "Tables 24 to 27",
+    "Section 7.5"
+   ],
+   [
+    "15 Q. Moons and rings: number, size, orbits",
+    "Tables 28 to 30",
+    "Sections 8.1 to 8.3"
+   ],
+   [
+    "16 F. Moon day, tidal heating",
+    "Table 31",
+    "Sections 8.4, 8.5"
+   ],
+   [
+    "17 F. Eccentricity; world rotation: tidal lock and day length",
+    "Tables 32, 33",
+    "Sections 9.1, 9.2"
+   ],
+   [
+    "18 F. Axial tilt, year",
+    "Tables 34, 35",
+    "Sections 9.3, 9.4"
+   ],
+   [
+    "19 Q. Settlement of the other worlds: population, government, law, facilities, tech level, spaceport",
+    "Tables 36 to 39",
+    "Section 10"
+   ],
+   [
+    "20 Q. Record",
+    "Position, Mkm, days, zone, world codes, extended profile, notes",
+    "Section 7.6"
+   ]
+  ]
+ },
+ {
+  "number": 2,
+  "title": "Number of stars",
+  "note": "(DM −1 if the primary is spectral class M)",
+  "header": [
+   "2D",
+   "Stars"
+  ],
+  "rows": [
+   [
+    "7 or less",
+    "One"
+   ],
+   [
+    "8 to 10",
+    "Two: the primary and a companion"
+   ],
+   [
+    "11 or more",
+    "Three: the primary and two companions"
+   ]
+  ]
+ },
+ {
+  "number": 3,
+  "title": "Primary spectral class",
+  "note": "",
+  "header": [
+   "2D",
+   "Habitable main world",
+   "Otherwise"
+  ],
+  "rows": [
+   [
+    "2",
+    "M",
+    "M"
+   ],
+   [
+    "3",
+    "M",
+    "M"
+   ],
+   [
+    "4",
+    "M",
+    "M"
+   ],
+   [
+    "5",
+    "M",
+    "M"
+   ],
+   [
+    "6",
+    "K",
+    "M"
+   ],
+   [
+    "7",
+    "K",
+    "M"
+   ],
+   [
+    "8",
+    "G",
+    "M"
+   ],
+   [
+    "9",
+    "G",
+    "K"
+   ],
+   [
+    "10",
+    "F",
+    "G"
+   ],
+   [
+    "11",
+    "F",
+    "F"
+   ],
+   [
+    "12",
+    "A",
+    "Rare: roll 1D. 1 to 4 A, 5 B, 6 O (treat O as B0)"
+   ]
+  ]
+ },
+ {
+  "number": 4,
+  "title": "Primary luminosity class",
+  "note": "",
+  "header": [
+   "2D",
+   "Class",
+   "Meaning"
+  ],
+  "rows": [
+   [
+    "2",
+    "D",
+    "White dwarf: the burnt-out core of a former star. Roll spectral class and subtype again to describe what it once was; anything inside 300 Mkm was destroyed when it swelled"
+   ],
+   [
+    "3",
+    "III",
+    "Giant: a star near the end of its life, swollen and bright. Any inner worlds are scorched or gone"
+   ],
+   [
+    "4",
+    "VI",
+    "Subdwarf: an old, metal-poor main-sequence star, a little dimmer than a class V of the same spectral class"
+   ],
+   [
+    "5 to 12",
+    "V",
+    "Main sequence, the normal state of a star for most of its life"
+   ]
+  ]
+ },
+ {
+  "number": 5,
+  "title": "Star data, luminosity class V",
+  "note": "",
+  "header": [
+   "Star",
+   "Temp (K)",
+   "Light",
+   "Mass",
+   "1 HD (Mkm)",
+   "Days to 1 HD",
+   "Shadow (Mkm)",
+   "Inner orbit",
+   "Lock limit",
+   "Moon limit"
+  ],
+  "rows": [
+   [
+    "B0 V",
+    "31400",
+    "20893",
+    "17.50",
+    "21,624",
+    "34.4",
+    "1,030",
+    "0.05",
+    "0.01",
+    "6514"
+   ],
+   [
+    "B1 V",
+    "28260",
+    "10914",
+    "13.83",
+    "15,629",
+    "29.3",
+    "906",
+    "0.05",
+    "0.01",
+    "5092"
+   ],
+   [
+    "B2 V",
+    "25120",
+    "5702",
+    "10.93",
+    "11,296",
+    "24.9",
+    "797",
+    "0.05",
+    "0.01",
+    "3980"
+   ],
+   [
+    "B3 V",
+    "21980",
+    "2979",
+    "8.64",
+    "8,165",
+    "21.1",
+    "701",
+    "0.05",
+    "0.02",
+    "3111"
+   ],
+   [
+    "B4 V",
+    "18840",
+    "1556",
+    "6.83",
+    "5,901",
+    "18.0",
+    "617",
+    "0.05",
+    "0.02",
+    "2432"
+   ],
+   [
+    "B5 V",
+    "15700",
+    "813",
+    "5.40",
+    "4,265",
+    "15.3",
+    "543",
+    "0.05",
+    "0.02",
+    "1901"
+   ],
+   [
+    "B6 V",
+    "14500",
+    "429",
+    "4.50",
+    "3,097",
+    "13.0",
+    "484",
+    "0.05",
+    "0.03",
+    "1467"
+   ],
+   [
+    "B7 V",
+    "13300",
+    "226",
+    "3.76",
+    "2,249",
+    "11.1",
+    "432",
+    "0.05",
+    "0.04",
+    "1131"
+   ],
+   [
+    "B8 V",
+    "12100",
+    "119",
+    "3.13",
+    "1,633",
+    "9.5",
+    "385",
+    "0.05",
+    "0.05",
+    "873"
+   ],
+   [
+    "B9 V",
+    "10900",
+    "63",
+    "2.61",
+    "1,186",
+    "8.1",
+    "343",
+    "0.05",
+    "0.07",
+    "673"
+   ],
+   [
+    "A0 V",
+    "9700",
+    "33",
+    "2.18",
+    "861",
+    "6.9",
+    "306",
+    "0.05",
+    "0.09",
+    "519"
+   ],
+   [
+    "A1 V",
+    "9380",
+    "27",
+    "2.11",
+    "782",
+    "6.5",
+    "294",
+    "0.05",
+    "0.10",
+    "477"
+   ],
+   [
+    "A2 V",
+    "9050",
+    "22",
+    "2.04",
+    "709",
+    "6.2",
+    "283",
+    "0.05",
+    "0.11",
+    "437"
+   ],
+   [
+    "A3 V",
+    "8730",
+    "19",
+    "1.98",
+    "644",
+    "5.9",
+    "272",
+    "0.05",
+    "0.12",
+    "401"
+   ],
+   [
+    "A4 V",
+    "8400",
+    "15",
+    "1.91",
+    "585",
+    "5.7",
+    "261",
+    "0.05",
+    "0.13",
+    "368"
+   ],
+   [
+    "A5 V",
+    "8080",
+    "13",
+    "1.85",
+    "531",
+    "5.4",
+    "251",
+    "0.05",
+    "0.14",
+    "338"
+   ],
+   [
+    "A6 V",
+    "7910",
+    "11",
+    "1.80",
+    "487",
+    "5.2",
+    "242",
+    "0.05",
+    "0.15",
+    "313"
+   ],
+   [
+    "A7 V",
+    "7740",
+    "9.0",
+    "1.75",
+    "448",
+    "5.0",
+    "233",
+    "0.05",
+    "0.16",
+    "291"
+   ],
+   [
+    "A8 V",
+    "7560",
+    "7.6",
+    "1.70",
+    "411",
+    "4.7",
+    "225",
+    "0.05",
+    "0.17",
+    "269"
+   ],
+   [
+    "A9 V",
+    "7390",
+    "6.4",
+    "1.66",
+    "378",
+    "4.5",
+    "217",
+    "0.05",
+    "0.19",
+    "250"
+   ],
+   [
+    "F0 V",
+    "7220",
+    "5.4",
+    "1.61",
+    "347",
+    "4.4",
+    "209",
+    "0.05",
+    "0.20",
+    "231"
+   ],
+   [
+    "F1 V",
+    "7080",
+    "4.6",
+    "1.55",
+    "322",
+    "4.2",
+    "203",
+    "0.05",
+    "0.22",
+    "218"
+   ],
+   [
+    "F2 V",
+    "6940",
+    "4.0",
+    "1.49",
+    "299",
+    "4.0",
+    "197",
+    "0.05",
+    "0.23",
+    "205"
+   ],
+   [
+    "F3 V",
+    "6790",
+    "3.5",
+    "1.44",
+    "278",
+    "3.9",
+    "192",
+    "0.05",
+    "0.24",
+    "193"
+   ],
+   [
+    "F4 V",
+    "6650",
+    "3.0",
+    "1.38",
+    "258",
+    "3.8",
+    "186",
+    "0.05",
+    "0.26",
+    "181"
+   ],
+   [
+    "F5 V",
+    "6510",
+    "2.6",
+    "1.33",
+    "240",
+    "3.6",
+    "181",
+    "0.05",
+    "0.27",
+    "171"
+   ],
+   [
+    "F6 V",
+    "6390",
+    "2.2",
+    "1.27",
+    "223",
+    "3.5",
+    "175",
+    "0.05",
+    "0.29",
+    "161"
+   ],
+   [
+    "F7 V",
+    "6280",
+    "1.9",
+    "1.21",
+    "208",
+    "3.4",
+    "169",
+    "0.05",
+    "0.31",
+    "152"
+   ],
+   [
+    "F8 V",
+    "6160",
+    "1.7",
+    "1.16",
+    "194",
+    "3.3",
+    "164",
+    "0.05",
+    "0.32",
+    "144"
+   ],
+   [
+    "F9 V",
+    "6050",
+    "1.5",
+    "1.11",
+    "180",
+    "3.1",
+    "158",
+    "0.05",
+    "0.34",
+    "136"
+   ],
+   [
+    "G0 V",
+    "5930",
+    "1.3",
+    "1.06",
+    "168",
+    "3.0",
+    "153",
+    "0.05",
+    "0.36",
+    "129"
+   ],
+   [
+    "G1 V",
+    "5850",
+    "1.1",
+    "1.03",
+    "158",
+    "2.9",
+    "146",
+    "0.05",
+    "0.38",
+    "123"
+   ],
+   [
+    "G2 V",
+    "5770",
+    "1.0",
+    "1.00",
+    "150",
+    "2.9",
+    "139",
+    "0.05",
+    "0.40",
+    "117"
+   ],
+   [
+    "G3 V",
+    "5730",
+    "0.91",
+    "0.99",
+    "143",
+    "2.8",
+    "136",
+    "0.05",
+    "0.42",
+    "112"
+   ],
+   [
+    "G4 V",
+    "5700",
+    "0.83",
+    "0.98",
+    "136",
+    "2.7",
+    "133",
+    "0.05",
+    "0.44",
+    "107"
+   ],
+   [
+    "G5 V",
+    "5660",
+    "0.76",
+    "0.97",
+    "130",
+    "2.7",
+    "129",
+    "0.05",
+    "0.45",
+    "103"
+   ],
+   [
+    "G6 V",
+    "5580",
+    "0.67",
+    "0.95",
+    "123",
+    "2.6",
+    "126",
+    "0.05",
+    "0.48",
+    "98"
+   ],
+   [
+    "G7 V",
+    "5500",
+    "0.60",
+    "0.93",
+    "116",
+    "2.5",
+    "122",
+    "0.05",
+    "0.51",
+    "93"
+   ],
+   [
+    "G8 V",
+    "5430",
+    "0.53",
+    "0.91",
+    "109",
+    "2.4",
+    "119",
+    "0.05",
+    "0.53",
+    "88"
+   ],
+   [
+    "G9 V",
+    "5350",
+    "0.47",
+    "0.89",
+    "103",
+    "2.4",
+    "116",
+    "0.06",
+    "0.56",
+    "83"
+   ],
+   [
+    "K0 V",
+    "5270",
+    "0.42",
+    "0.87",
+    "97",
+    "2.3",
+    "113",
+    "0.06",
+    "0.59",
+    "79"
+   ],
+   [
+    "K1 V",
+    "5100",
+    "0.34",
+    "0.83",
+    "88",
+    "2.2",
+    "110",
+    "0.06",
+    "0.64",
+    "73"
+   ],
+   [
+    "K2 V",
+    "4940",
+    "0.28",
+    "0.80",
+    "80",
+    "2.1",
+    "106",
+    "0.07",
+    "0.70",
+    "67"
+   ],
+   [
+    "K3 V",
+    "4770",
+    "0.23",
+    "0.76",
+    "72",
+    "2.0",
+    "103",
+    "0.07",
+    "0.76",
+    "62"
+   ],
+   [
+    "K4 V",
+    "4610",
+    "0.19",
+    "0.73",
+    "66",
+    "1.9",
+    "100",
+    "0.08",
+    "0.82",
+    "57"
+   ],
+   [
+    "K5 V",
+    "4440",
+    "0.16",
+    "0.70",
+    "60",
+    "1.8",
+    "97",
+    "0.08",
+    "0.89",
+    "52"
+   ],
+   [
+    "K6 V",
+    "4320",
+    "0.13",
+    "0.67",
+    "55",
+    "1.7",
+    "94",
+    "0.09",
+    "0.96",
+    "49"
+   ],
+   [
+    "K7 V",
+    "4200",
+    "0.11",
+    "0.64",
+    "50",
+    "1.7",
+    "91",
+    "0.09",
+    "1.02",
+    "46"
+   ],
+   [
+    "K8 V",
+    "4090",
+    "0.10",
+    "0.62",
+    "46",
+    "1.6",
+    "88",
+    "0.09",
+    "1.10",
+    "43"
+   ],
+   [
+    "K9 V",
+    "3970",
+    "0.08",
+    "0.59",
+    "43",
+    "1.5",
+    "85",
+    "0.10",
+    "1.18",
+    "40"
+   ],
+   [
+    "M0 V",
+    "3850",
+    "0.07",
+    "0.57",
+    "39",
+    "1.5",
+    "82",
+    "0.10",
+    "1.26",
+    "37"
+   ],
+   [
+    "M1 V",
+    "3700",
+    "0.05",
+    "0.50",
+    "32",
+    "1.3",
+    "72",
+    "0.11",
+    "1.47",
+    "32"
+   ],
+   [
+    "M2 V",
+    "3550",
+    "0.03",
+    "0.44",
+    "27",
+    "1.2",
+    "63",
+    "0.12",
+    "1.71",
+    "27"
+   ],
+   [
+    "M3 V",
+    "3380",
+    "0.02",
+    "0.32",
+    "18",
+    "1.0",
+    "48",
+    "0.13",
+    "2.22",
+    "21"
+   ],
+   [
+    "M4 V",
+    "3200",
+    "0.0072",
+    "0.23",
+    "13",
+    "0.8",
+    "36",
+    "0.14",
+    "2.88",
+    "16"
+   ],
+   [
+    "M5 V",
+    "3050",
+    "0.0037",
+    "0.16",
+    "9.1",
+    "0.7",
+    "28",
+    "0.15",
+    "all",
+    "13"
+   ],
+   [
+    "M6 V",
+    "2800",
+    "0.0011",
+    "0.10",
+    "5.0",
+    "0.5",
+    "18",
+    "0.18",
+    "all",
+    "8"
+   ],
+   [
+    "M7 V",
+    "2650",
+    "0.0007",
+    "0.09",
+    "4.1",
+    "0.5",
+    "17",
+    "0.20",
+    "all",
+    "7"
+   ],
+   [
+    "M8 V",
+    "2500",
+    "0.0005",
+    "0.09",
+    "3.3",
+    "0.4",
+    "15",
+    "0.23",
+    "all",
+    "6"
+   ],
+   [
+    "M9 V",
+    "2400",
+    "0.0003",
+    "0.08",
+    "2.4",
+    "0.4",
+    "14",
+    "0.29",
+    "all",
+    "4"
+   ]
+  ]
+ },
+ {
+  "number": 6,
+  "title": "Other luminosity classes",
+  "note": "(changes to the class V row of the same spectral class and subtype)",
+  "header": [
+   "Class",
+   "Light",
+   "Mass",
+   "1 HD in Mkm and days to 1 HD",
+   "Jump shadow",
+   "Notes"
+  ],
+  "rows": [
+   [
+    "VI subdwarf",
+    "half",
+    "0.9 ×",
+    "0.7 ×",
+    "0.8 ×",
+    "Otherwise as class V; innermost orbit and lock limit unchanged"
+   ],
+   [
+    "III giant, spectral class K or M",
+    "200 ×",
+    "1.5",
+    "14 ×",
+    "40 × (about 5,500 Mkm)",
+    "Anything inside 400 Mkm has been engulfed; innermost orbit is where that falls in HD"
+   ],
+   [
+    "III giant, spectral class G or F",
+    "60 ×",
+    "2",
+    "8 ×",
+    "15 ×",
+    ""
+   ],
+   [
+    "II bright giant",
+    "1,000 ×",
+    "5",
+    "30 ×",
+    "60 ×",
+    ""
+   ],
+   [
+    "I supergiant",
+    "30,000 ×",
+    "15",
+    "170 ×",
+    "300 ×",
+    "Lives a few million years; nothing has had time to become habitable"
+   ],
+   [
+    "D white dwarf",
+    "0.001 (old) to 0.05 (young); roll 1D, 1 to 2 young, 3 to 6 old",
+    "0.6",
+    "1 HD is 5 Mkm (old) to 30 Mkm (young); days 0.5 to 1.3",
+    "1.8 Mkm",
+    "Lock limit: everything inside 300 Mkm, and nothing survives there anyway"
+   ],
+   [
+    "BD brown dwarf",
+    "0.00001",
+    "0.05",
+    "0.5 Mkm; it has no useful habitable zone",
+    "14 Mkm",
+    "A failed star, warm hydrogen about 80 times Jupiter's mass. A fuel source, though skimming it is a hard, hot pass"
+   ]
+  ]
+ },
+ {
+  "number": 7,
+  "title": "Companion mass",
+  "note": "",
+  "header": [
+   "2D",
+   "Companion mass",
+   "Note"
+  ],
+  "rows": [
+   [
+    "2",
+    "1.0 × primary",
+    "A twin"
+   ],
+   [
+    "3",
+    "0.9 ×",
+    ""
+   ],
+   [
+    "4",
+    "0.8 ×",
+    ""
+   ],
+   [
+    "5",
+    "0.7 ×",
+    ""
+   ],
+   [
+    "6",
+    "0.6 ×",
+    ""
+   ],
+   [
+    "7",
+    "0.5 ×",
+    ""
+   ],
+   [
+    "8",
+    "0.4 ×",
+    ""
+   ],
+   [
+    "9",
+    "0.3 ×",
+    ""
+   ],
+   [
+    "10",
+    "0.2 ×",
+    ""
+   ],
+   [
+    "11",
+    "0.1 ×",
+    "If this is below 0.08 solar masses, the companion is a brown dwarf"
+   ],
+   [
+    "12",
+    "Rare: roll 1D",
+    "1 to 4 brown dwarf; 5 to 6 white dwarf (the companion was once the bigger star and has already died)"
+   ]
+  ]
+ },
+ {
+  "number": 8,
+  "title": "Companion separation",
+  "note": "(DM +1 if the primary is spectral class M)",
+  "header": [
+   "2D",
+   "Separation (HD)",
+   "Travel ×",
+   "Worlds orbit the primary alone out to",
+   "Worlds orbit both stars beyond"
+  ],
+  "rows": [
+   [
+    "2",
+    "0.05",
+    "0.22",
+    "0.017 (a contact pair; treat the two as one star for planets)",
+    "0.15"
+   ],
+   [
+    "3",
+    "0.2",
+    "0.45",
+    "0.07",
+    "0.6"
+   ],
+   [
+    "4",
+    "0.7",
+    "0.84",
+    "0.23",
+    "2.1"
+   ],
+   [
+    "5",
+    "2",
+    "1.4",
+    "0.67",
+    "6"
+   ],
+   [
+    "6",
+    "6",
+    "2.4",
+    "2",
+    "18"
+   ],
+   [
+    "7",
+    "20",
+    "4.5",
+    "6.7",
+    "60"
+   ],
+   [
+    "8",
+    "60",
+    "7.7",
+    "20",
+    "180"
+   ],
+   [
+    "9",
+    "200",
+    "14",
+    "67",
+    "600"
+   ],
+   [
+    "10",
+    "600",
+    "24",
+    "200",
+    "1,800"
+   ],
+   [
+    "11",
+    "2,000",
+    "45",
+    "670",
+    "6,000"
+   ],
+   [
+    "12",
+    "6,000",
+    "77",
+    "2,000",
+    "Nothing orbits both"
+   ]
+  ]
+ },
+ {
+  "number": 9,
+  "title": "A third star",
+  "note": "(compare its separation with the second star's)",
+  "header": [
+   "Third star's separation",
+   "Result"
+  ],
+  "rows": [
+   [
+    "Less than a third of the second star's",
+    "Both companions orbit the primary independently, the third star inside the second"
+   ],
+   [
+    "More than three times the second star's",
+    "Both orbit the primary independently, the third star outside the second"
+   ],
+   [
+    "Between a third and three times",
+    "The two companions form a close pair: they orbit each other at one tenth of the smaller separation, and the pair orbits the primary at the larger separation. Use the larger separation's limits for the primary's worlds"
+   ]
+  ]
+ },
+ {
+  "number": 10,
+  "title": "Main world position by UWP",
+  "note": "",
+  "header": [
+   "Main world",
+   "Position band (HD)",
+   "Notes"
+  ],
+  "rows": [
+   [
+    "Atmosphere 4 or 5, hydrographics 1+",
+    "0.85 to 1.00",
+    "Thin air holds little heat, so the world sits close to the inner edge"
+   ],
+   [
+    "Atmosphere 6 or 7, hydrographics 1+",
+    "0.90 to 1.15",
+    "Earth-like. With Earth's greenhouse a world is cold beyond 1.15"
+   ],
+   [
+    "Atmosphere 8 or 9, hydrographics 1+",
+    "1.10 to 1.40",
+    "A dense atmosphere keeps a world warm further out"
+   ],
+   [
+    "Atmosphere 4 to 9, hydrographics 0",
+    "Roll 1D: 1 to 4, 0.60 to 0.85 (a hot desert); 5 to 6, 1.25 to 1.60 (a cold desert)",
+    ""
+   ],
+   [
+    "Atmosphere 2 or 3",
+    "0.75 to 0.95",
+    "Very thin air: a Mars with more of it, near the inner edge"
+   ],
+   [
+    "Atmosphere 0 or 1",
+    "Roll 2D: 2 0.10, 3 0.16, 4 0.25, 5 0.40, 6 0.63, 7 1.0, 8 1.6, 9 2.5, 10 4.0, 11 6.3, 12 10",
+    "Airless worlds can be anywhere; hydrographics above 0 means ice"
+   ],
+   [
+    "Atmosphere A (exotic) or F (unusual)",
+    "1.00 to 1.30",
+    ""
+   ],
+   [
+    "Atmosphere B or C",
+    "Roll 1D: 1 to 3, 0.30 to 0.90 (Venus-like); 4 to 6, 2.5 to 3.7 (a cold world kept mild by a thick poisonous atmosphere)",
+    ""
+   ],
+   [
+    "Atmosphere D (dense, high)",
+    "1.60 to 2.10",
+    "The dense atmosphere does the work; the world sits in the Cold zone"
+   ],
+   [
+    "Atmosphere E (thin, low)",
+    "0.80 to 1.00",
+    ""
+   ]
+  ]
+ },
+ {
+  "number": 11,
+  "title": "Position of orbit 1",
+  "note": "(HD)",
+  "header": [
+   "2D",
+   "Position",
+   "",
+   "2D",
+   "Position"
+  ],
+  "rows": [
+   [
+    "2",
+    "0.05",
+    "",
+    "8",
+    "0.20"
+   ],
+   [
+    "3",
+    "0.063",
+    "",
+    "9",
+    "0.25"
+   ],
+   [
+    "4",
+    "0.08",
+    "",
+    "10",
+    "0.32"
+   ],
+   [
+    "5",
+    "0.10",
+    "",
+    "11",
+    "0.40"
+   ],
+   [
+    "6",
+    "0.125",
+    "",
+    "12",
+    "0.50"
+   ],
+   [
+    "7",
+    "0.16",
+    "",
+    "",
+    ""
+   ]
+  ]
+ },
+ {
+  "number": 12,
+  "title": "Spacing ratio",
+  "note": "(multiply outward, divide inward)",
+  "header": [
+   "2D",
+   "Ratio",
+   "",
+   "2D",
+   "Ratio"
+  ],
+  "rows": [
+   [
+    "2",
+    "1.25",
+    "",
+    "8",
+    "1.90"
+   ],
+   [
+    "3",
+    "1.35",
+    "",
+    "9",
+    "2.05"
+   ],
+   [
+    "4",
+    "1.45",
+    "",
+    "10",
+    "2.25"
+   ],
+   [
+    "5",
+    "1.55",
+    "",
+    "11",
+    "2.50"
+   ],
+   [
+    "6",
+    "1.65",
+    "",
+    "12",
+    "2.80"
+   ],
+   [
+    "7",
+    "1.75",
+    "",
+    "",
+    ""
+   ]
+  ]
+ },
+ {
+  "number": 13,
+  "title": "Orbit zones",
+  "note": "",
+  "header": [
+   "Zone",
+   "Position (HD)",
+   "What it means"
+  ],
+  "rows": [
+   [
+    "Inner",
+    "below 0.5",
+    "Scorched. Rock, metal and airless worlds; any atmosphere is thick and hostile, or long gone"
+   ],
+   [
+    "Hot",
+    "0.5 to 0.95",
+    "Venus to the inner edge of Earth's range. Water survives only as vapour or in cold traps; dense atmospheres run away"
+   ],
+   [
+    "Temperate",
+    "0.95 to 1.7",
+    "The habitable zone. A world with air and water can be Earth-like here; the outer half needs a dense atmosphere to stay warm"
+   ],
+   [
+    "Cold",
+    "1.7 to 2.7",
+    "Mars-like. Water is ice; thin atmospheres freeze out"
+   ],
+   [
+    "Outer",
+    "2.7 and beyond",
+    "Past the snow line. Ice is a building material, and giant planets form here"
+   ]
+  ]
+ },
+ {
+  "number": 14,
+  "title": "Positions",
+  "note": "",
+  "header": [
+   "Position (HD)",
+   "Zone",
+   "Travel ×",
+   "",
+   "Position (HD)",
+   "Zone",
+   "Travel ×"
+  ],
+  "rows": [
+   [
+    "0.05",
+    "Inner",
+    "0.22",
+    "",
+    "1.7",
+    "Cold",
+    "1.30"
+   ],
+   [
+    "0.063",
+    "Inner",
+    "0.25",
+    "",
+    "2.0",
+    "Cold",
+    "1.41"
+   ],
+   [
+    "0.08",
+    "Inner",
+    "0.28",
+    "",
+    "2.3",
+    "Cold",
+    "1.52"
+   ],
+   [
+    "0.10",
+    "Inner",
+    "0.32",
+    "",
+    "2.7",
+    "Outer",
+    "1.64"
+   ],
+   [
+    "0.125",
+    "Inner",
+    "0.35",
+    "",
+    "3.2",
+    "Outer",
+    "1.79"
+   ],
+   [
+    "0.16",
+    "Inner",
+    "0.40",
+    "",
+    "4.0",
+    "Outer",
+    "2.00"
+   ],
+   [
+    "0.20",
+    "Inner",
+    "0.45",
+    "",
+    "5.0",
+    "Outer",
+    "2.24"
+   ],
+   [
+    "0.25",
+    "Inner",
+    "0.50",
+    "",
+    "6.3",
+    "Outer",
+    "2.51"
+   ],
+   [
+    "0.32",
+    "Inner",
+    "0.57",
+    "",
+    "8.0",
+    "Outer",
+    "2.83"
+   ],
+   [
+    "0.40",
+    "Inner",
+    "0.63",
+    "",
+    "10",
+    "Outer",
+    "3.16"
+   ],
+   [
+    "0.50",
+    "Hot",
+    "0.71",
+    "",
+    "12.5",
+    "Outer",
+    "3.54"
+   ],
+   [
+    "0.63",
+    "Hot",
+    "0.79",
+    "",
+    "16",
+    "Outer",
+    "4.00"
+   ],
+   [
+    "0.80",
+    "Hot",
+    "0.89",
+    "",
+    "20",
+    "Outer",
+    "4.47"
+   ],
+   [
+    "0.95",
+    "Temperate",
+    "0.97",
+    "",
+    "25",
+    "Outer",
+    "5.00"
+   ],
+   [
+    "1.0",
+    "Temperate",
+    "1.00",
+    "",
+    "32",
+    "Outer",
+    "5.66"
+   ],
+   [
+    "1.1",
+    "Temperate",
+    "1.05",
+    "",
+    "40",
+    "Outer",
+    "6.32"
+   ],
+   [
+    "1.25",
+    "Temperate",
+    "1.12",
+    "",
+    "50",
+    "Outer",
+    "7.07"
+   ],
+   [
+    "1.4",
+    "Temperate",
+    "1.18",
+    "",
+    "63",
+    "Outer",
+    "7.94"
+   ],
+   [
+    "1.6",
+    "Temperate",
+    "1.26",
+    "",
+    "80",
+    "Outer",
+    "8.94"
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "100",
+    "Outer",
+    "10.0"
+   ]
+  ]
+ },
+ {
+  "number": 15,
+  "title": "Giant planets present",
+  "note": "",
+  "header": [
+   "2D",
+   "Result"
+  ],
+  "rows": [
+   [
+    "9 or less",
+    "At least one giant planet"
+   ],
+   [
+    "10 or more",
+    "None"
+   ]
+  ]
+ },
+ {
+  "number": 16,
+  "title": "Number of giant planets",
+  "note": "",
+  "header": [
+   "2D",
+   "Giants"
+  ],
+  "rows": [
+   [
+    "2 to 3",
+    "1"
+   ],
+   [
+    "4 to 5",
+    "2"
+   ],
+   [
+    "6 to 7",
+    "3"
+   ],
+   [
+    "8 to 11",
+    "4"
+   ],
+   [
+    "12",
+    "5"
+   ]
+  ]
+ },
+ {
+  "number": 17,
+  "title": "Kind of giant planet",
+  "note": "(roll for each)",
+  "header": [
+   "2D",
+   "Kind",
+   "Size"
+  ],
+  "rows": [
+   [
+    "2 to 7",
+    "Ice giant",
+    "45,000 to 55,000 km. The more common kind"
+   ],
+   [
+    "8 to 12",
+    "Gas giant",
+    "Roll 1D: 1 to 4 Saturn-class, 60,000 to 100,000 km; 5 to 6 Jupiter-class, 120,000 to 160,000 km"
+   ]
+  ]
+ },
+ {
+  "number": 18,
+  "title": "Placing the first giant planet",
+  "note": "(1D)",
+  "header": [
+   "1D",
+   "Orbit"
+  ],
+  "rows": [
+   [
+    "1 to 4",
+    "The first free Outer-zone orbit, just past the snow line, where giants form"
+   ],
+   [
+    "5",
+    "The first free Cold-zone orbit"
+   ],
+   [
+    "6",
+    "A giant that has migrated inward. Roll 1D again: 1 to 5, the first free Temperate or Hot orbit; 6, the first free Inner orbit (a \"hot Jupiter\", rare, and it has cleared every orbit inside it)"
+   ]
+  ]
+ },
+ {
+  "number": 19,
+  "title": "Ice",
+  "note": "(2D)",
+  "header": [
+   "2D",
+   "Ice in the system",
+   "On the record"
+  ],
+  "rows": [
+   [
+    "2 or 3",
+    "Sparse: no charted ice belt and no icy moons of note. Ice exists in scattered small bodies that must be searched for (Section 11.3 gives the search time) and yield fuel at the sparse-ice rate",
+    "Fuel: ice, uncharted"
+   ],
+   [
+    "4 to 9",
+    "Charted: the outermost orbit beyond the last giant (or the outermost orbit of the system, if there are no giants) holds a belt of ice bodies like the Kuiper belt. If no orbit lies beyond the last giant, the ice is in that giant's moons",
+    "Fuel: ice, charted"
+   ],
+   [
+    "10 or more",
+    "Rich: as above, and every Outer-zone body has surface ice worth landing on",
+    "Fuel: ice, charted"
+   ]
+  ]
+ },
+ {
+  "number": 20,
+  "title": "Days at thrust 1 from the main world to a fuel source",
+  "note": "(columns are the star's days to 1 HD; use the nearest)",
+  "header": [
+   "Fuel source position (HD)",
+   "0.5",
+   "0.8",
+   "1.2",
+   "1.8",
+   "2.4",
+   "3.0",
+   "4.0",
+   "6.0"
+  ],
+  "rows": [
+   [
+    "0.5",
+    "0.4",
+    "0.6",
+    "0.8",
+    "1.3",
+    "1.7",
+    "2.1",
+    "2.8",
+    "4.2"
+   ],
+   [
+    "1",
+    "0.5",
+    "0.8",
+    "1.2",
+    "1.8",
+    "2.4",
+    "3.0",
+    "4.0",
+    "6.0"
+   ],
+   [
+    "1.5",
+    "0.6",
+    "1.0",
+    "1.5",
+    "2.2",
+    "2.9",
+    "3.7",
+    "4.9",
+    "7.3"
+   ],
+   [
+    "2",
+    "0.7",
+    "1.1",
+    "1.7",
+    "2.5",
+    "3.4",
+    "4.2",
+    "5.7",
+    "8.5"
+   ],
+   [
+    "3",
+    "0.9",
+    "1.4",
+    "2.1",
+    "3.1",
+    "4.2",
+    "5.2",
+    "6.9",
+    "10"
+   ],
+   [
+    "5",
+    "1.1",
+    "1.8",
+    "2.7",
+    "4.0",
+    "5.4",
+    "6.7",
+    "8.9",
+    "13"
+   ],
+   [
+    "8",
+    "1.4",
+    "2.3",
+    "3.4",
+    "5.1",
+    "6.8",
+    "8.5",
+    "11",
+    "17"
+   ],
+   [
+    "12",
+    "1.7",
+    "2.8",
+    "4.2",
+    "6.2",
+    "8.3",
+    "10",
+    "14",
+    "21"
+   ],
+   [
+    "20",
+    "2.2",
+    "3.6",
+    "5.4",
+    "8.0",
+    "11",
+    "13",
+    "18",
+    "27"
+   ],
+   [
+    "30",
+    "2.7",
+    "4.4",
+    "6.6",
+    "9.9",
+    "13",
+    "16",
+    "22",
+    "33"
+   ],
+   [
+    "50",
+    "3.5",
+    "5.7",
+    "8.5",
+    "13",
+    "17",
+    "21",
+    "28",
+    "42"
+   ],
+   [
+    "80",
+    "4.5",
+    "7.2",
+    "11",
+    "16",
+    "21",
+    "27",
+    "36",
+    "54"
+   ],
+   [
+    "100",
+    "5.0",
+    "8.0",
+    "12",
+    "18",
+    "24",
+    "30",
+    "40",
+    "60"
+   ]
+  ]
+ },
+ {
+  "number": 21,
+  "title": "What fills an orbit",
+  "note": "",
+  "header": [
+   "2D",
+   "Inner",
+   "Hot",
+   "Temperate",
+   "Cold",
+   "Outer"
+  ],
+  "rows": [
+   [
+    "2",
+    "Empty",
+    "Empty",
+    "Empty",
+    "Empty",
+    "Empty"
+   ],
+   [
+    "3",
+    "Empty",
+    "Empty",
+    "Belt",
+    "Belt",
+    "Belt"
+   ],
+   [
+    "4",
+    "Belt",
+    "Belt",
+    "Belt",
+    "Belt",
+    "Belt"
+   ],
+   [
+    "5",
+    "World",
+    "World",
+    "World",
+    "World",
+    "World"
+   ],
+   [
+    "6",
+    "World",
+    "World",
+    "World",
+    "World",
+    "World"
+   ],
+   [
+    "7",
+    "World",
+    "World",
+    "World",
+    "World",
+    "World"
+   ],
+   [
+    "8",
+    "World",
+    "World",
+    "World",
+    "World",
+    "World"
+   ],
+   [
+    "9",
+    "World",
+    "World",
+    "World",
+    "World",
+    "Sub-Neptune"
+   ],
+   [
+    "10",
+    "Sub-Neptune",
+    "Sub-Neptune",
+    "Sub-Neptune",
+    "Sub-Neptune",
+    "Sub-Neptune"
+   ],
+   [
+    "11",
+    "Sub-Neptune",
+    "Sub-Neptune",
+    "Sub-Neptune",
+    "Sub-Neptune",
+    "Sub-Neptune"
+   ],
+   [
+    "12",
+    "Empty",
+    "Sub-Neptune",
+    "Sub-Neptune",
+    "Sub-Neptune",
+    "Icy dwarf"
+   ]
+  ]
+ },
+ {
+  "number": 22,
+  "title": "Kinds of body",
+  "note": "",
+  "header": [
+   "Body",
+   "What it is",
+   "World codes"
+  ],
+  "rows": [
+   [
+    "Empty",
+    "Nothing of note. Record it; empty orbits are where a referee later hides things",
+    "none"
+   ],
+   [
+    "Belt",
+    "A planetoid belt: rock and metal in the Inner and Hot zones, ice further out",
+    "Size 0, atmosphere 0, hydrographics 0. A belt in the Cold or Outer zone is an ice source"
+   ],
+   [
+    "World",
+    "A terrestrial planet: anything from an airless rock or a ball of ice to a garden world. Whether it is made of metal, rock or ice is decided by its composition roll in Section 7.2, which the zone weights",
+    "Rolled in full in Section 7: size, composition, gravity, atmosphere, hydrographics, temperature"
+   ],
+   [
+    "Sub-Neptune",
+    "The most common kind of planet in the galaxy, between Earth and Neptune in size: a rocky core under a thick hydrogen-helium or steam atmosphere. Not landable and not usefully skimmable",
+    "Size 1D + 10, written in extended hex (B to F). Atmosphere: roll 1D, 1 to 4 A (exotic), 5 to 6 B (corrosive). Hydrographics 0. No further world rolls; roll only for its moons (Section 8)"
+   ],
+   [
+    "Icy dwarf",
+    "A small ice body like Pluto",
+    "Size 1D3, atmosphere 0, hydrographics 1D + 4 as ice; an ice source. No further world rolls; roll only for its moons (Section 8)"
+   ],
+   [
+    "Giant planet",
+    "Placed in Section 5",
+    "No world codes; kind and size from Table 17. Moons in Section 8"
+   ]
+  ]
+ },
+ {
+  "number": 23,
+  "title": "Surface gravity by size and composition",
+  "note": "",
+  "header": [
+   "Size",
+   "Diameter (km)",
+   "Ice-rock",
+   "Rocky",
+   "Iron-rich"
+  ],
+  "rows": [
+   [
+    "1",
+    "1,600",
+    "0.07",
+    "0.12",
+    "0.16"
+   ],
+   [
+    "2",
+    "3,200",
+    "0.15",
+    "0.25",
+    "0.33"
+   ],
+   [
+    "3",
+    "4,800",
+    "0.22",
+    "0.38",
+    "0.49"
+   ],
+   [
+    "4",
+    "6,400",
+    "0.30",
+    "0.50",
+    "0.65"
+   ],
+   [
+    "5",
+    "8,000",
+    "0.38",
+    "0.62",
+    "0.81"
+   ],
+   [
+    "6",
+    "9,600",
+    "0.45",
+    "0.75",
+    "0.98"
+   ],
+   [
+    "7",
+    "11,200",
+    "0.53",
+    "0.88",
+    "1.14"
+   ],
+   [
+    "8",
+    "12,800",
+    "0.60",
+    "1.00",
+    "1.30"
+   ],
+   [
+    "9",
+    "14,400",
+    "0.67",
+    "1.12",
+    "1.46"
+   ],
+   [
+    "A",
+    "16,000",
+    "0.75",
+    "1.25",
+    "1.62"
+   ]
+  ]
+ },
+ {
+  "number": 24,
+  "title": "Albedo class",
+  "note": "",
+  "header": [
+   "Class",
+   "Column",
+   "Which worlds"
+  ],
+  "rows": [
+   [
+    "Rock",
+    "0.10",
+    "Atmosphere 0–3 and hydrographics 0–3; belts and bare worlds"
+   ],
+   [
+    "Thin air",
+    "0.20",
+    "Atmosphere 4–9 with hydrographics 0–3; or atmosphere 2–3 with hydrographics 4+"
+   ],
+   [
+    "Earth-like",
+    "0.30",
+    "Atmosphere 4 or higher (other than B or C) with hydrographics 4–8"
+   ],
+   [
+    "Cloudy",
+    "0.45",
+    "Hydrographics 9–A with atmosphere 4+; atmosphere B or C always"
+   ],
+   [
+    "Ice",
+    "0.65",
+    "Any world whose hydrographics is ice (Cold or Outer zone with hydrographics 1+), and any world sent here by the ice check below"
+   ]
+  ]
+ },
+ {
+  "number": 25,
+  "title": "Equilibrium temperature in °C by position and albedo class",
+  "note": "(before greenhouse warming; use the nearest row)",
+  "header": [
+   "Position (HD)",
+   "Rock 0.10",
+   "Thin air 0.20",
+   "Earth-like 0.30",
+   "Cloudy 0.45",
+   "Ice 0.65"
+  ],
+  "rows": [
+   [
+    "0.05",
+    "940",
+    "905",
+    "866",
+    "799",
+    "685"
+   ],
+   [
+    "0.063",
+    "808",
+    "776",
+    "742",
+    "682",
+    "580"
+   ],
+   [
+    "0.08",
+    "686",
+    "658",
+    "627",
+    "575",
+    "484"
+   ],
+   [
+    "0.10",
+    "585",
+    "560",
+    "532",
+    "485",
+    "404"
+   ],
+   [
+    "0.125",
+    "494",
+    "472",
+    "447",
+    "405",
+    "333"
+   ],
+   [
+    "0.16",
+    "405",
+    "385",
+    "364",
+    "326",
+    "262"
+   ],
+   [
+    "0.20",
+    "333",
+    "316",
+    "296",
+    "263",
+    "206"
+   ],
+   [
+    "0.25",
+    "269",
+    "254",
+    "236",
+    "207",
+    "155"
+   ],
+   [
+    "0.32",
+    "206",
+    "192",
+    "177",
+    "151",
+    "106"
+   ],
+   [
+    "0.40",
+    "156",
+    "143",
+    "130",
+    "106",
+    "66"
+   ],
+   [
+    "0.50",
+    "110",
+    "99",
+    "87",
+    "66",
+    "30"
+   ],
+   [
+    "0.63",
+    "69",
+    "59",
+    "48",
+    "29",
+    "−3"
+   ],
+   [
+    "0.80",
+    "30",
+    "21",
+    "12",
+    "−5",
+    "−34"
+   ],
+   [
+    "0.95",
+    "5",
+    "−3",
+    "−12",
+    "−27",
+    "−53"
+   ],
+   [
+    "1.0",
+    "−2",
+    "−10",
+    "−18",
+    "−33",
+    "−59"
+   ],
+   [
+    "1.1",
+    "−15",
+    "−22",
+    "−30",
+    "−44",
+    "−69"
+   ],
+   [
+    "1.25",
+    "−31",
+    "−38",
+    "−45",
+    "−59",
+    "−82"
+   ],
+   [
+    "1.4",
+    "−44",
+    "−51",
+    "−58",
+    "−70",
+    "−92"
+   ],
+   [
+    "1.6",
+    "−59",
+    "−65",
+    "−72",
+    "−84",
+    "−104"
+   ],
+   [
+    "1.7",
+    "−65",
+    "−71",
+    "−78",
+    "−89",
+    "−109"
+   ],
+   [
+    "2.0",
+    "−81",
+    "−87",
+    "−93",
+    "−104",
+    "−122"
+   ],
+   [
+    "2.3",
+    "−94",
+    "−99",
+    "−105",
+    "−115",
+    "−132"
+   ],
+   [
+    "2.7",
+    "−108",
+    "−113",
+    "−118",
+    "−127",
+    "−143"
+   ],
+   [
+    "3.2",
+    "−122",
+    "−126",
+    "−131",
+    "−139",
+    "−153"
+   ],
+   [
+    "4.0",
+    "−138",
+    "−141",
+    "−146",
+    "−153",
+    "−166"
+   ],
+   [
+    "5.0",
+    "−152",
+    "−155",
+    "−159",
+    "−166",
+    "−177"
+   ],
+   [
+    "6.3",
+    "−165",
+    "−168",
+    "−172",
+    "−178",
+    "−188"
+   ],
+   [
+    "8.0",
+    "−177",
+    "−180",
+    "−183",
+    "−188",
+    "−197"
+   ],
+   [
+    "10",
+    "−187",
+    "−190",
+    "−193",
+    "−197",
+    "−205"
+   ],
+   [
+    "16",
+    "−205",
+    "−207",
+    "−209",
+    "−213",
+    "−220"
+   ],
+   [
+    "25",
+    "−219",
+    "−220",
+    "−222",
+    "−225",
+    "−230"
+   ],
+   [
+    "40",
+    "−230",
+    "−232",
+    "−233",
+    "−235",
+    "−239"
+   ],
+   [
+    "63",
+    "−239",
+    "−240",
+    "−241",
+    "−243",
+    "−246"
+   ],
+   [
+    "100",
+    "−246",
+    "−247",
+    "−248",
+    "−249",
+    "−252"
+   ]
+  ]
+ },
+ {
+  "number": 26,
+  "title": "Greenhouse warming",
+  "note": "(add to the equilibrium temperature)",
+  "header": [
+   "Atmosphere",
+   "0–1",
+   "2–3",
+   "4–5",
+   "6–7",
+   "8–9",
+   "A",
+   "B",
+   "C",
+   "D",
+   "E",
+   "F"
+  ],
+  "rows": [
+   [
+    "Add °C",
+    "0",
+    "5",
+    "20",
+    "35",
+    "60",
+    "50",
+    "150",
+    "250",
+    "100",
+    "10",
+    "35"
+   ]
+  ]
+ },
+ {
+  "number": 27,
+  "title": "Temperature bands",
+  "note": "",
+  "header": [
+   "Band",
+   "Mean surface temperature"
+  ],
+  "rows": [
+   [
+    "Frozen",
+    "−51 °C and below"
+   ],
+   [
+    "Cold",
+    "−50 to 0 °C"
+   ],
+   [
+    "Temperate",
+    "1 to 30 °C"
+   ],
+   [
+    "Hot",
+    "31 to 80 °C"
+   ],
+   [
+    "Roasting",
+    "above 80 °C"
+   ]
+  ]
+ },
+ {
+  "number": 28,
+  "title": "Number of moons and rings",
+  "note": "",
+  "header": [
+   "Body",
+   "Moons",
+   "Rings"
+  ],
+  "rows": [
+   [
+    "World, size 3 or more",
+    "1D − 3 (minimum 0)",
+    "2D roll of 12"
+   ],
+   [
+    "World, size 1 or 2",
+    "1D − 4 (minimum 0)",
+    "none"
+   ],
+   [
+    "Sub-Neptune",
+    "1D − 2 (minimum 0)",
+    "1D roll of 6"
+   ],
+   [
+    "Ice giant",
+    "1D + 1",
+    "1D roll of 1 to 3"
+   ],
+   [
+    "Gas giant",
+    "2D",
+    "1D roll of 1 to 4"
+   ]
+  ]
+ },
+ {
+  "number": 29,
+  "title": "Moon orbits",
+  "note": "(1D for the band, then the dice shown)",
+  "header": [
+   "1D",
+   "Band",
+   "Distance (radii)"
+  ],
+  "rows": [
+   [
+    "1 to 3",
+    "Close",
+    "2D + 1 (3 to 13)"
+   ],
+   [
+    "4 to 5",
+    "Far",
+    "(2D − 2) × 5 + 15 (15 to 65)"
+   ],
+   [
+    "6",
+    "Extreme",
+    "(2D − 2) × 25 + 75 (75 to 325)"
+   ]
+  ]
+ },
+ {
+  "number": 30,
+  "title": "Widest moon orbit, in planetary radii.",
+  "note": "Rows: the star's moon limit from Table 5. Columns: the planet's position in HD.",
+  "header": [
+   "Moon limit ↓ / Position (HD) →",
+   "0.1",
+   "0.25",
+   "0.5",
+   "1",
+   "2",
+   "4",
+   "8",
+   "16+"
+  ],
+  "rows": [
+   [
+    "4",
+    "none",
+    "none",
+    "none",
+    "4",
+    "8",
+    "16",
+    "32",
+    "64"
+   ],
+   [
+    "6",
+    "none",
+    "none",
+    "3",
+    "6",
+    "12",
+    "24",
+    "48",
+    "96"
+   ],
+   [
+    "8",
+    "none",
+    "none",
+    "4",
+    "8",
+    "16",
+    "32",
+    "64",
+    "128"
+   ],
+   [
+    "13",
+    "none",
+    "3",
+    "6",
+    "13",
+    "26",
+    "52",
+    "104",
+    "208"
+   ],
+   [
+    "20",
+    "none",
+    "5",
+    "10",
+    "20",
+    "40",
+    "80",
+    "160",
+    "320"
+   ],
+   [
+    "30",
+    "3",
+    "7",
+    "15",
+    "30",
+    "60",
+    "120",
+    "240",
+    "any"
+   ],
+   [
+    "50",
+    "5",
+    "12",
+    "25",
+    "50",
+    "100",
+    "200",
+    "any",
+    "any"
+   ],
+   [
+    "80",
+    "8",
+    "20",
+    "40",
+    "80",
+    "160",
+    "320",
+    "any",
+    "any"
+   ],
+   [
+    "120",
+    "12",
+    "30",
+    "60",
+    "120",
+    "240",
+    "any",
+    "any",
+    "any"
+   ],
+   [
+    "200 or more",
+    "20",
+    "50",
+    "100",
+    "200",
+    "any",
+    "any",
+    "any",
+    "any"
+   ]
+  ]
+ },
+ {
+  "number": 31,
+  "title": "A moon's orbital period",
+  "note": "(size 8, 1 g parent; see the multiplier above)",
+  "header": [
+   "Radii",
+   "Period",
+   "Radii",
+   "Period"
+  ],
+  "rows": [
+   [
+    "3",
+    "7 h",
+    "45",
+    "17.7 days"
+   ],
+   [
+    "5",
+    "16 h",
+    "65",
+    "30.8 days"
+   ],
+   [
+    "8",
+    "32 h",
+    "100",
+    "59 days"
+   ],
+   [
+    "13",
+    "66 h (2.8 days)",
+    "200",
+    "166 days"
+   ],
+   [
+    "20",
+    "5.3 days",
+    "325",
+    "344 days"
+   ],
+   [
+    "30",
+    "9.7 days",
+    "",
+    ""
+   ]
+  ]
+ },
+ {
+  "number": 32,
+  "title": "Eccentricity",
+  "note": "",
+  "header": [
+   "2D",
+   "Eccentricity",
+   "Warmth, near end ÷ far end",
+   "",
+   "2D",
+   "Eccentricity",
+   "Warmth"
+  ],
+  "rows": [
+   [
+    "2",
+    "0.00",
+    "1.0",
+    "",
+    "8",
+    "0.10",
+    "1.5"
+   ],
+   [
+    "3",
+    "0.01",
+    "1.0",
+    "",
+    "9",
+    "0.15",
+    "1.8"
+   ],
+   [
+    "4",
+    "0.02",
+    "1.1",
+    "",
+    "10",
+    "0.20",
+    "2.3"
+   ],
+   [
+    "5",
+    "0.03",
+    "1.1",
+    "",
+    "11",
+    "0.30",
+    "3.4"
+   ],
+   [
+    "6",
+    "0.05",
+    "1.2",
+    "",
+    "12",
+    "0.45",
+    "7.0"
+   ],
+   [
+    "7",
+    "0.07",
+    "1.3",
+    "",
+    "",
+    "",
+    ""
+   ]
+  ]
+ },
+ {
+  "number": 33,
+  "title": "Day length",
+  "note": "(a freely rotating world)",
+  "header": [
+   "2D",
+   "Day (hours)",
+   "",
+   "2D",
+   "Day (hours)"
+  ],
+  "rows": [
+   [
+    "2",
+    "5",
+    "",
+    "8",
+    "24"
+   ],
+   [
+    "3",
+    "7",
+    "",
+    "9",
+    "32"
+   ],
+   [
+    "4",
+    "9",
+    "",
+    "10",
+    "48"
+   ],
+   [
+    "5",
+    "11",
+    "",
+    "11",
+    "72"
+   ],
+   [
+    "6",
+    "14",
+    "",
+    "12",
+    "Rare: roll 1D × 100 hours, retrograde on 1D 1 to 2 (like Venus)"
+   ],
+   [
+    "7",
+    "18",
+    "",
+    "",
+    ""
+   ]
+  ]
+ },
+ {
+  "number": 34,
+  "title": "Axial tilt",
+  "note": "",
+  "header": [
+   "2D",
+   "Tilt",
+   "",
+   "2D",
+   "Tilt"
+  ],
+  "rows": [
+   [
+    "2",
+    "0°",
+    "",
+    "8",
+    "25°"
+   ],
+   [
+    "3",
+    "3°",
+    "",
+    "9",
+    "30°"
+   ],
+   [
+    "4",
+    "6°",
+    "",
+    "10",
+    "40°"
+   ],
+   [
+    "5",
+    "10°",
+    "",
+    "11",
+    "55°"
+   ],
+   [
+    "6",
+    "15°",
+    "",
+    "12",
+    "90° (on its side, like Uranus)"
+   ],
+   [
+    "7",
+    "20°",
+    "",
+    "",
+    ""
+   ]
+  ]
+ },
+ {
+  "number": 35,
+  "title": "Length of the year",
+  "note": "",
+  "header": [
+   "Distance (Mkm)",
+   "Year, Sun-like star (mass 1)",
+   "Year, red dwarf (mass 0.3)"
+  ],
+  "rows": [
+   [
+    "5",
+    "2.2 days",
+    "4.1 days"
+   ],
+   [
+    "10",
+    "6.3 days",
+    "11.5 days"
+   ],
+   [
+    "20",
+    "18 days",
+    "33 days"
+   ],
+   [
+    "40",
+    "51 days",
+    "92 days"
+   ],
+   [
+    "75",
+    "130 days",
+    "237 days"
+   ],
+   [
+    "150",
+    "367 days",
+    "1.8 years"
+   ],
+   [
+    "300",
+    "2.8 years",
+    "5.2 years"
+   ],
+   [
+    "800",
+    "12 years",
+    "23 years"
+   ],
+   [
+    "1,500",
+    "32 years",
+    "58 years"
+   ],
+   [
+    "4,500",
+    "165 years",
+    "301 years"
+   ]
+  ]
+ },
+ {
+  "number": 36,
+  "title": "Population DMs for other worlds",
+  "note": "",
+  "header": [
+   "Condition",
+   "DM"
+  ],
+  "rows": [
+   [
+    "**Surface rows** (worlds and moons; a belt skips these)",
+    ""
+   ],
+   [
+    "Temperature band Temperate",
+    "0"
+   ],
+   [
+    "Temperature band Hot or Cold",
+    "−2"
+   ],
+   [
+    "Temperature band Roasting or Frozen",
+    "−4"
+   ],
+   [
+    "Atmosphere 5, 6 or 8 (breathable, untainted)",
+    "0"
+   ],
+   [
+    "Atmosphere 4, 7 or 9 (breathable, tainted)",
+    "−1"
+   ],
+   [
+    "Atmosphere 2, 3, A, D, E or F",
+    "−2"
+   ],
+   [
+    "Atmosphere 0 or 1 (vacuum or trace)",
+    "−3"
+   ],
+   [
+    "Atmosphere B or C (corrosive or insidious)",
+    "−4"
+   ],
+   [
+    "Hydrographics 0",
+    "−1"
+   ],
+   [
+    "Size 1 or 2, or a moon of size 1 or 2",
+    "−1"
+   ],
+   [
+    "Gravity above 1.5",
+    "−1"
+   ],
+   [
+    "A moon in the Close band of a gas giant (radiation belts)",
+    "−2"
+   ],
+   [
+    "**Belt row** (instead of the surface rows)",
+    ""
+   ],
+   [
+    "Belt",
+    "−4"
+   ],
+   [
+    "**Rows for every body**",
+    ""
+   ],
+   [
+    "The system's nearest fuel source, or a moon of it",
+    "+1"
+   ],
+   [
+    "Main world tech level 12 or more",
+    "+2"
+   ],
+   [
+    "Main world tech level 7 or 8",
+    "+1"
+   ],
+   [
+    "Main world tech level 7 or less",
+    "−2"
+   ],
+   [
+    "Main world industrial (In) or rich (Ri)",
+    "+1"
+   ],
+   [
+    "Main world population 8 or more",
+    "+1"
+   ],
+   [
+    "Main world population 3 or less",
+    "−2"
+   ],
+   [
+    "Main world population 0, or main world tech level 6 or less (no spaceflight)",
+    "population 0, no roll"
+   ]
+  ]
+ },
+ {
+  "number": 37,
+  "title": "Government of other worlds",
+  "note": "(DM +1 if the main world's government is 7 or higher; if the main world's government is 6, the result is 6 without a roll)",
+  "header": [
+   "1D",
+   "Code",
+   "Government"
+  ],
+  "rows": [
+   [
+    "1",
+    "0",
+    "None; family or clan bonds"
+   ],
+   [
+    "2",
+    "1",
+    "Company or corporation"
+   ],
+   [
+    "3",
+    "2",
+    "Participating democracy"
+   ],
+   [
+    "4",
+    "3",
+    "Self-perpetuating oligarchy"
+   ],
+   [
+    "5 or more",
+    "6",
+    "Captive government: administered from the main world"
+   ]
+  ]
+ },
+ {
+  "number": 38,
+  "title": "Facilities",
+  "note": "",
+  "header": [
+   "Facility",
+   "Requirements"
+  ],
+  "rows": [
+   [
+    "Farming",
+    "Temperature band Temperate, atmosphere 4 to 9, hydrographics 4 to 8, population 2 or more"
+   ],
+   [
+    "Mining",
+    "Population 2 or more, and either the world is a belt, or its composition is iron-rich, or the main world is industrial (trade code In)"
+   ],
+   [
+    "Fuel depot",
+    "The world is the system's nearest fuel source (a giant planet's moon, or a charted ice body) and has population 1 or more"
+   ],
+   [
+    "Colony",
+    "Government 6 and population 5 or more"
+   ],
+   [
+    "Research station",
+    "Roll 2D for 11 or more. DM +2 if the main world's tech level is 10 or more; DM +1 if the world is remarkable (two-season, volcanic, tidally locked, a corrosive or insidious atmosphere, or an ocean world). Not possible if the main world's tech level is 8 or less, or the world's population is 0"
+   ],
+   [
+    "Military base",
+    "Roll 2D for 12 or more. DM +1 if the main world's population is 8 or more; DM +2 if the world's atmosphere equals the main world's. Not possible if the world's population is 0 or the main world is poor (trade code Po)"
+   ]
+  ]
+ },
+ {
+  "number": 39,
+  "title": "Spaceport",
+  "note": "(DM +2 if population 6 or more; DM −2 if population 1; DM −3 if population 0; DM +1 for a fuel depot or a colony)",
+  "header": [
+   "1D",
+   "Code",
+   "Spaceport"
+  ],
+  "rows": [
+   [
+    "2 or less",
+    "Y",
+    "None"
+   ],
+   [
+    "3",
+    "H",
+    "Primitive: a landing field and nothing else"
+   ],
+   [
+    "4 or 5",
+    "G",
+    "Poor: unrefined fuel, no repairs"
+   ],
+   [
+    "6 or more",
+    "F",
+    "Good: unrefined fuel, minor repairs"
+   ]
+  ]
+ },
+ {
+  "number": 40,
+  "title": "Travel time by distance and thrust",
+  "note": "",
+  "header": [
+   "Distance (Mkm)",
+   "Thrust 1",
+   "Thrust 2",
+   "Thrust 4",
+   "Thrust 6"
+  ],
+  "rows": [
+   [
+    "1",
+    "6 h",
+    "4 h",
+    "3 h",
+    "2 h"
+   ],
+   [
+    "2",
+    "8 h",
+    "6 h",
+    "4 h",
+    "3 h"
+   ],
+   [
+    "5",
+    "13 h",
+    "9 h",
+    "6 h",
+    "5 h"
+   ],
+   [
+    "10",
+    "18 h",
+    "13 h",
+    "9 h",
+    "7 h"
+   ],
+   [
+    "20",
+    "1.0 d",
+    "18 h",
+    "13 h",
+    "10 h"
+   ],
+   [
+    "50",
+    "1.7 d",
+    "1.2 d",
+    "20 h",
+    "16 h"
+   ],
+   [
+    "100",
+    "2.3 d",
+    "1.7 d",
+    "1.2 d",
+    "23 h"
+   ],
+   [
+    "150",
+    "2.9 d",
+    "2.0 d",
+    "1.4 d",
+    "1.2 d"
+   ],
+   [
+    "300",
+    "4.1 d",
+    "2.9 d",
+    "2.0 d",
+    "1.7 d"
+   ],
+   [
+    "500",
+    "5.2 d",
+    "3.7 d",
+    "2.6 d",
+    "2.1 d"
+   ],
+   [
+    "800",
+    "6.6 d",
+    "4.7 d",
+    "3.3 d",
+    "2.7 d"
+   ],
+   [
+    "1,500",
+    "9.1 d",
+    "6.4 d",
+    "4.5 d",
+    "3.7 d"
+   ],
+   [
+    "3,000",
+    "12.8 d",
+    "9.1 d",
+    "6.4 d",
+    "5.2 d"
+   ],
+   [
+    "5,000",
+    "16.5 d",
+    "11.7 d",
+    "8.3 d",
+    "6.8 d"
+   ],
+   [
+    "9,000",
+    "22 d",
+    "15.7 d",
+    "11.1 d",
+    "9.1 d"
+   ],
+   [
+    "30,000",
+    "41 d",
+    "29 d",
+    "20 d",
+    "16.5 d"
+   ]
+  ]
+ },
+ {
+  "number": 41,
+  "title": "Refuelling rates",
+  "note": "",
+  "header": [
+   "Source",
+   "Rate per FTU per hour",
+   "Full tank",
+   "Notes"
+  ],
+  "rows": [
+   [
+    "Starport A–C",
+    "50 tons",
+    "about 30 minutes",
+    "Refined or unrefined as sold"
+   ],
+   [
+    "Starport D",
+    "25 tons",
+    "about an hour",
+    "Usually unrefined"
+   ],
+   [
+    "Gas or ice giant, skimming",
+    "2D + Effect of an Average (8+) Pilot check, Thrust as DM",
+    "3 to 4 hours",
+    "Difficult (10+) Pilot check in the Core Rulebook; unrefined; streamlined or partially streamlined hull only"
+   ],
+   [
+    "Liquid water, by hose",
+    "3D3 tons",
+    "about 4 hours",
+    "Landed, unrefined"
+   ],
+   [
+    "Ice deposits",
+    "1D tons",
+    "about 7 hours",
+    "Landed, unrefined; hoses moved between deposits"
+   ],
+   [
+    "Sparse ice",
+    "D3 tons",
+    "about 12 hours",
+    "Comets, thin ice on a rock world"
+   ],
+   [
+    "Brown dwarf, skimming",
+    "as a gas giant",
+    "",
+    "120 g at the cloud tops and a fierce wind; treat as a Very Difficult (12+) Pilot check"
+   ]
+  ]
+ }
+]
