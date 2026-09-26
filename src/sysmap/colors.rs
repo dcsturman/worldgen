@@ -60,6 +60,9 @@ pub fn zone_color(orbit: usize, inner: i32, habitable: i32) -> (u8, u8, u8) {
     }
 }
 
+/// A Callisto orbit position crossed out by a companion's gap: faint red.
+pub const CROSSED_OUT: (u8, u8, u8, u8) = (190, 80, 80, 70);
+
 /// Default disc colour for terrestrial worlds. The renderer further
 /// shades by hydro/atmosphere if those are exposed; v1 just uses this
 /// flat tone.

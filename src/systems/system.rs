@@ -199,6 +199,10 @@ pub struct System {
     pub orbit: StarOrbit,
     #[cfg_attr(feature = "frontend", store)]
     pub orbit_slots: Vec<Option<OrbitContent>>,
+    /// Where each orbit slot really is, for a system Callisto generated;
+    /// `None` for Book 6, whose slots are its orbit numbers. Parallel to
+    /// `orbit_slots` when present. See [`crate::callisto::layout`].
+    pub callisto: Option<Box<crate::callisto::layout::Layout>>,
 }
 
 // Enums
@@ -264,6 +268,9 @@ pub enum StarSize {
     #[allow(clippy::upper_case_acronyms)]
     VI,
     D,
+    /// Brown dwarf: a failed star (Callisto Table 6, "BD"). Only Callisto
+    /// generates these; Book 6 has no such class.
+    BD,
 }
 
 /// Orbital relationship of companion stars
@@ -461,6 +468,7 @@ impl System {
             tertiary: None,
             orbit,
             orbit_slots: vec![None; max_orbits],
+            callisto: None,
         }
     }
 
@@ -1865,6 +1873,7 @@ impl Default for System {
             tertiary: None,
             orbit: StarOrbit::Primary,
             orbit_slots: Vec::new(),
+            callisto: None,
         }
     }
 }
@@ -1990,6 +1999,11 @@ impl Display for StarSize {
 
 impl Display for Star {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // A brown dwarf has no spectral class worth printing; the stellar
+        // column writes it as plain "BD".
+        if self.size == StarSize::BD {
+            return f.write_str("BD");
+        }
         write!(
             f,
             "{}{} {}",
@@ -2280,6 +2294,20 @@ fn collect_overrides(constraints: &SystemConstraints) -> SystemOverrides {
         .bodies
         .iter()
         .filter_map(|c| match c {
+            // Brown dwarfs, and white dwarfs listed without a spectral type,
+            // are Callisto's: Book 6 has no rules for them and never saw
+            // them, since the stellar parser skipped both until Callisto
+            // needed them. Dropping them here keeps every Book 6 system as
+            // it was.
+            Constraint::Star {
+                size: Some(StarSize::BD),
+                ..
+            }
+            | Constraint::Star {
+                size: Some(StarSize::D),
+                subtype: None,
+                ..
+            } => None,
             Constraint::Star {
                 orbit,
                 spectral,

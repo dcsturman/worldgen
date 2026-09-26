@@ -42,7 +42,8 @@ use tokio::net::TcpStream;
 
 use crate::api::{
     generate_globe_apng, generate_globe_png, generate_globe_texture,
-    generate_planet_png_scaled_decorated, generate_system_png_scaled, generate_system_svg,
+    generate_planet_png_scaled_decorated, Generator, generate_system_png_with,
+    generate_system_svg_with,
     parse_hex_quad,
 };
 use crate::backend::gcs::GcsClient;
@@ -269,6 +270,18 @@ struct SystemRequest {
     /// Requested pixel scale. Used by the PNG path; the SVG path ignores it
     /// (vector output is resolution-independent).
     scale: f32,
+    /// Book 6 or Callisto: `generator=`, else [`default_generator`].
+    generator: Generator,
+}
+
+/// The generator a request without `generator=` gets: Callisto, unless the
+/// server was started with `WORLDGEN_GENERATOR=book6`, which flips a whole
+/// running instance for side-by-side comparison without touching clients.
+fn default_generator() -> Generator {
+    std::env::var("WORLDGEN_GENERATOR")
+        .ok()
+        .and_then(|v| Generator::parse(&v))
+        .unwrap_or(Generator::Callisto)
 }
 
 /// HTTP error to surface to the client: `(status code, reason, body)`.
@@ -349,6 +362,14 @@ fn parse_system_request(query: &str) -> Result<SystemRequest, HttpError> {
         .get("scale")
         .and_then(|s| s.trim().parse::<f32>().ok())
         .unwrap_or(2.0);
+    // An unknown generator is a 400, never a silent fallback: a typo would
+    // otherwise show one generator's system labelled as the other's.
+    let generator = match params.get("generator") {
+        None => default_generator(),
+        Some(g) => Generator::parse(g).ok_or_else(|| {
+            (400, "Bad Request", format!("generator must be book6 or callisto; got {g:?}"))
+        })?,
+    };
 
     // One shared path, in the library: the override validator calls exactly
     // this, so what it checks is what this endpoint will generate rather
@@ -377,6 +398,7 @@ fn parse_system_request(query: &str) -> Result<SystemRequest, HttpError> {
         seed,
         constraints,
         scale,
+        generator,
     })
 }
 
@@ -394,14 +416,16 @@ async fn handle_system(
     // so a client that already holds this response costs nothing to serve.
     let etag = system_etag(query);
     if etag_matches(if_none_match, &etag) {
-        return write_not_modified(stream, &etag, SYSTEM_CACHE_CONTROL).await;
+        return write_not_modified(stream, &etag, system_cache_control()).await;
     }
     let req = match parse_system_request(query) {
         Ok(r) => r,
         Err((code, reason, body)) => return write_simple(stream, code, reason, &body).await,
     };
 
-    let png = match catch_render(|| generate_system_png_scaled(req.seed, req.constraints, req.scale))
+    let png = match catch_render(|| {
+        generate_system_png_with(req.generator, req.seed, req.constraints, req.scale)
+    })
     {
         Ok(Ok(b)) => b,
         Ok(Err(e)) => {
@@ -427,14 +451,14 @@ async fn handle_system_svg(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let etag = system_etag(query);
     if etag_matches(if_none_match, &etag) {
-        return write_not_modified(stream, &etag, SYSTEM_CACHE_CONTROL).await;
+        return write_not_modified(stream, &etag, system_cache_control()).await;
     }
     let req = match parse_system_request(query) {
         Ok(r) => r,
         Err((code, reason, body)) => return write_simple(stream, code, reason, &body).await,
     };
 
-    let svg = match catch_render(|| generate_system_svg(req.seed, req.constraints)) {
+    let svg = match catch_render(|| generate_system_svg_with(req.generator, req.seed, req.constraints)) {
         Ok(Ok(s)) => s,
         Ok(Err(e)) => {
             return write_simple(stream, 500, "Internal Server Error", &format!("{e}")).await;
@@ -581,7 +605,7 @@ async fn handle_world(
     // the requested scale is part of what the client holds.
     let etag = world_etag(&cache_object, Some(output_scale));
     if etag_matches(if_none_match, &etag) {
-        return write_not_modified(stream, &etag, WORLD_CACHE_CONTROL).await;
+        return write_not_modified(stream, &etag, world_cache_control()).await;
     }
 
     // Try cache first. Disabled-mode GCS returns Ok(None) here so the
@@ -734,7 +758,7 @@ async fn handle_world_globe(
     let cache_object = planet_cache_object(Some(variant), cache_key, deco);
     let etag = world_etag(&cache_object, None);
     if etag_matches(if_none_match, &etag) {
-        return write_not_modified(stream, &etag, WORLD_CACHE_CONTROL).await;
+        return write_not_modified(stream, &etag, world_cache_control()).await;
     }
 
     let uwp_owned = uwp.to_string();
@@ -800,7 +824,7 @@ async fn handle_world_globe_texture(
     let cache_object = planet_cache_object(Some(variant), cache_key, deco);
     let etag = world_etag(&cache_object, None);
     if etag_matches(if_none_match, &etag) {
-        return write_not_modified(stream, &etag, WORLD_CACHE_CONTROL).await;
+        return write_not_modified(stream, &etag, world_cache_control()).await;
     }
 
     let uwp_owned = uwp.to_string();
@@ -1215,7 +1239,7 @@ async fn write_png(
          {cors}\
          \r\n",
         len = bytes.len(),
-        cache = WORLD_CACHE_CONTROL,
+        cache = world_cache_control(),
         cors = CORS_HEADERS,
     );
     stream.write_all(headers.as_bytes()).await?;
@@ -1265,7 +1289,7 @@ async fn write_texture(
          {cors}\
          \r\n",
         len = bytes.len(),
-        cache = WORLD_CACHE_CONTROL,
+        cache = world_cache_control(),
         cors = CORS_HEADERS,
     );
     stream.write_all(headers.as_bytes()).await?;
@@ -1294,7 +1318,7 @@ async fn write_system_png(
          {cors}\
          \r\n",
         len = bytes.len(),
-        cache = SYSTEM_CACHE_CONTROL,
+        cache = system_cache_control(),
         cors = CORS_HEADERS,
     );
     stream.write_all(headers.as_bytes()).await?;
@@ -1340,6 +1364,9 @@ fn system_etag(query: &str) -> String {
 ///
 /// `If-None-Match` is a comma-separated list and may be `*`.
 fn etag_matches(if_none_match: Option<&str>, etag: &str) -> bool {
+    if *NO_HTTP_CACHE {
+        return false;
+    }
     let Some(header) = if_none_match else {
         return false;
     };
@@ -1415,6 +1442,28 @@ fn world_etag(cache_object: &str, scale: Option<f32>) -> String {
 /// hit was, not more expensive.
 const SYSTEM_CACHE_CONTROL: &str = "Cache-Control: public, max-age=3600, must-revalidate\r\n";
 
+/// `WORLDGEN_NO_HTTP_CACHE=1` turns HTTP caching off: every response says
+/// `no-store` and no request is answered with a 304.
+///
+/// For local development. The ETags above identify a response by its inputs
+/// and a hand-bumped version, not by the code that rendered it, so while the
+/// generator is changing under a running browser the browser keeps showing
+/// what the last build drew for up to an hour. `scripts/run-backend.sh` sets
+/// this; production never does.
+static NO_HTTP_CACHE: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
+    std::env::var("WORLDGEN_NO_HTTP_CACHE").is_ok_and(|v| v == "1")
+});
+
+const NO_STORE: &str = "Cache-Control: no-store\r\n";
+
+fn system_cache_control() -> &'static str {
+    if *NO_HTTP_CACHE { NO_STORE } else { SYSTEM_CACHE_CONTROL }
+}
+
+fn world_cache_control() -> &'static str {
+    if *NO_HTTP_CACHE { NO_STORE } else { WORLD_CACHE_CONTROL }
+}
+
 /// Write an `image/svg+xml` 200 response. Mirrors [`write_png`] but with the
 /// SVG content type; `charset=utf-8` since the body is text. Same long
 /// immutable cache headers — the output is a deterministic function of the
@@ -1435,7 +1484,7 @@ async fn write_svg(
          {cors}\
          \r\n",
         len = bytes.len(),
-        cache = SYSTEM_CACHE_CONTROL,
+        cache = system_cache_control(),
         cors = CORS_HEADERS,
     );
     stream.write_all(headers.as_bytes()).await?;

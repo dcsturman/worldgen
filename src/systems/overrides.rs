@@ -1017,6 +1017,14 @@ impl SystemOverride {
             if matches!(orbit, Some(StarOrbit::Primary)) {
                 continue;
             }
+            // Brown dwarfs and bare white dwarfs weren't in the stellar list
+            // when these overrides were written (the parser skipped them), so
+            // "the first companion" still means the first *other* one.
+            if matches!(size, Some(crate::systems::system::StarSize::BD))
+                || (matches!(size, Some(crate::systems::system::StarSize::D)) && subtype.is_none())
+            {
+                continue;
+            }
             let Some(Constraint::Star {
                 orbit: o2,
                 spectral: sp2,

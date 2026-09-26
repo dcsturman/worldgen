@@ -89,11 +89,11 @@ impl BodyMeta {
         }
     }
 
-    /// Attach an orbit slot index; also fills in the slot's distance in Mkm
-    /// so the SVG carries `data-orbit` and `data-distance-mkm` together.
-    fn orbit(mut self, orbit: usize) -> Self {
+    /// Attach an orbit slot index and that slot's distance in Mkm, so the
+    /// SVG carries `data-orbit` and `data-distance-mkm` together.
+    fn orbit(mut self, orbit: usize, distance_mkm: f32) -> Self {
         self.orbit = Some(orbit);
-        self.distance_mkm = Some(slot_distance_mkm(orbit));
+        self.distance_mkm = Some(distance_mkm);
         self
     }
 
@@ -169,16 +169,16 @@ pub(crate) fn text_width(text: &str, size: f32) -> f32 {
 /// is byte-for-byte unchanged from before the trait was introduced (the
 /// group hooks are no-ops on the raster backend).
 pub(crate) fn render_scene<R: Renderer + ?Sized>(r: &mut R, system: &System) {
-    let max_orbit = max_populated_orbit(system).unwrap_or(0);
     // Lay out the central "contact" cluster (primary + any companions
     // whose orbit is `StarOrbit::Primary`). The cluster's effective
     // half-width drives the inner-orbit floor — a binary's two discs
     // push the closest orbit ring outward more than a lone primary would.
     let cluster = central_cluster(system);
     let min_orbit = min_orbit_radius_for(cluster.half_width());
+    let rings = Rings::new(system, min_orbit);
 
-    draw_orbit_rings(r, system, max_orbit, min_orbit);
-    draw_jump_shadows(r, system, max_orbit, min_orbit, &cluster);
+    draw_orbit_rings(r, &rings);
+    draw_jump_shadows(r, &rings, &cluster);
     for member in &cluster.members {
         r.begin_group(&BodyMeta::new(BodyKind::Star, member.name).spectral(member.star.to_string()));
         draw_star(r, member.star, member.cx, member.cy, member.radius);
@@ -197,11 +197,105 @@ pub(crate) fn render_scene<R: Renderer + ?Sized>(r: &mut R, system: &System) {
         }
         r.end_group();
     }
-    draw_bodies(r, system, max_orbit, min_orbit);
-    draw_companion_subsystems(r, system, max_orbit, min_orbit);
+    draw_bodies(r, &rings);
+    draw_companion_subsystems(r, &rings);
     draw_far_companions(r, system);
     draw_header(r, system);
-    draw_legend(r, system);
+    draw_legend(r, &rings);
+}
+
+/// Distance of orbit slot `orbit` of `system` from its star, in Mkm: where
+/// Callisto placed it, or Book 6's orbit table.
+fn slot_mkm_of(system: &System, orbit: usize) -> f32 {
+    system
+        .callisto
+        .as_ref()
+        .and_then(|l| l.orbit(orbit))
+        .map_or_else(|| slot_distance_mkm(orbit), |o| o.distance_mkm)
+}
+
+/// Where the primary's orbits and distances land on the canvas.
+///
+/// Book 6 spaces rings evenly by orbit slot (its orbit table is roughly
+/// geometric, so that is already log-of-distance) and this delegates to the
+/// same functions it always used, so a Book 6 map is unchanged. A Callisto
+/// system's orbits are real distances, so its rings are spaced by the log of
+/// their distance, from the innermost orbit to the outermost.
+struct Rings<'a> {
+    system: &'a System,
+    max_orbit: usize,
+    min_orbit: f32,
+    /// Natural logs of the innermost and outermost orbit distances, for a
+    /// Callisto system.
+    log_span: Option<(f32, f32)>,
+}
+
+impl<'a> Rings<'a> {
+    fn new(system: &'a System, min_orbit: f32) -> Self {
+        let log_span = system.callisto.as_ref().and_then(|l| {
+            let lo = l.orbits.first()?.distance_mkm.ln();
+            let hi = l.orbits.last()?.distance_mkm.ln();
+            Some((lo, hi))
+        });
+        Rings {
+            system,
+            max_orbit: max_populated_orbit(system).unwrap_or(0),
+            min_orbit,
+            log_span,
+        }
+    }
+
+    /// Ring radius, in pixels, of orbit slot `orbit`.
+    fn slot_px(&self, orbit: usize) -> f32 {
+        match self.log_span {
+            Some(_) => self.mkm_px(slot_mkm_of(self.system, orbit)),
+            None => orbit_radius_px(orbit, self.max_orbit, self.min_orbit),
+        }
+    }
+
+    /// Radius, in pixels, of a distance from the primary.
+    fn mkm_px(&self, mkm: f32) -> f32 {
+        let Some((lo, hi)) = self.log_span else {
+            return mkm_to_pixel_radius(mkm, self.max_orbit, self.min_orbit);
+        };
+        let span = MAX_ORBIT_RADIUS - self.min_orbit;
+        if hi - lo < 1e-6 {
+            return self.min_orbit + span * 0.5;
+        }
+        let t = (mkm.max(1e-6).ln() - lo) / (hi - lo);
+        // Inside the innermost orbit (a jump shadow, say) there is little
+        // room, so the scale is squeezed rather than run into the star.
+        let px = if t < 0.0 {
+            self.min_orbit * (1.0 + t * 0.15).max(0.5)
+        } else {
+            self.min_orbit + t * span
+        };
+        px.min(MAX_ORBIT_RADIUS * 1.3)
+    }
+
+    fn slot_mkm(&self, orbit: usize) -> f32 {
+        slot_mkm_of(self.system, orbit)
+    }
+
+    /// The primary's jump-shadow radius in Mkm: Callisto's Table 5 figure,
+    /// or the Book 6 estimate.
+    fn jump_mkm(&self) -> f32 {
+        self.system
+            .callisto
+            .as_ref()
+            .map_or_else(|| jump_shadow_mkm(&self.system.star), |l| l.star.jump_shadow_mkm)
+    }
+}
+
+/// Ring colour for a Callisto zone, in the palette Book 6's zones use:
+/// blue inside the habitable zone, green in it, red beyond.
+fn callisto_zone_color(zone: crate::callisto::orbits::Zone) -> (u8, u8, u8) {
+    use crate::callisto::orbits::Zone;
+    match zone {
+        Zone::Inner | Zone::Hot => ZONE_INNER,
+        Zone::Temperate => ZONE_HABITABLE,
+        Zone::Cold | Zone::Outer => ZONE_OUTER,
+    }
 }
 
 fn max_populated_orbit(system: &System) -> Option<usize> {
@@ -215,12 +309,12 @@ fn max_populated_orbit(system: &System) -> Option<usize> {
 
 // ---- Orbits, star, bodies -------------------------------------------------
 
-fn draw_orbit_rings<R: Renderer + ?Sized>(
-    r: &mut R,
-    system: &System,
-    max_orbit: usize,
-    min_orbit: f32,
-) {
+fn draw_orbit_rings<R: Renderer + ?Sized>(r: &mut R, rings: &Rings<'_>) {
+    let system = rings.system;
+    if let Some(layout) = system.callisto.as_deref() {
+        draw_callisto_rings(r, rings, layout);
+        return;
+    }
     // Stellar zones drive the orbit colour: inner=blue, habitable=green,
     // outer=red. Each ring is rendered in two passes — a wide, very
     // translucent halo for the soft "glow" feel from the inspiration
@@ -235,7 +329,7 @@ fn draw_orbit_rings<R: Renderer + ?Sized>(
             None | Some(OrbitContent::Blocked) => continue,
             _ => {}
         }
-        let ring_r = orbit_radius_px(orbit, max_orbit, min_orbit);
+        let ring_r = rings.slot_px(orbit);
         let (cr, cg, cb) = zone_color(orbit, zones.inner, zones.habitable);
         // Glow: thick & dim.
         r.stroke_ellipse(
@@ -258,6 +352,28 @@ fn draw_orbit_rings<R: Renderer + ?Sized>(
     }
 }
 
+/// A Callisto system's rings: every orbit, occupied or not, since an open
+/// orbit is a real place the later stages fill (and a referee may use), and
+/// a faint ring where a companion crossed an orbit out.
+fn draw_callisto_rings<R: Renderer + ?Sized>(
+    r: &mut R,
+    rings: &Rings<'_>,
+    layout: &crate::callisto::layout::Layout,
+) {
+    for &p in &layout.crossed_out {
+        let ring_r = rings.mkm_px(p * layout.star.hd_mkm);
+        r.stroke_ellipse(STAR_CX, STAR_CY, ring_r, ring_r * TILT_RATIO, CROSSED_OUT, 0.8);
+    }
+    for (orbit, info) in layout.orbits.iter().enumerate() {
+        let open = rings.system.orbit_slots[orbit].is_none();
+        let ring_r = rings.slot_px(orbit);
+        let (cr, cg, cb) = callisto_zone_color(info.zone);
+        let (glow, line) = if open { (14, 90) } else { (32, 190) };
+        r.stroke_ellipse(STAR_CX, STAR_CY, ring_r, ring_r * TILT_RATIO, (cr, cg, cb, glow), 4.5);
+        r.stroke_ellipse(STAR_CX, STAR_CY, ring_r, ring_r * TILT_RATIO, (cr, cg, cb, line), 1.0);
+    }
+}
+
 /// Mark each star's 100-diameter jump shadow with a faint grey ellipse.
 /// The central star's shadow is concentric with the orbit rings; a
 /// companion star at `StarOrbit::System(N)` gets its own shadow drawn
@@ -268,13 +384,13 @@ fn draw_orbit_rings<R: Renderer + ?Sized>(
 /// tiny relative to orbit spacing.
 fn draw_jump_shadows<R: Renderer + ?Sized>(
     r: &mut R,
-    system: &System,
-    max_orbit: usize,
-    min_orbit: f32,
+    rings: &Rings<'_>,
     cluster: &CentralCluster<'_>,
 ) {
+    let system = rings.system;
     for (idx, member) in cluster.members.iter().enumerate() {
-        let r_px = mkm_to_pixel_radius(jump_shadow_mkm(member.star), max_orbit, min_orbit);
+        let mkm = if idx == 0 { rings.jump_mkm() } else { jump_shadow_mkm(member.star) };
+        let r_px = rings.mkm_px(mkm);
         r.stroke_ellipse(
             member.cx,
             member.cy,
@@ -298,10 +414,14 @@ fn draw_jump_shadows<R: Renderer + ?Sized>(
             _ => continue,
         };
         let Some(companion) = companion else { continue };
-        let ring_r = orbit_radius_px(orbit, max_orbit, min_orbit);
+        let ring_r = rings.slot_px(orbit);
         let theta = body_angle_rad(orbit);
         let (cx, cy) = body_position(ring_r, theta);
-        let shadow_r = mkm_to_pixel_radius(jump_shadow_mkm(&companion.star), max_orbit, min_orbit);
+        let shadow_mkm = companion
+            .callisto
+            .as_ref()
+            .map_or_else(|| jump_shadow_mkm(&companion.star), |l| l.star.jump_shadow_mkm);
+        let shadow_r = rings.mkm_px(shadow_mkm);
         r.stroke_ellipse(cx, cy, shadow_r, shadow_r * TILT_RATIO, JUMP_SHADOW, 1.0);
         draw_shadow_label(r, cx, cy, shadow_r);
     }
@@ -419,10 +539,12 @@ fn central_cluster(system: &System) -> CentralCluster<'_> {
     CentralCluster { members }
 }
 
-fn draw_bodies<R: Renderer + ?Sized>(r: &mut R, system: &System, max_orbit: usize, min_orbit: f32) {
+fn draw_bodies<R: Renderer + ?Sized>(r: &mut R, rings: &Rings<'_>) {
+    let system = rings.system;
     for (orbit, slot) in system.orbit_slots.iter().enumerate() {
         let Some(content) = slot else { continue };
-        let ring_r = orbit_radius_px(orbit, max_orbit, min_orbit);
+        let ring_r = rings.slot_px(orbit);
+        let mkm = rings.slot_mkm(orbit);
         let theta = body_angle_rad(orbit);
         let (cx, cy) = body_position(ring_r, theta);
         match content {
@@ -435,7 +557,7 @@ fn draw_bodies<R: Renderer + ?Sized>(r: &mut R, system: &System, max_orbit: usiz
                 };
                 r.begin_group(
                     &BodyMeta::new(kind, w.name.clone())
-                        .orbit(orbit)
+                        .orbit(orbit, mkm)
                         .uwp(w.to_uwp()),
                 );
                 // For a belt `draw_world` only emits the label and returns;
@@ -448,7 +570,7 @@ fn draw_bodies<R: Renderer + ?Sized>(r: &mut R, system: &System, max_orbit: usiz
                 r.end_group();
             }
             OrbitContent::GasGiant(gg) => {
-                r.begin_group(&BodyMeta::new(BodyKind::GasGiant, gg.name.clone()).orbit(orbit));
+                r.begin_group(&BodyMeta::new(BodyKind::GasGiant, gg.name.clone()).orbit(orbit, mkm));
                 draw_gas_giant(r, gg, cx, cy);
                 r.end_group();
             }
@@ -456,7 +578,7 @@ fn draw_bodies<R: Renderer + ?Sized>(r: &mut R, system: &System, max_orbit: usiz
                 if let Some(sec) = system.secondary.as_deref() {
                     r.begin_group(
                         &BodyMeta::new(BodyKind::Star, sec.name.clone())
-                            .orbit(orbit)
+                            .orbit(orbit, mkm)
                             .spectral(sec.star.to_string()),
                     );
                     draw_companion_star(r, &sec.star, &sec.name, cx, cy);
@@ -467,7 +589,7 @@ fn draw_bodies<R: Renderer + ?Sized>(r: &mut R, system: &System, max_orbit: usiz
                 if let Some(ter) = system.tertiary.as_deref() {
                     r.begin_group(
                         &BodyMeta::new(BodyKind::Star, ter.name.clone())
-                            .orbit(orbit)
+                            .orbit(orbit, mkm)
                             .spectral(ter.star.to_string()),
                     );
                     draw_companion_star(r, &ter.star, &ter.name, cx, cy);
@@ -537,12 +659,8 @@ fn draw_companion_star<R: Renderer + ?Sized>(r: &mut R, star: &Star, name: &str,
 /// For each `Secondary`/`Tertiary` slot on the primary's orbit list, render
 /// a miniature version of the companion's own orbit system next to the
 /// companion star marker.
-fn draw_companion_subsystems<R: Renderer + ?Sized>(
-    r: &mut R,
-    system: &System,
-    max_orbit: usize,
-    min_orbit: f32,
-) {
+fn draw_companion_subsystems<R: Renderer + ?Sized>(r: &mut R, rings: &Rings<'_>) {
+    let system = rings.system;
     for (orbit, slot) in system.orbit_slots.iter().enumerate() {
         let companion = match slot {
             Some(OrbitContent::Secondary) => system.secondary.as_deref(),
@@ -550,7 +668,7 @@ fn draw_companion_subsystems<R: Renderer + ?Sized>(
             _ => continue,
         };
         let Some(companion) = companion else { continue };
-        let ring_r = orbit_radius_px(orbit, max_orbit, min_orbit);
+        let ring_r = rings.slot_px(orbit);
         let theta = body_angle_rad(orbit);
         let (cx, cy) = body_position(ring_r, theta);
         draw_inline_subsystem(r, companion, cx, cy, 70.0);
@@ -658,7 +776,7 @@ fn draw_inline_subsystem<R: Renderer + ?Sized>(
                 if is_belt(w) {
                     r.begin_group(
                         &BodyMeta::new(BodyKind::Belt, w.name.clone())
-                            .orbit(o)
+                            .orbit(o, slot_mkm_of(companion, o))
                             .uwp(w.to_uwp()),
                     );
                     draw_inline_belt(r, cx, cy, ring_r, o);
@@ -667,7 +785,7 @@ fn draw_inline_subsystem<R: Renderer + ?Sized>(
                     let wr = (world_radius_px(w.size) * 0.5).max(1.0);
                     r.begin_group(
                         &BodyMeta::new(BodyKind::World, w.name.clone())
-                            .orbit(o)
+                            .orbit(o, slot_mkm_of(companion, o))
                             .uwp(w.to_uwp()),
                     );
                     r.fill_circle(bx, by, wr, (WORLD_DISC.0, WORLD_DISC.1, WORLD_DISC.2, 255));
@@ -676,7 +794,10 @@ fn draw_inline_subsystem<R: Renderer + ?Sized>(
             }
             OrbitContent::GasGiant(gg) => {
                 let gr = (gas_giant_radius_px(gg) * 0.55).max(2.0);
-                r.begin_group(&BodyMeta::new(BodyKind::GasGiant, gg.name.clone()).orbit(o));
+                r.begin_group(
+                    &BodyMeta::new(BodyKind::GasGiant, gg.name.clone())
+                        .orbit(o, slot_mkm_of(companion, o)),
+                );
                 r.fill_circle(
                     bx,
                     by,
@@ -852,6 +973,21 @@ fn draw_header<R: Renderer + ?Sized>(r: &mut R, system: &System) {
         (None, None) => "Solitary star",
     };
     r.fill_text(x, y, 16.0, comp, LABEL_DIM);
+    // Name the rules on a Callisto map, so a side-by-side with Book 6 can't
+    // be misread; a Book 6 map is left exactly as it was.
+    if let Some(layout) = system.callisto.as_deref() {
+        y += 22.0;
+        let line = format!(
+            "Callisto \u{b7} 1 HD = {} Mkm \u{b7} jump shadow {} Mkm",
+            format_mkm(layout.star.hd_mkm),
+            format_mkm(layout.star.jump_shadow_mkm)
+        );
+        r.fill_text(x, y, 13.0, &line, LABEL_DIM);
+        for note in &layout.notes {
+            y += 18.0;
+            r.fill_text(x, y, 11.0, note, LABEL_DIM);
+        }
+    }
 }
 
 fn format_star_type(star: &Star) -> String {
@@ -963,12 +1099,12 @@ struct TravelOrigin {
 /// habitable-zone world can sit well inside orbit 0 (Hilfer is at 5 Mkm,
 /// orbit 0 is 29.9), and the legend's distances and travel times should say
 /// where it really is rather than where the orbit table can reach.
-fn slot_radius_mkm(orbit: usize, content: &OrbitContent) -> f32 {
+fn slot_radius_mkm(system: &System, orbit: usize, content: &OrbitContent) -> f32 {
     match content {
         OrbitContent::World(w) => w.orbit_distance_mkm,
         _ => None,
     }
-    .unwrap_or_else(|| slot_distance_mkm(orbit))
+    .unwrap_or_else(|| slot_mkm_of(system, orbit))
 }
 
 fn travel_origin(system: &System) -> Option<TravelOrigin> {
@@ -991,21 +1127,21 @@ fn travel_origin(system: &System) -> Option<TravelOrigin> {
         }?;
         // A main world that's a moon is as far from the star as its host.
         let radius_mkm = match content {
-            OrbitContent::World(w) if w.is_mainworld() => slot_radius_mkm(orbit, content),
+            OrbitContent::World(w) if w.is_mainworld() => slot_radius_mkm(system, orbit, content),
             OrbitContent::World(w) => w
                 .satellites
                 .sats
                 .iter()
                 .find(|m| m.is_mainworld())
                 .and_then(|m| m.orbit_distance_mkm)
-                .unwrap_or_else(|| slot_radius_mkm(orbit, content)),
+                .unwrap_or_else(|| slot_radius_mkm(system, orbit, content)),
             OrbitContent::GasGiant(gg) => gg
                 .satellites()
                 .iter()
                 .find(|m| m.is_mainworld())
                 .and_then(|m| m.orbit_distance_mkm)
-                .unwrap_or_else(|| slot_distance_mkm(orbit)),
-            _ => slot_distance_mkm(orbit),
+                .unwrap_or_else(|| slot_mkm_of(system, orbit)),
+            _ => slot_mkm_of(system, orbit),
         };
         Some(TravelOrigin {
             name,
@@ -1050,10 +1186,11 @@ fn typical_separation_mkm(r1: f32, r2: f32) -> f32 {
 /// arriving there in to the main world), which is exact, and a dash when
 /// the main world is already outside it. With no main world among the
 /// primary's bodies, times fall back to distances from the primary.
-fn legend_rows(system: &System) -> Vec<LegendRow> {
+fn legend_rows(rings: &Rings<'_>) -> Vec<LegendRow> {
+    let system = rings.system;
     // Same radius the map's "Jump Shadow" ring is drawn at, so the row and
     // the ring can never disagree.
-    let jump_mkm = jump_shadow_mkm(&system.star);
+    let jump_mkm = rings.jump_mkm();
     let origin = travel_origin(system);
     let travel_to = |radius: f32| -> Option<f32> {
         Some(origin.as_ref().map_or(radius, |o| typical_separation_mkm(radius, o.radius_mkm)))
@@ -1083,8 +1220,29 @@ fn legend_rows(system: &System) -> Vec<LegendRow> {
     });
 
     for (orbit, slot) in system.orbit_slots.iter().enumerate() {
-        let Some(content) = slot else { continue };
-        let dist = slot_radius_mkm(orbit, content);
+        // A Callisto orbit with nothing in it yet is still a place: list it,
+        // dimmed, with its zone, so the layout can be read off the legend.
+        let Some(content) = slot else {
+            if let Some(info) = system.callisto.as_ref().and_then(|l| l.orbit(orbit)) {
+                let dist = info.distance_mkm;
+                if dist >= jump_mkm
+                    && let Some(j) = jump_row.take()
+                {
+                    rows.push(j);
+                }
+                rows.push(LegendRow {
+                    name: format!("{} HD", format_hd(info.position_hd)),
+                    kind: Some(format!("Open, {}", info.zone.name())),
+                    color: LABEL_DIM,
+                    dist: format_mkm(dist),
+                    radius_mkm: Some(dist),
+                    travel_mkm: travel_to(dist),
+                    jump_limit: false,
+                });
+            }
+            continue;
+        };
+        let dist = slot_radius_mkm(system, orbit, content);
         let (name, kind): (&str, &str) = match content {
             OrbitContent::World(w) => (&w.name, if is_belt(w) { "Belt" } else { "World" }),
             OrbitContent::GasGiant(gg) => (&gg.name, "Gas Giant"),
@@ -1142,15 +1300,45 @@ fn legend_rows(system: &System) -> Vec<LegendRow> {
             StarOrbit::Primary => ("Contact", "—"),
             _ => continue,
         };
+        // Callisto knows how far a far companion really is.
+        let sep = companion
+            .callisto
+            .as_ref()
+            .and_then(|l| l.separation)
+            .filter(|_| companion.orbit == StarOrbit::Far);
         rows.push(LegendRow {
             name: companion.name.clone(),
             kind: Some(format!("Star, {orbit_label}")),
             color: LABEL,
-            dist: dist.to_string(),
-            radius_mkm: None,
-            travel_mkm: None,
+            dist: sep.map_or_else(|| dist.to_string(), |s| format_mkm(s.mkm)),
+            radius_mkm: sep.map(|s| s.mkm),
+            travel_mkm: sep.and_then(|s| travel_to(s.mkm)),
             jump_limit: false,
         });
+    }
+    // A companion's own companion — Callisto's close pairs (Table 9) — is
+    // nowhere in the primary's orbits; list it so every star is on the map.
+    if system.callisto.is_some() {
+        for companion in [system.secondary.as_deref(), system.tertiary.as_deref()]
+            .into_iter()
+            .flatten()
+        {
+            for sub in [companion.secondary.as_deref(), companion.tertiary.as_deref()]
+                .into_iter()
+                .flatten()
+            {
+                let sep = sub.callisto.as_ref().and_then(|l| l.separation);
+                rows.push(LegendRow {
+                    name: sub.name.clone(),
+                    kind: Some(format!("{}, pair with {}", sub.star, companion.name)),
+                    color: LABEL,
+                    dist: sep.map_or("—".to_string(), |s| format!("+{}", format_mkm(s.mkm))),
+                    radius_mkm: None,
+                    travel_mkm: None,
+                    jump_limit: false,
+                });
+            }
+        }
     }
     rows
 }
@@ -1189,7 +1377,8 @@ fn draw_right<R: Renderer + ?Sized>(r: &mut R, right: f32, y: f32, text: &str, r
     r.fill_text(right - text_width(text, LEGEND_FONT), y, LEGEND_FONT, text, rgb);
 }
 
-fn draw_legend<R: Renderer + ?Sized>(r: &mut R, system: &System) {
+fn draw_legend<R: Renderer + ?Sized>(r: &mut R, rings: &Rings<'_>) {
+    let system = rings.system;
     r.fill_text(LEGEND_X, LEGEND_TITLE_Y, 14.0, "System Objects", LABEL);
     // Caption over the thrust columns, so "1G 2G 6G" reads as travel times
     // rather than as a property of each body — and says "typical", because
@@ -1219,7 +1408,7 @@ fn draw_legend<R: Renderer + ?Sized>(r: &mut R, system: &System) {
     let name_max_w = dist_col_right() - DIST_COL_W - LEGEND_X;
     let mut in_top_block = true;
 
-    for row in legend_rows(system) {
+    for row in legend_rows(rings) {
         if in_top_block && y > top_block_max_y {
             in_top_block = false;
             y = bottom_block_y;
@@ -1278,6 +1467,17 @@ fn travel_caption(system: &System) -> String {
         .unwrap_or(short)
 }
 
+/// A position in HD as the rulebook writes it: two figures.
+fn format_hd(p: f32) -> String {
+    if p >= 10.0 {
+        format!("{p:.0}")
+    } else if p >= 1.0 {
+        format!("{p:.1}")
+    } else {
+        format!("{p:.2}")
+    }
+}
+
 fn format_mkm(d: f32) -> String {
     if d < 1000.0 {
         format!("{d:.1}")
@@ -1301,7 +1501,7 @@ mod tests {
     #[test]
     fn jump_limit_row_sorts_among_bodies_by_distance() {
         let sys = regina();
-        let rows = legend_rows(&sys);
+        let rows = legend_rows(&Rings::new(&sys, 0.0));
         let jump = jump_shadow_mkm(&sys.star);
         assert_eq!(rows.iter().filter(|r| r.jump_limit).count(), 1);
         let idx = rows
@@ -1327,7 +1527,7 @@ mod tests {
         let sys = regina();
         let origin = travel_origin(&sys).expect("Regina is the main world");
         assert_eq!(origin.name, "Regina");
-        let rows = legend_rows(&sys);
+        let rows = legend_rows(&Rings::new(&sys, 0.0));
         let main = rows
             .iter()
             .find(|r| r.name == "Regina" && r.kind.is_some())

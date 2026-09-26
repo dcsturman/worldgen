@@ -802,7 +802,7 @@ mod tests {
         let mut total = 0u64;
         let mut worst = (0u8, 0u8, 0u8, 0i32);
 
-        for chunk in rgba.chunks_exact(4) {
+        for chunk in rgba.as_chunks::<4>().0 {
             let r = chunk[0];
             let g = chunk[1];
             let b = chunk[2];
