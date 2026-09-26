@@ -159,3 +159,8 @@ required-features = ["backend"]
 name = "validate-overrides"
 path = "src/bin/validate_overrides.rs"
 required-features = ["backend"]
+
+[[bin]]
+name = "callisto-review"
+path = "src/bin/callisto_review.rs"
+required-features = ["backend"]

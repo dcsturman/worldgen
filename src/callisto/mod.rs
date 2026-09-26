@@ -14,6 +14,7 @@
 pub mod body;
 pub mod dice;
 pub mod fill;
+pub mod fit;
 pub mod generate;
 pub mod layout;
 pub mod orbits;
@@ -21,3 +22,4 @@ pub mod populate;
 pub mod star;
 pub mod stars;
 pub mod tables;
+pub mod temperature;
