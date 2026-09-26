@@ -22,7 +22,7 @@ use rand::SeedableRng;
 use rand::rngs::SmallRng;
 
 use crate::systems::gas_giant::GasGiant;
-use crate::systems::system::{OrbitContent, Star, StarOrbit, System};
+use crate::systems::system::{OrbitContent, Star, StarOrbit, StarSize, System};
 use crate::systems::system_tables::get_zone;
 use crate::systems::world::World;
 
@@ -484,21 +484,21 @@ impl CentralCluster<'_> {
 /// contact-binary look). Single-star systems return a one-member cluster
 /// at the canvas centre, preserving the old behaviour.
 fn central_cluster(system: &System) -> CentralCluster<'_> {
-    let mut stars: Vec<(&Star, &str, bool)> = vec![(&system.star, system.name.as_str(), true)];
+    let mut members: Vec<(&System, bool)> = vec![(system, true)];
     if let Some(sec) = system.secondary.as_deref()
         && sec.orbit == StarOrbit::Primary
     {
-        stars.push((&sec.star, sec.name.as_str(), false));
+        members.push((sec, false));
     }
     if let Some(ter) = system.tertiary.as_deref()
         && ter.orbit == StarOrbit::Primary
     {
-        stars.push((&ter.star, ter.name.as_str(), false));
+        members.push((ter, false));
     }
-
-    let radii: Vec<f32> = stars
+    let radii: Vec<f32> = members.iter().map(|(s, _)| star_px(s)).collect();
+    let stars: Vec<(&Star, &str, bool)> = members
         .iter()
-        .map(|(s, _, _)| star_radius_px(s.size))
+        .map(|(s, p)| (&s.star, s.name.as_str(), *p))
         .collect();
     let n = stars.len();
 
@@ -581,7 +581,7 @@ fn draw_bodies<R: Renderer + ?Sized>(r: &mut R, rings: &Rings<'_>) {
                             .orbit(orbit, mkm)
                             .spectral(sec.star.to_string()),
                     );
-                    draw_companion_star(r, &sec.star, &sec.name, cx, cy);
+                    draw_companion_star(r, sec, cx, cy);
                     r.end_group();
                 }
             }
@@ -592,7 +592,7 @@ fn draw_bodies<R: Renderer + ?Sized>(r: &mut R, rings: &Rings<'_>) {
                             .orbit(orbit, mkm)
                             .spectral(ter.star.to_string()),
                     );
-                    draw_companion_star(r, &ter.star, &ter.name, cx, cy);
+                    draw_companion_star(r, ter, cx, cy);
                     r.end_group();
                 }
             }
@@ -644,12 +644,30 @@ fn draw_gas_giant<R: Renderer + ?Sized>(r: &mut R, gg: &GasGiant, cx: f32, cy: f
     draw_label_colored(r, cx + radius + 4.0, cy + 4.0, &gg.name, LABEL_GAS_GIANT);
 }
 
+/// Disc radius, in pixels, of the star at the centre of `s`.
+///
+/// Book 6 sizes a star by its luminosity class alone, so every class V star
+/// is the same size. A Callisto star has a real radius (Table 5's jump
+/// shadow is 100 diameters, 139.2 Mkm per solar radius), so its disc
+/// follows it, compressed so a red dwarf stays visible beside a giant:
+/// the Sun is the class V disc Book 6 draws, an M6 V about 7 px.
+fn star_px(s: &System) -> f32 {
+    s.callisto.as_ref().map_or_else(
+        || star_radius_px(s.star.size),
+        |l| {
+            let solar_radii = l.star.jump_shadow_mkm / 139.2;
+            (star_radius_px(StarSize::V) * solar_radii.powf(0.4)).clamp(3.0, 44.0)
+        },
+    )
+}
+
 /// Render a companion star (secondary or tertiary in a System orbit slot)
-/// as a spectral-tinted disc sized by luminosity class, with a soft halo
-/// and a name label.
-fn draw_companion_star<R: Renderer + ?Sized>(r: &mut R, star: &Star, name: &str, cx: f32, cy: f32) {
+/// as a spectral-tinted disc sized by [`star_px`], with a soft halo and a
+/// name label.
+fn draw_companion_star<R: Renderer + ?Sized>(r: &mut R, comp: &System, cx: f32, cy: f32) {
+    let (star, name) = (&comp.star, comp.name.as_str());
     let (sr, sg, sb) = star_color(star.star_type);
-    let radius = star_radius_px(star.size);
+    let radius = star_px(comp);
     r.fill_circle(cx, cy, radius * 2.4, (sr, sg, sb, 24));
     r.fill_circle(cx, cy, radius * 1.5, (sr, sg, sb, 90));
     r.fill_circle(cx, cy, radius, (sr, sg, sb, 255));
@@ -704,7 +722,7 @@ fn draw_far_companion<R: Renderer + ?Sized>(
     cy: f32,
     role: &str,
 ) {
-    let radius = star_radius_px(comp.star.size);
+    let radius = star_px(comp);
     let (sr, sg, sb) = star_color(comp.star.star_type);
     r.begin_group(&BodyMeta::new(BodyKind::Star, comp.name.clone()).spectral(comp.star.to_string()));
     r.fill_circle(cx, cy, radius * 2.4, (sr, sg, sb, 24));
@@ -742,7 +760,7 @@ fn draw_inline_subsystem<R: Renderer + ?Sized>(
     if max_orb == 0 {
         return;
     }
-    let star_r = star_radius_px(companion.star.size);
+    let star_r = star_px(companion);
     let min_radius_px = (star_r + 4.0).max(8.0);
     if min_radius_px >= max_radius_px {
         return;
@@ -1330,7 +1348,8 @@ fn legend_rows(rings: &Rings<'_>) -> Vec<LegendRow> {
                 let sep = sub.callisto.as_ref().and_then(|l| l.separation);
                 rows.push(LegendRow {
                     name: sub.name.clone(),
-                    kind: Some(format!("{}, pair with {}", sub.star, companion.name)),
+                    // "pair" with the companion listed just above it.
+                    kind: Some(format!("{}, pair", sub.star)),
                     color: LABEL,
                     dist: sep.map_or("—".to_string(), |s| format!("+{}", format_mkm(s.mkm))),
                     radius_mkm: None,
