@@ -1017,6 +1017,14 @@ impl SystemOverride {
             if matches!(orbit, Some(StarOrbit::Primary)) {
                 continue;
             }
+            // Brown dwarfs and bare white dwarfs weren't in the stellar list
+            // when these overrides were written (the parser skipped them), so
+            // "the first companion" still means the first *other* one.
+            if matches!(size, Some(crate::systems::system::StarSize::BD))
+                || (matches!(size, Some(crate::systems::system::StarSize::D)) && subtype.is_none())
+            {
+                continue;
+            }
             let Some(Constraint::Star {
                 orbit: o2,
                 spectral: sp2,
@@ -1956,15 +1964,13 @@ mod tests {
         assert!(deco.tide_locked.is_some(), "Hilfer should be tide-locked");
         // The substellar point is left to the map seed.
         assert_eq!(deco.to_query(), "tl");
-        // And it sits at 11.1 million km — Book 6's habitable zone for an
-        // M6 V — inside the orbit table's reach (orbit 0 is 29.9).
+        // And no distance is stated: the 11.1 Mkm it once carried was Book
+        // 6's habitable zone for an M6 V, and Callisto places it instead.
         let hilfer = lookup("Trojan Reach", "2424").expect("Hilfer has an override");
-        let distances: Vec<f32> = hilfer
-            .bodies
-            .iter()
-            .filter_map(|b| b.distance_mkm().ok().flatten())
-            .collect();
-        assert_eq!(distances, vec![11.1]);
+        assert!(
+            hilfer.bodies.iter().all(|b| b.distance_mkm().ok().flatten().is_none()),
+            "Hilfer's distance should come from Callisto, not the override file"
+        );
     }
 
     #[test]

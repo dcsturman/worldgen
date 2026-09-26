@@ -165,6 +165,10 @@ pub fn round_subtype(subtype: StarSubType) -> u8 {
 ///
 /// Stellar luminosity as multiple of Sol's luminosity
 pub(crate) fn get_luminosity(star: &Star) -> f32 {
+    // Book 6 has no brown dwarfs; only Callisto makes them. Its Table 6 figure.
+    if star.size == StarSize::BD {
+        return 0.000_01;
+    }
     interpolate_subtype(&LUMINOSITY_TABLE, star, m9_anchor(star.size).map(|(l, _)| l))
 }
 
@@ -181,6 +185,9 @@ pub(crate) fn get_luminosity(star: &Star) -> f32 {
 ///
 /// Stellar mass as multiple of Sol's mass
 pub(crate) fn get_solar_mass(star: &Star) -> f32 {
+    if star.size == StarSize::BD {
+        return 0.05;
+    }
     interpolate_subtype(&MASS_TABLE, star, m9_anchor(star.size).map(|(_, m)| m))
 }
 
@@ -203,7 +210,7 @@ fn m9_anchor(size: StarSize) -> Option<(f32, f32)> {
         StarSize::III => (2_690.0, 9.2),
         StarSize::V => (0.001, 0.215),
         StarSize::VI => (0.000_06, 0.058),
-        StarSize::IV | StarSize::D => return None,
+        StarSize::IV | StarSize::D | StarSize::BD => return None,
     })
 }
 

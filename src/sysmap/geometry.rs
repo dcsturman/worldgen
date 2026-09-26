@@ -129,6 +129,7 @@ pub fn moon_radius_px(uwp_size: i32) -> f32 {
 /// primaries correctly out-mass their host on the map.
 pub fn star_radius_px(size: StarSize) -> f32 {
     match size {
+        StarSize::BD => 2.5,
         StarSize::D => 3.0,
         StarSize::VI => 11.0,
         StarSize::V => 16.0,
@@ -186,6 +187,9 @@ pub fn stellar_radius_mkm(star: &Star) -> f32 {
         StarType::M => 0.4,
     };
     let size_mult = match star.size {
+        // Callisto Table 6: a brown dwarf's shadow is 14 Mkm, i.e. a radius
+        // of 0.07 Mkm, about Jupiter's.
+        StarSize::BD => return 0.07,
         StarSize::D => 0.01,
         StarSize::VI => 0.7,
         StarSize::V => 1.0,

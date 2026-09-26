@@ -93,6 +93,73 @@ pub fn generate_system_png_scaled(
     crate::sysmap::render_png_scaled(&system, scale).map_err(WorldgenError::Render)
 }
 
+/// Which rules generate a system: Book 6, or its replacement, Callisto.
+///
+/// Both are kept while Callisto is being built so the same hex can be
+/// compared under each. The library's plain entry points
+/// ([`generate_system_png`], [`generate_system_svg`]) stay on Book 6; the
+/// HTTP server defaults to Callisto (see `backend::http_server`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Generator {
+    Book6,
+    Callisto,
+}
+
+impl Generator {
+    /// `"book6"` or `"callisto"`, as the `generator=` query parameter and the
+    /// `WORLDGEN_GENERATOR` variable spell them.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "book6" => Some(Generator::Book6),
+            "callisto" => Some(Generator::Callisto),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Generator::Book6 => "book6",
+            Generator::Callisto => "callisto",
+        }
+    }
+
+    /// Generate a system under these rules. Same `(seed, constraints)`, same
+    /// system, for either generator.
+    pub fn generate(
+        self,
+        seed: u64,
+        constraints: SystemConstraints,
+    ) -> Result<System, WorldgenError> {
+        Ok(match self {
+            Generator::Book6 => System::generate_from_constraints_seeded(seed, constraints)?,
+            Generator::Callisto => {
+                crate::callisto::generate::generate_from_constraints_seeded(seed, constraints)?
+            }
+        })
+    }
+}
+
+/// [`generate_system_png_scaled`] under the chosen rules.
+pub fn generate_system_png_with(
+    generator: Generator,
+    seed: u64,
+    constraints: SystemConstraints,
+    scale: f32,
+) -> Result<Vec<u8>, WorldgenError> {
+    let system = generator.generate(seed, constraints)?;
+    crate::sysmap::render_png_scaled(&system, scale).map_err(WorldgenError::Render)
+}
+
+/// [`generate_system_svg`] under the chosen rules.
+pub fn generate_system_svg_with(
+    generator: Generator,
+    seed: u64,
+    constraints: SystemConstraints,
+) -> Result<String, WorldgenError> {
+    let system = generator.generate(seed, constraints)?;
+    Ok(crate::sysmap::render_svg(&system))
+}
+
 /// Generate a Traveller solar system as an SVG string.
 ///
 /// The vector parallel to [`generate_system_png`]: same `(seed,
@@ -470,8 +537,8 @@ pub fn digit_at(s: &str, idx: usize) -> Option<u32> {
 /// - `"G2V"` — single token, subtype and size mashed together
 /// - `"G V"` — no subtype digit; produces a `StarSpec` whose `subtype`
 ///   is `None` so the generator rolls it
-/// - `"BD G2 V"` — `BD` (brown dwarf) tokens are silently skipped; the
-///   library doesn't render them today
+/// - `"F7 V BD"`, `"M3 V D"` — a brown dwarf (`BD`) or a bare white dwarf
+///   (`D`, `DA`, …) is kept; Book 6 drops them again, Callisto uses them
 ///
 /// Tolerant of garbage: any token that doesn't start with a known
 /// spectral letter (O/B/A/F/G/K/M, case-sensitive) is skipped, and
@@ -484,7 +551,20 @@ pub fn parse_stellar(s: &str) -> Vec<StarSpec> {
     while i < tokens.len() {
         let tok = tokens[i];
         i += 1;
+        // A brown dwarf, and a white dwarf written on its own ("D", or with
+        // its spectral type, "DA", "DB"…), carry no spectral class. Book 6
+        // never saw them (this parser used to skip both, and Book 6 still
+        // drops them: see `systems::system::collect_overrides`); Callisto
+        // needs them, since a brown dwarf is a fuel source and a white dwarf
+        // decides which star can host the main world. A white dwarf's
+        // "spectral class" is a placeholder and its subtype is left `None`,
+        // which is how Book 6 tells it apart.
         if tok.eq_ignore_ascii_case("BD") {
+            out.push(StarSpec::new(StarType::M, 9, StarSize::BD));
+            continue;
+        }
+        if tok.starts_with('D') && tok.len() <= 3 && tok.chars().all(|c| c.is_ascii_uppercase()) {
+            out.push(StarSpec::with_rolled_subtype(StarType::G, StarSize::D));
             continue;
         }
         let bytes = tok.as_bytes();
@@ -577,10 +657,12 @@ mod parse_stellar_tests {
     }
 
     #[test]
-    fn skips_brown_dwarf() {
-        let s = parse_stellar("BD G2 V");
-        assert_eq!(s.len(), 1);
-        assert!(matches!(s[0].spectral, StarType::G));
+    fn keeps_brown_and_white_dwarfs() {
+        let s = parse_stellar("F7 V BD M3 V D");
+        let sizes: Vec<StarSize> = s.iter().map(|x| x.size).collect();
+        assert_eq!(sizes, [StarSize::V, StarSize::BD, StarSize::V, StarSize::D]);
+        // A bare white dwarf has no subtype; that's how Book 6 skips it.
+        assert_eq!(s[3].subtype, None);
     }
 
     #[test]

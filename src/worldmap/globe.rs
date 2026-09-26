@@ -1531,7 +1531,9 @@ mod tests {
         let first = (t.rgb[0], t.rgb[1], t.rgb[2]);
         let varied = t
             .rgb
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .any(|c| (c[0], c[1], c[2]) != first);
         assert!(varied, "equirect texture should contain varied terrain");
     }
