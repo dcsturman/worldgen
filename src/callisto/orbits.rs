@@ -181,6 +181,9 @@ pub struct OrbitPlan {
     /// How many of the requested orbits could not be placed (the 100 HD cap
     /// or the innermost limit ran out of room).
     pub shortfall: usize,
+    /// The last Table 12 ratio rolled: published bodies that run out of
+    /// orbits get more at this spacing (Section 6).
+    pub last_ratio: Option<f32>,
 }
 
 /// Lay out a star's orbits (Sections 4.3 and 4.4).
@@ -204,7 +207,7 @@ pub fn lay_out(
         // Orbit 1 from Table 11, moved out to the innermost orbit if closer,
         // then outward by ratios.
         let first = first_orbit(roller).max(innermost);
-        let mut outward = outward_from(first, count, true, &in_gap, roller, &mut plan.crossed_out);
+        let mut outward = outward_from(first, count, true, &in_gap, roller, &mut plan.crossed_out, &mut plan.last_ratio);
         if in_gap(first) {
             plan.crossed_out.push(first);
             outward.remove(0);
@@ -230,7 +233,9 @@ pub fn lay_out(
     let mut p = mw;
     let mut made = 0;
     while made < inward_n {
-        p = sig2(p / spacing_ratio(roller));
+        let ratio = spacing_ratio(roller);
+        plan.last_ratio = Some(ratio);
+        p = sig2(p / ratio);
         if p < innermost {
             break;
         }
@@ -245,7 +250,15 @@ pub fn lay_out(
 
     // Outward: the orbits the inward side couldn't fit go outward instead,
     // so a known body count still gets its orbits.
-    let outward = outward_from(mw, outward_n + inward_short + 1, false, &in_gap, roller, &mut plan.crossed_out);
+    let outward = outward_from(
+        mw,
+        outward_n + inward_short + 1,
+        false,
+        &in_gap,
+        roller,
+        &mut plan.crossed_out,
+        &mut plan.last_ratio,
+    );
 
     inward.reverse();
     plan.main_world = Some(inward.len());
@@ -268,12 +281,15 @@ fn outward_from(
     in_gap: &impl Fn(f32) -> bool,
     roller: &mut impl Roller,
     crossed_out: &mut Vec<f32>,
+    last_ratio: &mut Option<f32>,
 ) -> Vec<f32> {
     let mut out = vec![start];
     let mut stable = if start_may_be_in_gap && in_gap(start) { 0 } else { 1 };
     let mut p = start;
     while stable < count && p < MAX_POSITION_HD {
-        p = sig2(p * spacing_ratio(roller)).min(MAX_POSITION_HD);
+        let ratio = spacing_ratio(roller);
+        *last_ratio = Some(ratio);
+        p = sig2(p * ratio).min(MAX_POSITION_HD);
         if in_gap(p) {
             crossed_out.push(p);
             continue;

@@ -258,6 +258,22 @@ pub enum Constraint {
     Empty { orbit: i32 },
 }
 
+/// How much of a system's body count a source publishes, which decides how
+/// Callisto fills its orbits (rulebook Section 6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PublishedCounts {
+    /// Giants, belts and the world total (TravellerMap's PBG and `W`): the
+    /// `GasGiant`, `Belt` and `Planet` constraints are the whole list, placed
+    /// innermost first rather than rolled per orbit.
+    #[default]
+    All,
+    /// Giants and belts, but no world total: the rest of the orbits are
+    /// rolled on Table 21, a Belt result read as World.
+    GiantsAndBelts,
+    /// Nothing: every count is rolled.
+    None,
+}
+
 /// All user-specified constraints for a single system generation.
 #[derive(Debug, Clone, Default)]
 pub struct SystemConstraints {
@@ -297,12 +313,9 @@ pub struct SystemConstraints {
     /// Where the main world sits, when a source states it. `None` uses the
     /// habitable-zone default.
     pub main_world_orbit: Option<i32>,
-    /// Callisto only: the body counts are *not* published, so Callisto rolls
-    /// how many giants, belts and worlds there are. `false` (the default)
-    /// means the `GasGiant`, `Belt` and `Planet` constraints above are the
-    /// whole list — TravellerMap's PBG and `W` digits — and must be matched
-    /// exactly, which is also how Book 6 has always read them.
-    pub free_counts: bool,
+    /// Which body counts are published (Callisto only; Book 6 always reads
+    /// the constraints as the whole list). See [`PublishedCounts`].
+    pub counts: PublishedCounts,
     /// The main world's total satellite count. `None` rolls it.
     ///
     /// Counted as a *total*: a moon named explicitly in an override is
@@ -322,7 +335,7 @@ impl SystemConstraints {
             tertiary_bodies: Vec::new(),
             main_world_orbit: None,
             main_world_num_satellites: None,
-            free_counts: false,
+            counts: Default::default(),
             bodies: vec![Constraint::Planet {
                 name: Some(name.to_string()),
                 orbit: None,
@@ -582,7 +595,7 @@ mod tests {
             tertiary_bodies: Vec::new(),
             main_world_orbit: None,
             main_world_num_satellites: None,
-            free_counts: false,
+            counts: Default::default(),
         };
         let errs = cs.validate();
         assert!(
@@ -615,7 +628,7 @@ mod tests {
             tertiary_bodies: Vec::new(),
             main_world_orbit: None,
             main_world_num_satellites: None,
-            free_counts: false,
+            counts: Default::default(),
         };
         let errs = cs.validate();
         assert!(
@@ -641,7 +654,7 @@ mod tests {
             tertiary_bodies: Vec::new(),
             main_world_orbit: None,
             main_world_num_satellites: None,
-            free_counts: false,
+            counts: Default::default(),
         };
         let errs = cs.validate();
         assert!(

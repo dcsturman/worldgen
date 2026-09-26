@@ -9,7 +9,7 @@
 use crate::callisto::body::{BodyClass, Fuel, GiantKind, IceAvailability, TransitFuel};
 use crate::callisto::dice::Roller;
 use crate::callisto::fill::{self, Codes, FirstGiant, Filled, Known};
-use crate::callisto::orbits::{Gap, Zone, sig2};
+use crate::callisto::orbits::{Gap, MAX_POSITION_HD, Zone, sig2};
 use crate::callisto::star::{StarData, days_at_thrust_1};
 use crate::systems::constraint::PartialUwp;
 
@@ -51,6 +51,9 @@ pub struct Body {
     pub rolled: bool,
     /// The charted ice belt of Table 19.
     pub ice_belt: bool,
+    /// Where Table 19's charted ice went when there was no room for a belt
+    /// and no giant for its moons: the outermost world.
+    pub ice_host: bool,
 }
 
 impl Body {
@@ -62,6 +65,7 @@ impl Body {
             codes: None,
             rolled: false,
             ice_belt: false,
+            ice_host: false,
         }
     }
 }
@@ -129,9 +133,11 @@ pub fn place_pins(slots: &mut Vec<Slot>, pins: Vec<Pin>, notes: &mut Vec<String>
 
 /// Place giants one at a time (Section 5.4). `first` is Table 18's roll for
 /// the first; later giants take the next free Cold or Outer orbit outward.
-/// With no Cold or Outer orbit free, an orbit is added at 2.7 HD or 1.75 ×
-/// the outermost — for every giant when the count is published, once at
-/// most when it was rolled (the rest are dropped).
+/// With no Cold or Outer orbit free an orbit is added (see
+/// [`giant_orbit`]) — for every giant when the count is published, once at
+/// most when it was rolled. A giant that still has nowhere to go is dropped
+/// when rolled, and put in the outermost free orbit of any zone when
+/// published.
 pub fn place_giants(
     slots: &mut Vec<Slot>,
     giants: Vec<(GiantKind, Option<String>)>,
@@ -170,30 +176,45 @@ pub fn place_giants(
             last.and_then(|l| cold_or_outer_from(slots, l + 1))
                 .or_else(|| cold_or_outer_from(slots, 0))
         };
-        let target = match target {
-            Some(t) => Some(t),
-            None if count_known || added == 0 => {
+        let added_orbit = if target.is_none() && (count_known || added == 0) {
+            giant_orbit(slots, gaps).map(|position| {
                 added += 1;
-                let outermost = slots.last().map_or(0.0, |s| s.position);
-                let mut position = sig2((outermost * 1.75).max(2.7));
-                while gaps.iter().any(|g| g.contains(position)) {
-                    position = sig2(position * 1.75);
-                }
-                slots.push(Slot {
-                    position,
-                    fill: Fill::Open,
-                    pinned_orbit: None,
-                });
+                let at = slots.iter().position(|s| s.position > position).unwrap_or(slots.len());
+                slots.insert(
+                    at,
+                    Slot {
+                        position,
+                        fill: Fill::Open,
+                        pinned_orbit: None,
+                    },
+                );
                 notes.push(format!("Added an orbit at {position} HD for a giant planet"));
-                Some(slots.len() - 1)
-            }
-            None => {
+                at
+            })
+        } else {
+            None
+        };
+        let target = target.or(added_orbit).or_else(|| {
+            if count_known {
+                let fallback = slots.iter().rposition(Slot::is_open);
+                notes.push(match fallback {
+                    Some(i) => format!(
+                        "A published giant planet had no Cold or Outer orbit and went in the \
+                         {} zone at {} HD",
+                        slots[i].zone().name(),
+                        slots[i].position
+                    ),
+                    None => "A published giant planet found no free orbit at all".to_string(),
+                });
+                fallback
+            } else {
                 notes.push("A rolled giant planet found no orbit and was dropped".to_string());
                 None
             }
-        };
+        });
         let Some(t) = target else { continue };
-        let hot_jupiter = n == 0 && first == Some(FirstGiant::HotJupiter) && slots[t].zone() == Zone::Inner;
+        let hot_jupiter =
+            n == 0 && first == Some(FirstGiant::HotJupiter) && slots[t].zone() == Zone::Inner;
         slots[t].fill = fill;
         last = Some(t);
         // A hot Jupiter has cleared every orbit inside it.
@@ -203,6 +224,31 @@ pub fn place_giants(
             }
         }
     }
+}
+
+/// Where Section 5.4 adds an orbit for a giant: 1.75 × the outermost orbit,
+/// if that is within 100 HD and clear of every companion's gap; otherwise
+/// halfway, in ratio terms, between the adjacent Cold or Outer orbits that
+/// are furthest apart, so the giant sits among the outer orbits rather than
+/// beyond them. `None` when neither works.
+pub fn giant_orbit(slots: &[Slot], gaps: &[Gap]) -> Option<f32> {
+    let clear = |p: f32| !gaps.iter().any(|g| g.contains(p));
+    let outermost = slots.last()?.position;
+    let beyond = sig2(outermost * 1.75);
+    if beyond <= MAX_POSITION_HD && clear(beyond) {
+        return Some(beyond);
+    }
+    let outer: Vec<f32> = slots
+        .iter()
+        .filter(|s| matches!(s.zone(), Zone::Cold | Zone::Outer))
+        .map(|s| s.position)
+        .collect();
+    let mut pairs: Vec<(f32, f32)> = outer.windows(2).map(|w| (w[0], w[1])).collect();
+    pairs.sort_by(|a, b| (b.1 / b.0).total_cmp(&(a.1 / a.0)));
+    pairs
+        .into_iter()
+        .map(|(a, b)| sig2((a * b).sqrt()))
+        .find(|&mid| clear(mid) && slots.iter().all(|s| s.position != mid))
 }
 
 /// Table 19's charted ice belt: the outermost orbit beyond the last giant
@@ -225,8 +271,21 @@ pub fn place_ice_belt(slots: &mut [Slot], allowed: bool) -> bool {
     }
 }
 
+/// With charted ice but no room for its belt and no giant for its moons, the
+/// ice is on the outermost world (Table 19).
+pub fn place_ice_on_world(slots: &mut [Slot]) {
+    if let Some(Fill::Body(b)) = slots
+        .iter_mut()
+        .rev()
+        .map(|s| &mut s.fill)
+        .find(|f| matches!(f, Fill::Body(b) if b.class != BodyClass::Belt))
+    {
+        b.ice_host = true;
+    }
+}
+
 /// Roll Table 21 for every open orbit.
-pub fn fill_open(slots: &mut [Slot], small_star: bool, roller: &mut impl Roller) {
+pub fn fill_open(slots: &mut [Slot], small_star: bool, belts_known: bool, roller: &mut impl Roller) {
     for i in 0..slots.len() {
         if !slots[i].is_open() {
             continue;
@@ -238,6 +297,12 @@ pub fn fill_open(slots: &mut [Slot], small_star: bool, roller: &mut impl Roller)
             .any(|s| matches!(s.fill, Fill::Giant { .. }));
         slots[i].fill = match fill::fill(slots[i].zone(), small_star, near_giant, roller) {
             Filled::Empty => Fill::Empty,
+            // With the belts already published, a Belt result is a world.
+            Filled::Body(BodyClass::Belt) if belts_known => {
+                let mut b = Body::new(BodyClass::World);
+                b.rolled = true;
+                Fill::Body(b)
+            }
             Filled::Body(class) => {
                 let mut b = Body::new(class);
                 b.rolled = true;
@@ -247,85 +312,82 @@ pub fn fill_open(slots: &mut [Slot], small_star: bool, roller: &mut impl Roller)
     }
 }
 
-/// Make the rolled orbits agree with published counts (TravellerMap's PBG
-/// belts and its `W` total). The rulebook fixes the counts but not how Table
-/// 21 meets them; this keeps as many rolls as it can, changing the outermost
-/// rolled orbits first. `None` leaves that count as rolled.
-pub fn match_counts(
+/// Place the published belts (Section 6, "Published counts", step 2): 1D
+/// 1 to 4 the innermost free Cold or Outer orbit, 5 or 6 the innermost free
+/// orbit of any zone (any zone, too, when no Cold or Outer orbit is free).
+/// Orbits are added outward if they run out.
+pub fn place_published_belts(
     slots: &mut Vec<Slot>,
-    belts: Option<usize>,
-    others: Option<usize>,
+    count: usize,
+    ratio: f32,
     gaps: &[Gap],
+    crossed: &mut Vec<f32>,
+    roller: &mut impl Roller,
 ) {
-    let rolled = |slots: &[Slot], pred: &dyn Fn(&Fill) -> bool| -> Vec<usize> {
-        slots
-            .iter()
-            .enumerate()
-            .rev()
-            .filter(|(_, s)| match &s.fill {
-                Fill::Body(b) => b.rolled && pred(&s.fill),
-                Fill::Empty => s.pinned_orbit.is_none() && pred(&s.fill),
-                _ => false,
-            })
-            .map(|(i, _)| i)
-            .collect()
-    };
-    let is_belt = |f: &Fill| matches!(f, Fill::Body(b) if b.class == BodyClass::Belt);
-    let is_other = |f: &Fill| matches!(f, Fill::Body(b) if b.class != BodyClass::Belt);
-    let is_empty = |f: &Fill| matches!(f, Fill::Empty);
-    let count = |slots: &[Slot], pred: &dyn Fn(&Fill) -> bool| {
-        slots.iter().filter(|s| pred(&s.fill)).count()
-    };
-    let make = |class| {
-        let mut b = Body::new(class);
-        b.rolled = true;
-        Fill::Body(b)
-    };
-
-    if let Some(want) = belts {
-        while count(slots, &is_belt) > want {
-            let Some(&i) = rolled(slots, &is_belt).first() else { break };
-            slots[i].fill = Fill::Empty;
+    for _ in 0..count {
+        let cold_first = roller.d1() <= 4;
+        let target = if cold_first {
+            slots.iter().position(Slot::is_cold_or_outer_open)
+        } else {
+            None
         }
-        while count(slots, &is_belt) < want {
-            let i = rolled(slots, &is_empty).first().copied().or_else(|| {
-                if others.is_some() { None } else { rolled(slots, &is_other).first().copied() }
-            });
-            match i {
-                Some(i) => slots[i].fill = make(BodyClass::Belt),
-                None => {
-                    push_orbit(slots, gaps, make(BodyClass::Belt));
-                }
-            }
-        }
-    }
-    if let Some(want) = others {
-        while count(slots, &is_other) > want {
-            let Some(&i) = rolled(slots, &is_other).first() else { break };
-            slots[i].fill = Fill::Empty;
-        }
-        while count(slots, &is_other) < want {
-            match rolled(slots, &is_empty).last().copied() {
-                Some(i) => slots[i].fill = make(BodyClass::World),
-                None => push_orbit(slots, gaps, make(BodyClass::World)),
-            }
-        }
+        .or_else(|| slots.iter().position(Slot::is_open))
+        .unwrap_or_else(|| add_outward(slots, ratio, gaps, crossed));
+        slots[target].fill = Fill::Body(Body::new(BodyClass::Belt));
     }
 }
 
-/// A new orbit beyond the outermost, for a body a published count needs and
-/// no orbit is left for.
-fn push_orbit(slots: &mut Vec<Slot>, gaps: &[Gap], fill: Fill) {
-    let outermost = slots.last().map_or(0.1, |s| s.position);
-    let mut position = sig2(outermost * 1.75);
+/// Place the published worlds (steps 3 and 4): each takes the innermost free
+/// orbit, Table 21 deciding only its kind, and orbits are added outward if
+/// they run out. Bodies never move outward to fit.
+pub fn place_published_worlds(
+    slots: &mut Vec<Slot>,
+    count: usize,
+    small_star: bool,
+    ratio: f32,
+    gaps: &[Gap],
+    crossed: &mut Vec<f32>,
+    roller: &mut impl Roller,
+) {
+    for _ in 0..count {
+        let target = slots
+            .iter()
+            .position(Slot::is_open)
+            .unwrap_or_else(|| add_outward(slots, ratio, gaps, crossed));
+        let class = fill::published_kind(slots[target].zone(), small_star, roller);
+        let mut b = Body::new(class);
+        b.rolled = true;
+        slots[target].fill = Fill::Body(b);
+    }
+}
+
+/// Step 5: every orbit still free is Empty, and Empty orbits beyond the
+/// outermost body are removed.
+pub fn close_out(slots: &mut Vec<Slot>) {
+    for s in slots.iter_mut().filter(|s| s.is_open()) {
+        s.fill = Fill::Empty;
+    }
+    let last_body = slots
+        .iter()
+        .rposition(|s| !matches!(s.fill, Fill::Empty) || s.pinned_orbit.is_some());
+    slots.truncate(last_body.map_or(0, |i| i + 1));
+}
+
+/// A new orbit beyond the outermost at the last Table 12 ratio (Section
+/// 4.4), crossing out positions in a companion's gap. Published bodies need
+/// the room, so this may pass 100 HD. Returns its index.
+fn add_outward(slots: &mut Vec<Slot>, ratio: f32, gaps: &[Gap], crossed: &mut Vec<f32>) -> usize {
+    let mut position = sig2(slots.last().map_or(0.1, |s| s.position) * ratio);
     while gaps.iter().any(|g| g.contains(position)) {
-        position = sig2(position * 1.75);
+        crossed.push(position);
+        position = sig2(position * ratio);
     }
     slots.push(Slot {
         position,
-        fill,
+        fill: Fill::Open,
         pinned_orbit: None,
     });
+    slots.len() - 1
 }
 
 /// Roll each body's codes (Section 7.1 to 7.4; Table 22 for the others).
@@ -351,6 +413,7 @@ pub fn is_ice_source(slot: &Slot, ice: IceAvailability) -> bool {
     let Fill::Body(b) = &slot.fill else { return false };
     let codes = b.codes.as_ref();
     b.ice_belt
+        || b.ice_host
         || b.class == BodyClass::IcyDwarf
         || (cold && b.class == BodyClass::Belt)
         || (cold && codes.is_some_and(|c| c.composition == Some(crate::callisto::body::Composition::IceRock)))
@@ -488,19 +551,51 @@ mod tests {
         assert!(matches!(s[0].fill, Fill::Giant { .. }));
     }
 
+    /// Published counts fill innermost first and trim the empty outer orbits.
     #[test]
-    fn counts_are_matched_to_the_published_ones() {
+    fn published_bodies_fill_innermost_first() {
         let mut s = slots(&[0.3, 0.5, 1.0, 1.5, 2.0, 3.0]);
         s[2].fill = Fill::MainWorld;
-        // Rolls: World, World, World, Belt, World (Inner 7, Hot 7, Temperate
-        // 7, Cold 4, Outer 7).
-        fill_open(&mut s, false, &mut Scripted::new(&[(D2, 7), (D2, 7), (D2, 7), (D2, 4), (D2, 7)]));
-        match_counts(&mut s, Some(0), Some(2), &[]);
-        let belts = s.iter().filter(|x| matches!(&x.fill, Fill::Body(b) if b.class == BodyClass::Belt)).count();
-        let others = s.iter().filter(|x| matches!(&x.fill, Fill::Body(b) if b.class != BodyClass::Belt)).count();
-        assert_eq!((belts, others), (0, 2));
-        // The inner rolls are the ones kept.
-        assert!(matches!(s[0].fill, Fill::Body(_)));
-        assert!(matches!(s[1].fill, Fill::Body(_)));
+        let mut crossed = Vec::new();
+        // One belt, 1D = 2: the innermost free Cold or Outer orbit (2.0).
+        place_published_belts(&mut s, 1, 1.75, &[], &mut crossed, &mut Scripted::new(&[(D1, 2)]));
+        // Two worlds: 0.3 and 0.5. Table 21 Inner 4 is Belt, read as World;
+        // Hot 10 is a sub-Neptune.
+        place_published_worlds(&mut s, 2, false, 1.75, &[], &mut crossed, &mut Scripted::new(&[(D2, 4), (D2, 10)]));
+        close_out(&mut s);
+        let kinds: Vec<&str> = s
+            .iter()
+            .map(|x| match &x.fill {
+                Fill::MainWorld => "main",
+                Fill::Body(b) => b.class.name(),
+                Fill::Empty => "empty",
+                _ => "?",
+            })
+            .collect();
+        // 1.5 stays Empty between bodies; 3.0 beyond the last is removed.
+        assert_eq!(kinds, ["World", "Sub-Neptune", "main", "empty", "Belt"]);
+    }
+
+    #[test]
+    fn out_of_orbits_adds_more_at_the_last_ratio() {
+        let mut s = slots(&[1.0]);
+        s[0].fill = Fill::MainWorld;
+        let gap = Gap { lo: 1.2, hi: 2.0 };
+        let mut crossed = Vec::new();
+        place_published_worlds(&mut s, 1, false, 1.5, &[gap], &mut crossed, &mut Scripted::new(&[(D2, 7)]));
+        // 1.5 is in the gap and crossed out; 2.2 is clear.
+        assert_eq!(crossed, [1.5]);
+        assert_eq!(s[1].position, 2.2);
+    }
+
+    #[test]
+    fn a_giant_goes_among_the_outer_orbits_when_beyond_is_blocked() {
+        // 1.75 × 80 = 140 passes 100, so the giant goes between the widest
+        // pair of outer orbits: √(10 × 40) = 20.
+        let mut s = slots(&[1.0, 3.0, 10.0, 40.0, 80.0]);
+        for x in s.iter_mut() {
+            x.fill = Fill::Empty;
+        }
+        assert_eq!(giant_orbit(&s, &[]), Some(20.0));
     }
 }

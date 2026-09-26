@@ -413,7 +413,7 @@ Roll the kind of each giant in Section 5.3, then place them one at a time in Sec
 | 5 | The first free Cold-zone orbit |
 | 6 | A giant that has migrated inward. Roll 1D again: 1 to 5, the first free Temperate or Hot orbit; 6, the first free Inner orbit (a "hot Jupiter", rare, and it has cleared every orbit inside it) |
 
-Place the giants one at a time, in the order rolled. If the zone Table 18 names has no free orbit, the giant takes the first free Cold or Outer orbit instead. Each giant after the first takes the next free Cold or Outer orbit outward from the last one placed, or the first free Cold or Outer orbit if none lies further out. If a giant is to be placed and no Cold or Outer orbit is free, add a new orbit for it: at position 2.7, or at 1.75 × the outermost existing orbit if that is further. Do this for every giant when the count is known; when the count was rolled, add one orbit at most and drop any giant still unplaced. A giant in the Temperate zone displaces any world there, but it is the natural home of a large habitable moon (Section 8).
+Place the giants one at a time, in the order rolled. If the zone Table 18 names has no free orbit, the giant takes the first free Cold or Outer orbit instead. Each giant after the first takes the next free Cold or Outer orbit outward from the last one placed, or the first free Cold or Outer orbit if none lies further out. If a giant is to be placed and no Cold or Outer orbit is free, **add an orbit** for it. The new orbit goes at 1.75 × the outermost existing orbit, provided that position is 100 or less and does not fall in a companion star's gap (Table 8); if it would, put the new orbit instead halfway (in ratio terms) between the two existing Cold or Outer orbits that are furthest apart, so the giant sits among the outer orbits rather than beyond them. If there is only one Cold or Outer orbit and no room beyond it, the giant cannot be placed: for a rolled count, drop it; for a known count, put it in the outermost free orbit of any zone and note it on the record. Do this for every giant when the count is known; when the count was rolled, add one orbit at most and drop any giant still unplaced. A giant in the Temperate zone displaces any world there, but it is the natural home of a large habitable moon (Section 8).
 
 ### 5.5 Ice bodies
 
@@ -424,10 +424,12 @@ Every system has ice somewhere beyond its snow line: comets, icy moons, and smal
 | 2D | Ice in the system | On the record |
 | --- | --- | --- |
 | 2 or 3 | Sparse: no charted ice belt and no icy moons of note. Ice exists in scattered small bodies that must be searched for (Section 11.3 gives the search time) and yield fuel at the sparse-ice rate | Fuel: ice, uncharted |
-| 4 to 9 | Charted: the outermost orbit beyond the last giant (or the outermost orbit of the system, if there are no giants) holds a belt of ice bodies like the Kuiper belt. If no orbit lies beyond the last giant, the ice is in that giant's moons | Fuel: ice, charted |
+| 4 to 9 | Charted: the outermost orbit beyond the last giant (or the outermost orbit of the system, if there are no giants) holds a belt of ice bodies like the Kuiper belt. If no orbit lies beyond the last giant, or the system's belts are all accounted for by a known belt count, the charted ice is in the moons of the outermost giant, or on the outermost world if there is no giant | Fuel: ice, charted |
 | 10 or more | Rich: as above, and every Outer-zone body has surface ice worth landing on | Fuel: ice, charted |
 
 Whatever the roll, any ice-rock world in the Cold or Outer zones (Section 7.2), any world with hydrographics 1 or more in those zones, and any moon of an outer giant is also an ice source; mark each on the record.
+
+An ice belt is a planetoid belt in every sense, so it counts toward the system's number of belts. If the number of belts is already known (Travellermap and the wiki list it), the ice belt is one of them; with a known count of 0 there is no ice belt, and the charted ice is in moons or on a world as the table says.
 
 ### 5.6 The refuelling line
 
@@ -458,7 +460,17 @@ The consequence for play is worth saying plainly: no system with a star is a dea
 
 ## 6. What fills each orbit
 
-With the main world and the giant planets placed, fill every remaining orbit. Roll 2D on the column of Table 21 for the orbit's zone. DM −1 in every column if the primary's mass is below 0.3 (small stars have less material to build with). DM +1 for an orbit next to a giant planet if the result would otherwise be Belt (giants shepherd belts).
+With the main world and the giant planets placed, fill every remaining orbit. Roll 2D on the column of Table 21 for the orbit's zone. DM −1 in every column if the primary's mass is below 0.3 (small stars have less material to build with). For an orbit next to a giant planet, treat a result of 5 as Belt: giants shepherd belts, so belts are more common beside them.
+
+**Published counts.** When the numbers of giant planets, belts and worlds in the system are already known (Travellermap lists them for most of Charted Space), do not roll Table 21 for every orbit. Place the published bodies instead, innermost free orbit first, and leave the rest empty:
+
+1. The giant planets are already placed (Section 5.4) and the ice belt, if Table 19 gave one, is already counted as a belt.
+2. Each remaining belt takes an orbit: roll 1D, 1 to 4 the innermost free Cold or Outer orbit, 5 or 6 the innermost free orbit of any zone.
+3. Each remaining world (the world count less the main world, the belts and the giants) takes the innermost free orbit. Roll 2D on Table 21 for what kind of body it is, reading a result of Empty or Belt as World.
+4. If the orbits run out before the bodies do, add orbits outward as in Section 4.4, crossing out any that fall in a companion's gap, until every body has one.
+5. Any orbit still free is Empty. Remove Empty orbits beyond the outermost body; keep the ones inside.
+
+If only the belt and giant counts are known, and not the number of worlds, fill the remaining orbits with Table 21 as usual but read a Belt result as World, since the belts are already accounted for.
 
 **Table 21: What fills an orbit**
 
@@ -485,7 +497,7 @@ An Inner-zone orbit inside a hot Jupiter's orbit is Empty without a roll. Table 
 | Empty | Nothing of note. Record it; empty orbits are where a referee later hides things | none |
 | Belt | A planetoid belt: rock and metal in the Inner and Hot zones, ice further out | Size 0, atmosphere 0, hydrographics 0. A belt in the Cold or Outer zone is an ice source |
 | World | A terrestrial planet: anything from an airless rock or a ball of ice to a garden world. Whether it is made of metal, rock or ice is decided by its composition roll in Section 7.2, which the zone weights | Rolled in full in Section 7: size, composition, gravity, atmosphere, hydrographics, temperature |
-| Sub-Neptune | The most common kind of planet in the galaxy, between Earth and Neptune in size: a rocky core under a thick hydrogen-helium or steam atmosphere. Not landable and not usefully skimmable | Size 1D + 10, written in extended hex (B to F). Atmosphere: roll 1D, 1 to 4 A (exotic), 5 to 6 B (corrosive). Hydrographics 0. No further world rolls; roll only for its moons (Section 8) |
+| Sub-Neptune | The most common kind of planet in the galaxy, between Earth and Neptune in size: a rocky core under a thick hydrogen-helium or steam atmosphere. Not landable and not usefully skimmable | Size: roll 1D, 1 B, 2 C, 3 D, 4 E, 5 to 6 F (17,600 to 24,000 km). Atmosphere: roll 1D, 1 to 4 A (exotic), 5 to 6 B (corrosive). Hydrographics 0. No further world rolls; roll only for its moons (Section 8) |
 | Icy dwarf | A small ice body like Pluto | Size 1D3, atmosphere 0, hydrographics 1D + 4 as ice; an ice source. No further world rolls; roll only for its moons (Section 8) |
 | Giant planet | Placed in Section 5 | No world codes; kind and size from Table 17. Moons in Section 8 |
 

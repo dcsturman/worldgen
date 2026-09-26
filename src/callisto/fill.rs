@@ -82,22 +82,30 @@ pub enum Filled {
 }
 
 /// Fill one orbit (Table 21). DM −1 if the star's mass is below 0.3. Next to
-/// a giant, a result that would be Belt takes DM +1 as well.
+/// a giant a result of 5 is Belt: giants shepherd belts.
 pub fn fill(zone: Zone, small_star: bool, next_to_giant: bool, roller: &mut impl Roller) -> Filled {
     let t = tables::table(21).dice().expect("Table 21 is a dice table");
     let col = zone as usize;
     let dm = if small_star { -1 } else { 0 };
-    let roll = roller.d2();
-    let mut cell = &t.lookup(roll + dm)[col];
-    if next_to_giant && cell == "Belt" {
-        cell = &t.lookup(roll + dm + 1)[col];
+    let roll = roller.d2() + dm;
+    if next_to_giant && roll == 5 {
+        return Filled::Body(BodyClass::Belt);
     }
-    match cell.as_str() {
+    match t.lookup(roll)[col].as_str() {
         "Empty" => Filled::Empty,
         "Belt" => Filled::Body(BodyClass::Belt),
         "Sub-Neptune" => Filled::Body(BodyClass::SubNeptune),
         "Icy dwarf" => Filled::Body(BodyClass::IcyDwarf),
         _ => Filled::Body(BodyClass::World),
+    }
+}
+
+/// What kind of body a published world is (Section 6, "Published counts"):
+/// Table 21 for its zone, an Empty or Belt result read as World.
+pub fn published_kind(zone: Zone, small_star: bool, roller: &mut impl Roller) -> BodyClass {
+    match fill(zone, small_star, false, roller) {
+        Filled::Body(BodyClass::Belt) | Filled::Empty => BodyClass::World,
+        Filled::Body(class) => class,
     }
 }
 
@@ -139,9 +147,10 @@ pub fn codes(
             gravity: None,
             hydro_is_ice: false,
         },
-        // Size 1D + 10, atmosphere A on 1 to 4 else B, hydrographics 0.
+        // Size 1D: B, C, D, E, F, F. Atmosphere A on 1 to 4 else B.
+        // Hydrographics 0.
         BodyClass::SubNeptune => Codes {
-            size: known.size.unwrap_or_else(|| roller.d1() + 10),
+            size: known.size.unwrap_or_else(|| (roller.d1() + 10).min(15)),
             atmosphere: known
                 .atmosphere
                 .unwrap_or_else(|| if roller.d1() <= 4 { 10 } else { 11 }),
@@ -299,6 +308,14 @@ mod tests {
     }
 
     #[test]
+    fn sub_neptunes_stop_at_f() {
+        let size = |d| {
+            codes(BodyClass::SubNeptune, Zone::Cold, false, Known::default(), &mut Scripted::new(&[(D1, d), (D1, 1)])).size
+        };
+        assert_eq!((1..=6).map(size).collect::<Vec<_>>(), [11, 12, 13, 14, 15, 15]);
+    }
+
+    #[test]
     fn giants_read_their_tables() {
         assert!(giants_present(&mut Scripted::new(&[(D2, 9)])));
         assert!(!giants_present(&mut Scripted::new(&[(D2, 10)])));
@@ -314,8 +331,10 @@ mod tests {
         assert_eq!(f(Zone::Outer, 12), Filled::Body(BodyClass::IcyDwarf));
         assert_eq!(f(Zone::Inner, 12), Filled::Empty);
         assert_eq!(f(Zone::Hot, 10), Filled::Body(BodyClass::SubNeptune));
-        // Next to a giant, a Belt reads one higher.
-        let near = fill(Zone::Cold, false, true, &mut Scripted::new(&[(D2, 4)]));
-        assert_eq!(near, Filled::Body(BodyClass::World));
+        // Next to a giant, a 5 is Belt.
+        let near = fill(Zone::Cold, false, true, &mut Scripted::new(&[(D2, 5)]));
+        assert_eq!(near, Filled::Body(BodyClass::Belt));
+        let far = fill(Zone::Cold, false, false, &mut Scripted::new(&[(D2, 5)]));
+        assert_eq!(far, Filled::Body(BodyClass::World));
     }
 }

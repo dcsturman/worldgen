@@ -503,8 +503,17 @@ pub fn system_from_upstream(
         None => 0,
     };
 
-    let cs = build_constraints(u.name, u.uwp, &stars, giants, belts, planets)
+    let mut cs = build_constraints(u.name, u.uwp, &stars, giants, belts, planets)
         .map_err(UpstreamError::Constraints)?;
+    // What the source actually published decides how Callisto fills the
+    // orbits; Book 6 reads the constraints the same way either way.
+    cs.counts = if u.pbg.trim().is_empty() {
+        crate::systems::constraint::PublishedCounts::None
+    } else if u.worlds.is_none() {
+        crate::systems::constraint::PublishedCounts::GiantsAndBelts
+    } else {
+        crate::systems::constraint::PublishedCounts::All
+    };
     let cs = crate::systems::overrides::apply(u.sector, u.hex, cs)
         .map_err(UpstreamError::Override)?;
     Ok((seed, cs))
