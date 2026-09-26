@@ -43,7 +43,7 @@ pub use api::{
     generate_system_svg, parse_stellar,
 };
 pub use decorations::{LatLon, TideLock, WorldDecorations};
-pub use systems::constraint::{Constraint, PartialUwp, SystemConstraints};
+pub use systems::constraint::{Constraint, PartialUwp, PublishedCounts, SystemConstraints};
 pub use systems::gas_giant::GasGiantSize;
 pub use systems::system::{StarOrbit, StarSize, StarType};
 

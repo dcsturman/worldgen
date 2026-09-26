@@ -21,6 +21,7 @@ use rand::Rng;
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 
+use crate::callisto::body::{BodyClass, Composition, GiantKind};
 use crate::systems::gas_giant::GasGiant;
 use crate::systems::system::{OrbitContent, Star, StarOrbit, StarSize, System};
 use crate::systems::system_tables::get_zone;
@@ -75,6 +76,10 @@ pub struct BodyMeta {
     pub orbit: Option<usize>,
     pub distance_mkm: Option<f32>,
     pub spectral: Option<String>,
+    /// Callisto's kind of body (`"sub-neptune"`, `"ice-giant"`, …), for a
+    /// consumer that wants to treat, say, a sub-Neptune differently from a
+    /// world it can land on. `None` on Book 6 bodies.
+    pub class: Option<&'static str>,
 }
 
 impl BodyMeta {
@@ -86,7 +91,13 @@ impl BodyMeta {
             orbit: None,
             distance_mkm: None,
             spectral: None,
+            class: None,
         }
+    }
+
+    fn class(mut self, class: Option<&'static str>) -> Self {
+        self.class = class;
+        self
     }
 
     /// Attach an orbit slot index and that slot's distance in Mkm, so the
@@ -365,7 +376,10 @@ fn draw_callisto_rings<R: Renderer + ?Sized>(
         r.stroke_ellipse(STAR_CX, STAR_CY, ring_r, ring_r * TILT_RATIO, CROSSED_OUT, 0.8);
     }
     for (orbit, info) in layout.orbits.iter().enumerate() {
-        let open = rings.system.orbit_slots[orbit].is_none();
+        let open = matches!(
+            rings.system.orbit_slots[orbit],
+            None | Some(OrbitContent::Blocked)
+        );
         let ring_r = rings.slot_px(orbit);
         let (cr, cg, cb) = callisto_zone_color(info.zone);
         let (glow, line) = if open { (14, 90) } else { (32, 190) };
@@ -558,19 +572,25 @@ fn draw_bodies<R: Renderer + ?Sized>(r: &mut R, rings: &Rings<'_>) {
                 r.begin_group(
                     &BodyMeta::new(kind, w.name.clone())
                         .orbit(orbit, mkm)
-                        .uwp(w.to_uwp()),
+                        .uwp(w.to_uwp())
+                        .class(world_class(w)),
                 );
                 // For a belt `draw_world` only emits the label and returns;
                 // the scatter/band is then drawn over it (order preserved
                 // from the original so the raster output is unchanged).
                 draw_world(r, w, cx, cy);
                 if belt {
-                    draw_belt(r, ring_r, orbit);
+                    let ice = w.callisto.as_deref().is_some_and(|p| p.ice_source);
+                    draw_belt(r, ring_r, orbit, ice);
                 }
                 r.end_group();
             }
             OrbitContent::GasGiant(gg) => {
-                r.begin_group(&BodyMeta::new(BodyKind::GasGiant, gg.name.clone()).orbit(orbit, mkm));
+                r.begin_group(
+                    &BodyMeta::new(BodyKind::GasGiant, gg.name.clone())
+                        .orbit(orbit, mkm)
+                        .class(giant_class(gg)),
+                );
                 draw_gas_giant(r, gg, cx, cy);
                 r.end_group();
             }
@@ -602,6 +622,9 @@ fn draw_bodies<R: Renderer + ?Sized>(r: &mut R, rings: &Rings<'_>) {
 }
 
 fn is_belt(w: &World) -> bool {
+    if let Some(p) = w.callisto.as_deref() {
+        return p.class == BodyClass::Belt;
+    }
     // Planetoid belts in the existing system come through as a World with
     // size 0 marked as a belt; we infer from size==0 + an empty
     // hydro/atmosphere here. Worlds with size 0 are otherwise rare, so
@@ -618,15 +641,89 @@ fn draw_world<R: Renderer + ?Sized>(r: &mut R, w: &World, cx: f32, cy: f32) {
         return;
     }
     let radius = world_radius_px(w.size);
-    let (cr, cg, cb) = WORLD_DISC;
+    let (cr, cg, cb) = world_color(w);
     r.fill_circle(cx, cy, radius, (cr, cg, cb, 255));
+    if w.callisto.as_deref().is_some_and(|p| p.ice_source) {
+        r.stroke_ellipse(cx, cy, radius + 2.5, radius + 2.5, ICE_SOURCE_MARK, 1.0);
+    }
     draw_moons(r, &w.satellites.sats, cx, cy, radius);
     draw_label(r, cx + radius + 4.0, cy + 4.0, &w.name);
 }
 
+/// A world's disc colour: by what Callisto says it is, or Book 6's one tone.
+fn world_color(w: &World) -> (u8, u8, u8) {
+    let Some(p) = w.callisto.as_deref() else {
+        return WORLD_DISC;
+    };
+    match (p.class, p.composition) {
+        (BodyClass::SubNeptune, _) => SUB_NEPTUNE,
+        (BodyClass::IcyDwarf, _) => ICY_DWARF,
+        (BodyClass::Belt, _) => BELT_TONE_A,
+        (BodyClass::World, Some(Composition::IronRich)) => IRON_RICH,
+        (BodyClass::World, Some(Composition::IceRock)) => ICE_ROCK,
+        (BodyClass::World, _) => ROCKY,
+    }
+}
+
+/// A giant's disc colour: by Callisto's kind, or Book 6's one tone.
+fn giant_color(gg: &GasGiant) -> (u8, u8, u8) {
+    match gg.callisto {
+        Some(GiantKind::IceGiant) => ICE_GIANT,
+        Some(GiantKind::SaturnClass) => SATURN_CLASS,
+        Some(GiantKind::JupiterClass) => JUPITER_CLASS,
+        None => GAS_GIANT_DISC,
+    }
+}
+
+/// The `data-class` a Callisto body carries in the SVG.
+fn world_class(w: &World) -> Option<&'static str> {
+    let p = w.callisto.as_deref()?;
+    Some(match p.class {
+        BodyClass::World => "world",
+        BodyClass::Belt => "belt",
+        BodyClass::SubNeptune => "sub-neptune",
+        BodyClass::IcyDwarf => "icy-dwarf",
+    })
+}
+
+fn giant_class(gg: &GasGiant) -> Option<&'static str> {
+    Some(match gg.callisto? {
+        GiantKind::IceGiant => "ice-giant",
+        GiantKind::SaturnClass => "saturn-class",
+        GiantKind::JupiterClass => "jupiter-class",
+    })
+}
+
+/// The legend's word for a world: its kind, or a terrestrial world's
+/// composition (which says it's a world). Short, since the legend's name
+/// column is narrow.
+fn world_kind(w: &World) -> String {
+    let Some(p) = w.callisto.as_deref() else {
+        return if is_belt(w) { "Belt" } else { "World" }.to_string();
+    };
+    let kind = match (p.class, p.composition) {
+        (BodyClass::World, Some(Composition::IronRich)) => "Iron-rich",
+        (BodyClass::World, Some(Composition::Rocky)) => "Rocky",
+        (BodyClass::World, Some(Composition::IceRock)) => "Ice-rock",
+        (BodyClass::Belt, _) if p.ice_source => "Ice belt",
+        (class, _) => class.name(),
+    };
+    kind.to_string()
+}
+
+/// The legend's word for a giant.
+fn giant_kind_label(gg: &GasGiant) -> &'static str {
+    match gg.callisto {
+        Some(GiantKind::IceGiant) => "Ice giant",
+        Some(GiantKind::SaturnClass) => "Saturn-class",
+        Some(GiantKind::JupiterClass) => "Jupiter-class",
+        None => "Gas Giant",
+    }
+}
+
 fn draw_gas_giant<R: Renderer + ?Sized>(r: &mut R, gg: &GasGiant, cx: f32, cy: f32) {
     let radius = gas_giant_radius_px(gg);
-    let (cr, cg, cb) = GAS_GIANT_DISC;
+    let (cr, cg, cb) = giant_color(gg);
     // Faint banding hint: a slightly darker inner ellipse.
     r.fill_circle(cx, cy, radius, (cr, cg, cb, 255));
     r.fill_circle(
@@ -927,7 +1024,9 @@ fn draw_label_colored<R: Renderer + ?Sized>(r: &mut R, x: f32, y: f32, text: &st
 /// Main-system planetoid belt. Raster sinks scatter ~1400 rocks
 /// (byte-identical to the original); vector sinks emit a single
 /// translucent two-tone band so the belt is one clickable region.
-fn draw_belt<R: Renderer + ?Sized>(r: &mut R, ring_r: f32, orbit: usize) {
+fn draw_belt<R: Renderer + ?Sized>(r: &mut R, ring_r: f32, orbit: usize, ice: bool) {
+    // An ice belt scatters in ice tones; a rock belt keeps Book 6's.
+    let (tone_a, tone_b) = if ice { (ICE_BELT, ICE_ROCK) } else { (BELT_TONE_A, BELT_TONE_B) };
     if r.vector_belts() {
         let band = 2.0 * BELT_SCATTER_PX;
         r.stroke_ellipse(
@@ -935,7 +1034,7 @@ fn draw_belt<R: Renderer + ?Sized>(r: &mut R, ring_r: f32, orbit: usize) {
             STAR_CY,
             ring_r,
             ring_r * TILT_RATIO,
-            (BELT_TONE_A.0, BELT_TONE_A.1, BELT_TONE_A.2, 150),
+            (tone_a.0, tone_a.1, tone_a.2, 150),
             band * 0.6,
         );
         r.stroke_ellipse(
@@ -943,7 +1042,7 @@ fn draw_belt<R: Renderer + ?Sized>(r: &mut R, ring_r: f32, orbit: usize) {
             STAR_CY,
             ring_r,
             ring_r * TILT_RATIO,
-            (BELT_TONE_B.0, BELT_TONE_B.1, BELT_TONE_B.2, 120),
+            (tone_b.0, tone_b.1, tone_b.2, 120),
             band * 0.3,
         );
         return;
@@ -959,11 +1058,7 @@ fn draw_belt<R: Renderer + ?Sized>(r: &mut R, ring_r: f32, orbit: usize) {
         let dr: f32 = rng.random_range(-BELT_SCATTER_PX..BELT_SCATTER_PX);
         let rr = ring_r + dr;
         let (x, y) = body_position(rr, theta);
-        let tone = if rng.random_bool(0.55) {
-            BELT_TONE_A
-        } else {
-            BELT_TONE_B
-        };
+        let tone = if rng.random_bool(0.55) { tone_a } else { tone_b };
         // Vary alpha slightly to avoid a flat-painted look.
         let alpha = rng.random_range(150..=240);
         r.fill_circle(x, y, 1.1, (tone.0, tone.1, tone.2, alpha));
@@ -1001,6 +1096,19 @@ fn draw_header<R: Renderer + ?Sized>(r: &mut R, system: &System) {
             format_mkm(layout.star.jump_shadow_mkm)
         );
         r.fill_text(x, y, 13.0, &line, LABEL_DIM);
+        if let Some(fuel) = &layout.fuel {
+            y += 18.0;
+            let mut line = format!("Fuel: {} in transit", fuel.transit.name());
+            if let (Some(days), Some(src), Some(reach)) =
+                (fuel.local_days, fuel.local_source.as_deref(), fuel.local_reach())
+            {
+                line.push_str(&format!(
+                    " \u{b7} {} from the main world at 1G, {src} ({reach})",
+                    format_duration(f64::from(days) * 86_400.0)
+                ));
+            }
+            r.fill_text(x, y, 12.0, &line, LABEL_DIM);
+        }
         for note in &layout.notes {
             y += 18.0;
             r.fill_text(x, y, 11.0, note, LABEL_DIM);
@@ -1261,18 +1369,41 @@ fn legend_rows(rings: &Rings<'_>) -> Vec<LegendRow> {
             continue;
         };
         let dist = slot_radius_mkm(system, orbit, content);
-        let (name, kind): (&str, &str) = match content {
-            OrbitContent::World(w) => (&w.name, if is_belt(w) { "Belt" } else { "World" }),
-            OrbitContent::GasGiant(gg) => (&gg.name, "Gas Giant"),
+        let (name, kind): (&str, String) = match content {
+            OrbitContent::World(w) => (&w.name, world_kind(w)),
+            OrbitContent::GasGiant(gg) => (
+                &gg.name,
+                giant_kind_label(gg).to_string(),
+            ),
             OrbitContent::Secondary => (
                 system.secondary.as_ref().map_or("Secondary", |s| &s.name),
-                "Star",
+                "Star".to_string(),
             ),
             OrbitContent::Tertiary => (
                 system.tertiary.as_ref().map_or("Tertiary", |s| &s.name),
-                "Star",
+                "Star".to_string(),
             ),
-            OrbitContent::Blocked => continue,
+            // Callisto's empty orbits are listed, dimmed, like open ones.
+            OrbitContent::Blocked => match system.callisto.as_ref().and_then(|l| l.orbit(orbit)) {
+                Some(info) => {
+                    if dist >= jump_mkm
+                        && let Some(j) = jump_row.take()
+                    {
+                        rows.push(j);
+                    }
+                    rows.push(LegendRow {
+                        name: format!("{} HD", format_hd(info.position_hd)),
+                        kind: Some(format!("Empty, {}", info.zone.name())),
+                        color: LABEL_DIM,
+                        dist: format_mkm(dist),
+                        radius_mkm: Some(dist),
+                        travel_mkm: travel_to(dist),
+                        jump_limit: false,
+                    });
+                    continue;
+                }
+                None => continue,
+            },
         };
         if dist >= jump_mkm
             && let Some(j) = jump_row.take()
@@ -1281,14 +1412,17 @@ fn legend_rows(rings: &Rings<'_>) -> Vec<LegendRow> {
         }
         // Tint the legend name to match the on-map label so the panel and
         // the map agree at a glance: amber gas giants, tan belts, white rest.
-        let color = match kind {
-            "Gas Giant" => LABEL_GAS_GIANT,
-            "Belt" => LABEL_BELT,
+        let color = match (content, &*kind) {
+            // A Callisto body's name takes its disc's colour.
+            (OrbitContent::World(w), _) if w.callisto.is_some() => world_color(w),
+            (OrbitContent::GasGiant(g), _) if g.callisto.is_some() => giant_color(g),
+            (_, "Gas Giant") => LABEL_GAS_GIANT,
+            (_, "Belt") => LABEL_BELT,
             _ => LABEL,
         };
         rows.push(LegendRow {
             name: name.to_string(),
-            kind: Some(kind.to_string()),
+            kind: Some(kind),
             color,
             dist: format_mkm(dist),
             radius_mkm: Some(dist),

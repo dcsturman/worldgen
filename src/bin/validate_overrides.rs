@@ -3,7 +3,10 @@
 //! ```text
 //! cargo run --bin validate-overrides --features backend
 //! cargo run --bin validate-overrides --features backend -- --verbose
+//! cargo run --bin validate-overrides --features backend -- --callisto
 //! ```
+//!
+//! `--callisto` generates with Callisto rather than Book 6.
 //!
 //! Silent on success, non-zero exit on failure. Run it after editing an
 //! override, and in CI whenever the file changes.
@@ -41,7 +44,7 @@ use std::process::ExitCode;
 use serde::Deserialize;
 
 use worldgen::api::{
-    UpstreamSystem, build_constraints, digit_at, parse_stellar, system_from_upstream,
+    Generator, UpstreamSystem, build_constraints, digit_at, parse_stellar, system_from_upstream,
 };
 use worldgen::systems::overrides::{self, SystemOverride};
 use worldgen::systems::system::{DroppedConstraint, OrbitContent, System};
@@ -104,7 +107,7 @@ async fn fetch(client: &reqwest::Client, o: &SystemOverride) -> Result<Entry, St
         .ok_or_else(|| format!("no world at {} {}", o.sector, o.hex))
 }
 
-fn check(o: &SystemOverride, up: &Entry, verbose: bool) -> Vec<Failure> {
+fn check(o: &SystemOverride, up: &Entry, verbose: bool, generator: Generator) -> Vec<Failure> {
     let mut out = Vec::new();
 
     // The coordinate check. This is the one that needs the network, and the
@@ -143,12 +146,10 @@ fn check(o: &SystemOverride, up: &Entry, verbose: bool) -> Vec<Failure> {
         return out;
     }
 
-    let system = match System::generate_from_constraints_seeded(seed, cs) {
+    let system: System = match generator.generate(seed, cs) {
         Ok(s) => s,
-        Err(errs) => {
-            for e in errs {
-                out.push(Failure::Author(format!("{e}")));
-            }
+        Err(e) => {
+            out.push(Failure::Author(format!("{e}")));
             return out;
         }
     };
@@ -172,10 +173,13 @@ fn check(o: &SystemOverride, up: &Entry, verbose: bool) -> Vec<Failure> {
         };
         build_constraints(&up.name, &up.uwp, &stars, giants, belts, planets)
             .ok()
-            .and_then(|cs| System::generate_from_constraints_seeded(seed, cs).ok())
+            .and_then(|cs| generator.generate(seed, cs).ok())
             .map(|s| s.orbit_slots.len())
     };
+    // Book 6 only: Callisto adds an orbit for a pinned body that lands where
+    // it has none, by design (see `callisto::populate::place_pins`).
     if let Some(natural) = baseline
+        && generator == Generator::Book6
         && system.orbit_slots.len() > natural
     {
         out.push(Failure::Author(format!(
@@ -271,6 +275,11 @@ fn check(o: &SystemOverride, up: &Entry, verbose: bool) -> Vec<Failure> {
 #[tokio::main]
 async fn main() -> ExitCode {
     let verbose = std::env::args().any(|a| a == "--verbose" || a == "-v");
+    let generator = if std::env::args().any(|a| a == "--callisto") {
+        Generator::Callisto
+    } else {
+        Generator::Book6
+    };
 
     let all = overrides::all();
     if all.is_empty() {
@@ -311,7 +320,7 @@ async fn main() -> ExitCode {
     let mut failed = 0usize;
     for (o, fetched) in results {
         let failures = match fetched {
-            Ok(up) => check(o, &up, verbose),
+            Ok(up) => check(o, &up, verbose, generator),
             Err(e) => vec![Failure::Author(e)],
         };
         if failures.is_empty() {

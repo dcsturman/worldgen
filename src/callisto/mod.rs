@@ -11,10 +11,13 @@
 //! [`crate::systems::system::System`], with [`layout::Layout`] saying where
 //! each orbit really is.
 
+pub mod body;
 pub mod dice;
+pub mod fill;
 pub mod generate;
 pub mod layout;
 pub mod orbits;
+pub mod populate;
 pub mod star;
 pub mod stars;
 pub mod tables;

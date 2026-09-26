@@ -23,8 +23,10 @@ pub fn sig2(x: f32) -> f32 {
     (scaled.round_ties_even() / scale) as f32
 }
 
-/// The zones of Table 13.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+/// The zones of Table 13. Their order is Table 21's column order.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub enum Zone {
     Inner,
     Hot,
@@ -179,6 +181,57 @@ pub struct OrbitPlan {
     /// How many of the requested orbits could not be placed (the 100 HD cap
     /// or the innermost limit ran out of room).
     pub shortfall: usize,
+    /// The last Table 12 ratio rolled.
+    pub last_ratio: Option<f32>,
+    /// Orbits a known count forced beyond 100 HD because no gap could be
+    /// split (Section 4.4); each deserves a note on the record.
+    pub beyond_100: usize,
+}
+
+/// Split the widest gap between neighbouring positions (Section 4.4, "More
+/// orbits for a known count"): the geometric mean of the two, if they are at
+/// least 1.56 apart so both halves keep Table 12's minimum of 1.25. The edges
+/// of a companion's gap count as positions, but a new orbit never goes inside
+/// a gap. `None` when nothing can be split.
+pub fn split_widest(positions: &[f32], gaps: &[Gap]) -> Option<f32> {
+    let in_gap = |p: f32| gaps.iter().any(|g| g.contains(p));
+    let (lo, hi) = (
+        positions.iter().copied().fold(f32::MAX, f32::min),
+        positions.iter().copied().fold(f32::MIN, f32::max),
+    );
+    let mut points: Vec<f32> = positions
+        .iter()
+        .copied()
+        .chain(gaps.iter().flat_map(|g| [g.lo, g.hi]).filter(|&e| e > lo && e < hi))
+        .collect();
+    points.sort_by(f32::total_cmp);
+    points.dedup();
+    let mut pairs: Vec<(f32, f32)> = points
+        .windows(2)
+        .map(|w| (w[0], w[1]))
+        // A stretch across a gap's interior is the gap, not a gap to split.
+        .filter(|&(a, b)| !in_gap((a * b).sqrt()) && b / a >= SPLIT_RATIO)
+        .collect();
+    pairs.sort_by(|x, y| (y.1 / y.0).total_cmp(&(x.1 / x.0)));
+    pairs
+        .into_iter()
+        .map(|(a, b)| sig2((a * b).sqrt()))
+        .find(|&mid| !in_gap(mid) && !positions.contains(&mid))
+}
+
+/// The closest two neighbours may be and still be split: √1.56 ≈ 1.25, Table
+/// 12's smallest ratio.
+pub const SPLIT_RATIO: f32 = 1.56;
+
+/// Multiply outward past 100 HD, skipping gaps, for a known count with no gap
+/// left to split. Returns the new position.
+pub fn beyond(outermost: f32, gaps: &[Gap], roller: &mut impl Roller, crossed: &mut Vec<f32>) -> f32 {
+    let mut p = sig2(outermost * spacing_ratio(roller));
+    while gaps.iter().any(|g| g.contains(p)) {
+        crossed.push(p);
+        p = sig2(p * spacing_ratio(roller));
+    }
+    p
 }
 
 /// Lay out a star's orbits (Sections 4.3 and 4.4).
@@ -188,7 +241,41 @@ pub struct OrbitPlan {
 ///   Table 11.
 /// - `innermost`: the star's innermost orbit (Table 5).
 /// - `gaps`: companion gaps to cross positions out of.
+///
+/// `known` says the count is a known number of bodies rather than a 2D roll:
+/// if the outward run passes 100 HD short of it, the widest gaps are split
+/// until it is met (Section 4.4).
 pub fn lay_out(
+    count: usize,
+    main_world: Option<f32>,
+    innermost: f32,
+    gaps: &[Gap],
+    known: bool,
+    roller: &mut impl Roller,
+) -> OrbitPlan {
+    let mut plan = lay_out_run(count, main_world, innermost, gaps, roller);
+    if known {
+        while plan.positions.len() < count {
+            let p = match split_widest(&plan.positions, gaps) {
+                Some(p) => p,
+                None => {
+                    plan.beyond_100 += 1;
+                    let outermost = *plan.positions.last().unwrap_or(&innermost);
+                    beyond(outermost, gaps, roller, &mut plan.crossed_out)
+                }
+            };
+            let at = plan.positions.partition_point(|&x| x < p);
+            plan.positions.insert(at, p);
+        }
+        plan.main_world = main_world.and_then(|m| plan.positions.iter().position(|&p| p == m));
+        plan.shortfall = 0;
+    }
+    plan
+}
+
+/// Section 4.3's run: inward and outward from the main world by Table 12
+/// ratios, or outward from Table 11's first orbit.
+fn lay_out_run(
     count: usize,
     main_world: Option<f32>,
     innermost: f32,
@@ -202,7 +289,7 @@ pub fn lay_out(
         // Orbit 1 from Table 11, moved out to the innermost orbit if closer,
         // then outward by ratios.
         let first = first_orbit(roller).max(innermost);
-        let mut outward = outward_from(first, count, true, &in_gap, roller, &mut plan.crossed_out);
+        let mut outward = outward_from(first, count, true, &in_gap, roller, &mut plan.crossed_out, &mut plan.last_ratio);
         if in_gap(first) {
             plan.crossed_out.push(first);
             outward.remove(0);
@@ -228,7 +315,9 @@ pub fn lay_out(
     let mut p = mw;
     let mut made = 0;
     while made < inward_n {
-        p = sig2(p / spacing_ratio(roller));
+        let ratio = spacing_ratio(roller);
+        plan.last_ratio = Some(ratio);
+        p = sig2(p / ratio);
         if p < innermost {
             break;
         }
@@ -243,7 +332,15 @@ pub fn lay_out(
 
     // Outward: the orbits the inward side couldn't fit go outward instead,
     // so a known body count still gets its orbits.
-    let outward = outward_from(mw, outward_n + inward_short + 1, false, &in_gap, roller, &mut plan.crossed_out);
+    let outward = outward_from(
+        mw,
+        outward_n + inward_short + 1,
+        false,
+        &in_gap,
+        roller,
+        &mut plan.crossed_out,
+        &mut plan.last_ratio,
+    );
 
     inward.reverse();
     plan.main_world = Some(inward.len());
@@ -266,12 +363,15 @@ fn outward_from(
     in_gap: &impl Fn(f32) -> bool,
     roller: &mut impl Roller,
     crossed_out: &mut Vec<f32>,
+    last_ratio: &mut Option<f32>,
 ) -> Vec<f32> {
     let mut out = vec![start];
     let mut stable = if start_may_be_in_gap && in_gap(start) { 0 } else { 1 };
     let mut p = start;
     while stable < count && p < MAX_POSITION_HD {
-        p = sig2(p * spacing_ratio(roller)).min(MAX_POSITION_HD);
+        let ratio = spacing_ratio(roller);
+        *last_ratio = Some(ratio);
+        p = sig2(p * ratio).min(MAX_POSITION_HD);
         if in_gap(p) {
             crossed_out.push(p);
             continue;
@@ -347,7 +447,7 @@ mod tests {
     fn example_12_1_orbits() {
         let mut r = Scripted::new(&[(D2, 6), (D1, 5), (D2, 6), (D2, 3), (D2, 5)]);
         let n = number_of_orbits(0, &mut r);
-        let plan = lay_out(n, Some(1.0), 0.05, &[], &mut r);
+        let plan = lay_out(n, Some(1.0), 0.05, &[], false, &mut r);
         assert_eq!(plan.positions, [0.45, 0.61, 1.0, 1.6]);
         assert_eq!(plan.main_world, Some(2));
         assert_eq!(r.remaining(), 0);
@@ -359,30 +459,47 @@ mod tests {
     fn example_12_2_orbits() {
         let mut r = Scripted::new(&[(D2, 5), (D2, 6), (D2, 8), (D2, 2)]);
         let n = number_of_orbits(0, &mut r);
-        let plan = lay_out(n, None, 0.14, &[], &mut r);
+        let plan = lay_out(n, None, 0.14, &[], false, &mut r);
         // 0.125 moves out to 0.14; ×1.90 = 0.27; ×1.25 = 0.34.
         assert_eq!(plan.positions, [0.14, 0.27, 0.34]);
         assert_eq!(r.remaining(), 0);
     }
 
-    /// Noricum's orbits: seven known bodies, and the M6 companion's gap from
-    /// 2 to 18 HD crossing out three positions.
+    /// Noricum's orbits (rulebook 12.3): fourteen known bodies, the M6
+    /// companion's gap from 2 to 18 HD, and the outward run stopping at 100
+    /// nine orbits short of fourteen, so the five widest gaps are split.
     #[test]
     fn noricum_orbits() {
         let mut r = Scripted::new(&[
-            (D2, 4), // 2D − 2 = 2, but 7 bodies are known
-            (D1, 1), // a third of the other six inward
-            (D2, 8), (D2, 9), // inward: ÷1.90, ÷2.05
-            (D2, 4), (D2, 10), (D2, 7), (D2, 10), // outward: 2.0, then 4.5, 7.9, 18 crossed out
+            (D2, 4), // 2D − 2 = 2, but 14 bodies are known
+            (D1, 1), // a third of the other thirteen inward: 4
+            (D2, 8), (D2, 9), (D2, 7), (D2, 10), // inward
+            (D2, 4), (D2, 10), (D2, 7), (D2, 10), // 2.0, then 4.5, 7.9, 18 crossed out
             (D2, 8), (D2, 10), (D2, 6), // 34, 76, 100
         ]);
-        let n = number_of_orbits(7, &mut r);
-        assert_eq!(n, 7);
+        let n = number_of_orbits(14, &mut r);
+        assert_eq!(n, 14);
         let gap = Gap { lo: 2.0, hi: 18.0 };
-        let plan = lay_out(n, Some(1.4), 0.05, &[gap], &mut r);
-        assert_eq!(plan.positions, [0.36, 0.74, 1.4, 2.0, 34.0, 76.0, 100.0]);
+        let plan = lay_out(n, Some(1.4), 0.05, &[gap], true, &mut r);
+        // The example prints the innermost as 0.091, dividing the unrounded
+        // 0.2057 by 2.25; the rule rounds every position, so 0.21 ÷ 2.25 is
+        // 0.093 and its split with 0.21 is 0.14 either way.
+        assert_eq!(
+            plan.positions,
+            [0.093, 0.14, 0.21, 0.36, 0.52, 0.74, 1.0, 1.4, 2.0, 25.0, 34.0, 51.0, 76.0, 100.0]
+        );
+        assert_eq!(plan.main_world, Some(7));
         assert_eq!(plan.crossed_out, [4.5, 7.9, 18.0]);
-        assert_eq!(plan.shortfall, 0);
+        assert_eq!(plan.beyond_100, 0);
         assert_eq!(r.remaining(), 0);
+    }
+
+    #[test]
+    fn splitting_prefers_the_widest_gap_and_respects_companion_gaps() {
+        let gap = Gap { lo: 2.0, hi: 18.0 };
+        // 18 (the gap's outer edge) to 34 is split; 2.0 to 18 is the gap.
+        assert_eq!(split_widest(&[1.4, 2.0, 34.0], &[gap]), Some(25.0));
+        // Nothing 1.56 apart: no split.
+        assert_eq!(split_widest(&[1.0, 1.5, 2.2], &[]), None);
     }
 }

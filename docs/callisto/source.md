@@ -316,9 +316,11 @@ Compare the innermost position with the star's **innermost orbit** in Table 5. A
 | 6 | 1.65 |  | 12 | 2.80 |
 | 7 | 1.75 |  |  |  |
 
-Real systems space their orbits by a factor between about 1.3 and 3, most often near 1.8. Round positions to two significant figures. Stop when the count from Section 4.2 is reached or a position passes 100, whichever comes first.
+Real systems space their orbits by a factor between about 1.3 and 3, most often near 1.8. Round positions to two significant figures. Stop when the count from Section 4.2 is reached or a position passes 100, whichever comes first. If the count is known and has not been reached when a position passes 100, see **More orbits for a known count** below.
 
 **Companion gaps.** If the system has a companion star, Table 8 gives a gap for it: from "worlds orbit the primary alone out to" up to "worlds orbit both stars beyond". A position that falls in the gap is crossed out as you generate it; it does not count toward the number of orbits, and you keep multiplying from it to find the next. Orbits beyond the gap circle both stars together; treat them as orbits of the primary, and if the companion is of a similar spectral class treat the position as 0.7 × what the arithmetic gives, since two suns warm a world more than one.
+
+**More orbits for a known count.** When the number of bodies is known (Section 4.2) and the outward run has passed 100 without reaching it, the system is more tightly packed than Table 12 allows. Split the widest gap between two neighbouring positions: put a new orbit at the geometric mean of the two (multiply them together and take the square root), provided the two are at least 1.56 apart in ratio, so that both halves stay at or above Table 12's minimum of 1.25. For this purpose the edges of a companion's gap count as positions, so the stretch from a gap's outer edge to the next orbit can be split like any other, but a new orbit never goes inside the gap itself. Repeat, always splitting the widest gap left, until every body has an orbit. Only if no gap can be split does an orbit go beyond 100; note it on the record. Real systems with many planets are packed at ratios of 1.3 to 1.6, so a split orbit is the more natural result, and it keeps the extra bodies within reach of the main world rather than months out.
 
 ### 4.5 Zones
 
@@ -413,7 +415,7 @@ Roll the kind of each giant in Section 5.3, then place them one at a time in Sec
 | 5 | The first free Cold-zone orbit |
 | 6 | A giant that has migrated inward. Roll 1D again: 1 to 5, the first free Temperate or Hot orbit; 6, the first free Inner orbit (a "hot Jupiter", rare, and it has cleared every orbit inside it) |
 
-Place the giants one at a time, in the order rolled. If the zone Table 18 names has no free orbit, the giant takes the first free Cold or Outer orbit instead. Each giant after the first takes the next free Cold or Outer orbit outward from the last one placed, or the first free Cold or Outer orbit if none lies further out. If a giant is to be placed and no Cold or Outer orbit is free, add a new orbit for it: at position 2.7, or at 1.75 × the outermost existing orbit if that is further. Do this for every giant when the count is known; when the count was rolled, add one orbit at most and drop any giant still unplaced. A giant in the Temperate zone displaces any world there, but it is the natural home of a large habitable moon (Section 8).
+Place the giants one at a time, in the order rolled. If the zone Table 18 names has no free orbit, the giant takes the first free Cold or Outer orbit instead. Each giant after the first takes the next free Cold or Outer orbit outward from the last one placed, or the first free Cold or Outer orbit if none lies further out. If a giant is to be placed and no Cold or Outer orbit is free, add an orbit for it as in Section 4.4: roll Table 12 and multiply outward from the outermost orbit if the result is 100 or less and clear of any companion star's gap (Table 8); otherwise split the widest gap between two Cold or Outer orbits, putting the new orbit at their geometric mean, provided they are at least 1.56 apart in ratio. If neither is possible, the giant cannot be placed: for a rolled count, drop it; for a known count, put it in the outermost free orbit of any zone and note it on the record. Do this for every giant when the count is known; when the count was rolled, add one orbit at most and drop any giant still unplaced. A giant in the Temperate zone displaces any world there, but it is the natural home of a large habitable moon (Section 8).
 
 ### 5.5 Ice bodies
 
@@ -424,10 +426,12 @@ Every system has ice somewhere beyond its snow line: comets, icy moons, and smal
 | 2D | Ice in the system | On the record |
 | --- | --- | --- |
 | 2 or 3 | Sparse: no charted ice belt and no icy moons of note. Ice exists in scattered small bodies that must be searched for (Section 11.3 gives the search time) and yield fuel at the sparse-ice rate | Fuel: ice, uncharted |
-| 4 to 9 | Charted: the outermost orbit beyond the last giant (or the outermost orbit of the system, if there are no giants) holds a belt of ice bodies like the Kuiper belt. If no orbit lies beyond the last giant, the ice is in that giant's moons | Fuel: ice, charted |
+| 4 to 9 | Charted: the outermost orbit beyond the last giant (or the outermost orbit of the system, if there are no giants) holds a belt of ice bodies like the Kuiper belt. If no orbit lies beyond the last giant, or the system's belts are all accounted for by a known belt count, the charted ice is in the moons of the outermost giant, or on the outermost world if there is no giant | Fuel: ice, charted |
 | 10 or more | Rich: as above, and every Outer-zone body has surface ice worth landing on | Fuel: ice, charted |
 
 Whatever the roll, any ice-rock world in the Cold or Outer zones (Section 7.2), any world with hydrographics 1 or more in those zones, and any moon of an outer giant is also an ice source; mark each on the record.
+
+An ice belt is a planetoid belt in every sense, so it counts toward the system's number of belts. If the number of belts is already known (Travellermap and the wiki list it), the ice belt is one of them; with a known count of 0 there is no ice belt, and the charted ice is in moons or on a world as the table says.
 
 ### 5.6 The refuelling line
 
@@ -458,7 +462,17 @@ The consequence for play is worth saying plainly: no system with a star is a dea
 
 ## 6. What fills each orbit
 
-With the main world and the giant planets placed, fill every remaining orbit. Roll 2D on the column of Table 21 for the orbit's zone. DM −1 in every column if the primary's mass is below 0.3 (small stars have less material to build with). DM +1 for an orbit next to a giant planet if the result would otherwise be Belt (giants shepherd belts).
+With the main world and the giant planets placed, fill every remaining orbit. Roll 2D on the column of Table 21 for the orbit's zone. DM −1 in every column if the primary's mass is below 0.3 (small stars have less material to build with). For an orbit next to a giant planet, treat a result of 5 as Belt: giants shepherd belts, so belts are more common beside them.
+
+**Published counts.** When the numbers of giant planets, belts and worlds in the system are already known (Travellermap lists them for most of Charted Space), do not roll Table 21 for every orbit. Place the published bodies instead, innermost free orbit first, and leave the rest empty:
+
+1. The giant planets are already placed (Section 5.4) and the ice belt, if Table 19 gave one, is already counted as a belt.
+2. Each remaining belt takes an orbit: roll 1D, 1 to 4 the innermost free Cold or Outer orbit, 5 or 6 the innermost free orbit of any zone.
+3. Each remaining world (the world count less the main world, the belts and the giants) takes the innermost free orbit. Roll 2D on Table 21 for what kind of body it is, reading a result of Empty or Belt as World.
+4. If the orbits run out before the bodies do, add orbits as in Section 4.4: outward while there is room inside 100 and clear of any companion's gap, then by splitting the widest gaps, until every body has one.
+5. Any orbit still free is Empty. Remove Empty orbits beyond the outermost body; keep the ones inside.
+
+If only the belt and giant counts are known, and not the number of worlds, fill the remaining orbits with Table 21 as usual but read a Belt result as World, since the belts are already accounted for.
 
 **Table 21: What fills an orbit**
 
@@ -485,7 +499,7 @@ An Inner-zone orbit inside a hot Jupiter's orbit is Empty without a roll. Table 
 | Empty | Nothing of note. Record it; empty orbits are where a referee later hides things | none |
 | Belt | A planetoid belt: rock and metal in the Inner and Hot zones, ice further out | Size 0, atmosphere 0, hydrographics 0. A belt in the Cold or Outer zone is an ice source |
 | World | A terrestrial planet: anything from an airless rock or a ball of ice to a garden world. Whether it is made of metal, rock or ice is decided by its composition roll in Section 7.2, which the zone weights | Rolled in full in Section 7: size, composition, gravity, atmosphere, hydrographics, temperature |
-| Sub-Neptune | The most common kind of planet in the galaxy, between Earth and Neptune in size: a rocky core under a thick hydrogen-helium or steam atmosphere. Not landable and not usefully skimmable | Size 1D + 10, written in extended hex (B to F). Atmosphere: roll 1D, 1 to 4 A (exotic), 5 to 6 B (corrosive). Hydrographics 0. No further world rolls; roll only for its moons (Section 8) |
+| Sub-Neptune | The most common kind of planet in the galaxy, between Earth and Neptune in size: a rocky core under a thick hydrogen-helium or steam atmosphere. Not landable and not usefully skimmable | Size: roll 1D, 1 B, 2 C, 3 D, 4 E, 5 to 6 F (17,600 to 24,000 km). Atmosphere: roll 1D, 1 to 4 A (exotic), 5 to 6 B (corrosive). Hydrographics 0. No further world rolls; roll only for its moons (Section 8) |
 | Icy dwarf | A small ice body like Pluto | Size 1D3, atmosphere 0, hydrographics 1D + 4 as ice; an ice source. No further world rolls; roll only for its moons (Section 8) |
 | Giant planet | Placed in Section 5 | No world codes; kind and size from Table 17. Moons in Section 8 |
 
@@ -962,36 +976,43 @@ A scout survey of an unnamed M4 V. We take the star as given and roll the rest w
 
 ### 12.3 Noricum (Trojan Reach 3128), from published data
 
-Travellermap gives Noricum as D8867BB-1, stars **G2 V M9 V M6 V**, 2 gas giants and 1 planetoid belt, and 3 other planets: 7 bodies in all, counting the main world. Everything published is kept. The main world is size 8, atmosphere 8 (dense), hydrographics 6.
+Travellermap gives Noricum as D8867BB-1, stars **G2 V M9 V M6 V**, 4 gas giants, no planetoid belts, and 14 bodies in all counting the main world. Everything published is kept. The main world is size 8, atmosphere 8 (dense), hydrographics 6. This is a crowded system, and it shows how the published count is honoured when the orbits run short.
 
-**Stars.** G2 V primary as listed: Table 5 gives 1 HD as 150 Mkm, days to 1 HD 2.9, shadow 139 Mkm, lock limit 0.40, moon limit 117. Companions M9 V and M6 V, as listed, so only separations are rolled on Table 8. M9: 2D = 9: 200 HD, which is 30,000 Mkm, 41 days. M6: 2D = 6: 6 HD, which is 900 Mkm, 7 days; worlds orbit the primary alone out to 2 HD and both stars beyond 18 HD. Table 9: the M9's separation is more than three times the M6's, so both orbit the primary independently. Position 1.0 is inside the 2 HD limit: the habitable zone is stable.
+**Stars.** G2 V primary as listed: Table 5 gives 1 HD as 150 Mkm, days to 1 HD 2.9, shadow 139 Mkm, lock limit 0.40, moon limit 117. Companions M9 V and M6 V, as listed, so only separations are rolled on Table 8. M9: 2D = 11: 2,000 HD, which is 300,000 Mkm, 130 days; worlds orbit the primary alone out to 670 HD, so it never touches the orbits. M6: 2D = 6: 6 HD, which is 900 Mkm, 7 days; worlds orbit the primary alone out to 2 HD and both stars beyond 18 HD. Table 9: the M9's separation is more than three times the M6's, so both orbit the primary independently. Position 1.0 is inside the 2 HD limit: the habitable zone is stable.
 
 **Main world position.** Atmosphere 8: band 1.10 to 1.40. 1D = 6: 1.4, which is 209 Mkm, 3.4 days.
 
-**Orbits.** Number of orbits (Section 4.2, 2D − 2): 2D = 4, minus 2, gives 2, but the system is known to have 7 bodies, so 7 orbits. Split 1D = 1: one third of the other six inward: 2 inward, 4 outward. Inward ratios 2D = 8 (1.90) and 2D = 9 (2.05): 0.74 and 0.36. Outward ratios 2D = 4 (1.45), 10 (2.25), 7 (1.75), 10 (2.25): 2.0, 4.5, 7.9, 18. The M6 companion's gap runs from 2 HD to 18 HD, which crosses out 4.5, 7.9 and 18 (673, 1,182 and 2,693 Mkm). Only four stable orbits so far, so keep rolling: 2D = 8 (1.90): 34, at 5,086 Mkm; 2D = 10 (2.25): 76, at 11,370 Mkm; 2D = 6 (1.65): 130, capped at 100, 14,960 Mkm. Seven stable orbits. The outer three circle the primary and the M6 together.
+**Orbits.** Number of orbits (Section 4.2, 2D − 2): 2D = 4, minus 2, gives 2, but the system is known to have 14 bodies, so 14 orbits. Split 1D = 1: one third of the other 13 inward: 4 inward, 9 outward. Inward ratios 2D = 8 (1.90), 9 (2.05), 7 (1.75) and 10 (2.25): 0.74, 0.36, 0.21 and 0.091. Outward ratios 2D = 4 (1.45), 10 (2.25), 7 (1.75) and 10 (2.25): 2.0, 4.5, 7.9 and 18. The M6 companion's gap runs from 2 HD to 18 HD, which crosses out 4.5, 7.9 and 18 (673, 1,182 and 2,693 Mkm). Keep multiplying: 2D = 8 (1.90): 34, at 5,086 Mkm; 2D = 10 (2.25): 76, at 11,370 Mkm; 2D = 6 (1.65): 130, capped at 100, 14,960 Mkm, and there the outward run stops. That is 9 stable orbits for 14 bodies, so the other 5 come from splitting the widest gaps (Section 4.4), with the edges of the companion gap counting as neighbours. Widest first: 0.091 to 0.21 (ratio 2.3) gives 0.14; 34 to 76 (2.2) gives 51; 0.36 to 0.74 (2.1) gives 0.52; 0.74 to 1.4 (1.9) gives 1.0; the gap's outer edge at 18 to 34 (1.9) gives 25. Fourteen orbits: 0.091, 0.14, 0.21, 0.36, 0.52, 0.74, 1.0, 1.4, 2.0, 25, 34, 51, 76 and 100. The outer five circle the primary and the M6 together.
 
-**Giants.** Two, from the PBG code. Kind 2D = 4: ice giant. Placement 1D = 1: the first free Outer orbit, 34. Second giant, kind 2D = 3: ice giant, next free Outer orbit outward: 76. Ice belt 1D = 5: none.
+**Giants.** Four, as published. Kinds (Table 17): 2D = 4, ice giant; 2D = 3, ice giant; 2D = 9, gas giant, 1D = 2, Saturn-class; 2D = 10, gas giant, 1D = 6, Jupiter-class. Placement 1D = 1: the first free Outer orbit, 25. The others take the next free Cold or Outer orbits outward: 34, 51 and 76. Ice (Table 19) 2D = 7: charted, but the published count has no belts, so the ice is in the moons of the Jupiter-class giant at 76.
 
-**Refuelling line.** Transit fuel: yes, ice giant. Local fuel: the nearer giant is at 5,086 Mkm, 16.7 days at thrust 1 from the main world. Reachable on a normal fuel load but not convenient; Noricum's own ships buy fuel at the port. The M6 companion at 900 Mkm may have giants of its own inside its 300 Mkm limit, which would be a week away; roll its system if it matters.
+**Refuelling line.** Transit fuel: yes, giant planet. Local fuel: the nearest ice source turns out to be the frozen world at 2.0 (below), 299 Mkm and 4.0 days at thrust 1 from the main world, which is convenient. The nearest giant is at 25, 3,740 Mkm and 14 days: reachable on a normal fuel load but not convenient. The M6 companion at 900 Mkm may have giants of its own inside its 300 Mkm limit, a week away; roll its system if it matters.
 
-**Filling the orbits.** Orbit 0.36, Inner, 2D = 6: rocky. Size 2D = 10, minus 2, minus 2: 6. Composition 1D = 6, minus 1: ice-rock, 0.45 g. Atmosphere 2D = 4, minus 7, plus 6, minus 1, minus 2: 0. Hydrographics 0. Rock class at row 0.32: 206 °C, Roasting; below the lock limit, so locked. Orbit 0.74, Hot, 2D = 8: rocky. Size 2D = 8, minus 2: 6. Composition 1D = 4, minus 1: rocky, 0.75 g. Atmosphere 2D = 4, minus 7, plus 6: 3, very thin. Hydrographics 2D = 6, minus 7, plus 6, minus 2 Hot: 3. Rock class (atmosphere 3, hydrographics 3) at row 0.80: 30 °C, plus 5: 35 °C, Hot. A hot Mars with lakes. Orbit 2.0, Cold, 2D = 4: the planetoid belt from the PBG code. Orbit 100, Outer, 2D = 8: icy world. Size 2D = 5, minus 2: 3. Ice-rock, 0.22 g. Atmosphere 2D = 8, minus 7, plus 3, minus 1, minus 1: 2. Hydrographics 2D = 3, minus 7, plus 3, minus 4: 0. Row 100: −246 °C, Frozen. A Pluto, 33 days out.
+**Filling the orbits.** The giants and the main world are placed and there are no belts, so the nine other published worlds take the nine free orbits, innermost first (Section 6, Published counts), and no orbit is left empty. Each rolls 2D on Table 21 for its kind, reading Empty or Belt as World. Orbit 0.091, Inner, 2D = 7: world. Size 2D = 9, minus 2, minus 2 Inner: 5. Composition 1D = 5, minus 2: rocky, 0.62 g. Atmosphere 2D = 6, minus 7, plus 5, minus 2: 2. Hydrographics 0 in the Inner zone. Rock class at row 0.10: 585 °C, plus 5: 590 °C, Roasting; below the lock limit, so locked. Orbit 0.14, 2D = 3: Empty, read as world. Size 2D = 5, minus 4: 1, so atmosphere 0 and hydrographics 0. Composition 1D = 2, minus 2: iron-rich, 0.16 g. Row 0.125: 494 °C, Roasting, locked. Orbit 0.21, 2D = 10: sub-Neptune. Size 1D = 3: D; atmosphere 1D = 2: A. A hot sub-Neptune, not landable. Orbit 0.36, 2D = 6: world. Size 2D = 11, minus 4: 7. Composition 1D = 6, minus 2: rocky, 0.88 g. Atmosphere 2D = 9, minus 7, plus 7, minus 2: 7. Hydrographics 0. Thin-air class at row 0.40: 143 °C, plus 35: 178 °C, Roasting, locked. A big Venus with no water. Orbit 0.52, Hot, 2D = 8: world. Size 2D = 7, minus 2: 5. Composition 1D = 3, minus 2: iron-rich, 0.81 g. Atmosphere 2D = 8, minus 7, plus 5, plus 1: 7. Hydrographics 2D = 10, minus 7, plus 5, minus 2 Hot: 6. Earth-like class at row 0.50: 87 °C, plus 35: 122 °C, Roasting with water, so cloudy class instead: 66, plus 35: 101 °C, still Roasting. A steam world under permanent cloud. Orbit 0.74, Hot, 2D = 5: world. Size 2D = 8, minus 2: 6. Composition 1D = 4, minus 2: rocky, 0.75 g. Atmosphere 2D = 4, minus 7, plus 6: 3. Hydrographics 2D = 6, minus 7, plus 6, minus 2: 3. Rock class at row 0.80: 30 °C, plus 5: 35 °C, Hot. A hot Mars with lakes. Orbit 1.0, Temperate, 2D = 7: world. Size 2D = 6, minus 2: 4. Composition 1D = 4, minus 1: rocky, 0.50 g. Atmosphere 2D = 7, minus 7, plus 4: 4. Hydrographics 2D = 8, minus 7, plus 4: 5. Earth-like class at row 1.0: −18 °C, plus 20: 2 °C, Temperate. A small, cool, wet world with thin air: Noricum's neighbour, and a second habitable world in the system. Orbit 2.0, Cold, 2D = 9: world. Size 2D = 8, minus 2: 6. Composition 1D = 3, plus 1: rocky, 0.75 g. Atmosphere 2D = 5, minus 7, plus 6: 4. Hydrographics 2D = 9, minus 7, plus 6: 8, ice. Ice class at row 2.0: −122 °C, plus 20: −102 °C, Frozen. A snowball, and an ice source four days from the main world. Orbit 100, Outer, 2D = 12: icy dwarf. Size 1D3 = 2; hydrographics 1D = 3, plus 4: 7, ice. Row 100: −252 °C, Frozen. A Pluto, 29 days out.
 
-**The main world in full.** Composition 1D = 3, minus 1: rocky, 1.0 g. Temperature: Earth-like class at row 1.4: −58, plus 60 for a dense atmosphere: 2 °C, Temperate but only just; a cool world with a thick sky, glaciated at the poles. Moons 1D = 4, minus 3: one. Size 8 minus 1D = 2: 6, which is at least 8 − 3, so a large moon. Band 1D = 2: Close; distance 2D = 3, plus 1: 4 radii; the limit is 117 × 1.4 = 164, so it stays. A 9,600 km moon at 25,000 km: a double planet, its month 11 hours, filling a tenth of the sky. Rotation: above the lock limit, free; 2D = 4, plus 2 for the large moon: 6, a 14-hour day. Tilt 2D = 6, minus 2 for the large moon: 4, 6°. Eccentricity 2D = 8: 0.10, so the warmth varies by half between the ends of its 1.65-year year (0.2 × 209^1.5 = 604 days): a real winter and summer even with little tilt. Physics says: not locked.
+**The main world in full.** Composition 1D = 3, minus 1: rocky, 1.0 g. Temperature: Earth-like class at row 1.4: −58, plus 60 for a dense atmosphere: 2 °C, Temperate but only just; a cool world with a thick sky, glaciated at the poles. Moons 1D = 4, minus 3: one. Size 1D = 6: a large moon, size 8 ÷ 3 = 2. Band 1D = 2: Close; distance 2D = 3, plus 1: 4 radii; the limit is 117 × 1.4 = 164, so it stays. A 3,200 km moon at 25,000 km, its month 11 hours, fourteen times the width of Luna in Earth's sky. Rotation: above the lock limit, free; 2D = 4, plus 2 for the large moon: 6, a 14-hour day. Tilt 2D = 6, minus 2 for the large moon: 4, 6°. Eccentricity 2D = 8: 0.10, so the warmth varies by half between the ends of its 1.65-year year (0.2 × 209^1.5 = 604 days): a real winter and summer even with little tilt. Physics says: not locked.
 
 | Position | Mkm | Days | Zone | Body | UWP digits | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| 0.36 | 54 | 1.7 | Inner | Rocky world | 6-0-0 | Ice-rock, 0.45 g, Roasting, locked |
-| 0.74 | 111 | 2.5 | Hot | Rocky world | 6-3-3 | 0.75 g, 35 °C, Hot |
+| 0.091 | 14 | 0.9 | Inner | Rocky world | 5-2-0 | 0.62 g, 590 °C, Roasting, locked |
+| 0.14 | 21 | 1.1 | Inner | Rocky world | 1-0-0 | Iron-rich, 0.16 g, 494 °C, Roasting, locked |
+| 0.21 | 31 | 1.3 | Inner | Sub-Neptune | D-A-0 | Not landable |
+| 0.36 | 54 | 1.7 | Inner | Rocky world | 7-7-0 | 0.88 g, 178 °C, Roasting, locked |
+| 0.52 | 78 | 2.1 | Hot | Rocky world | 5-7-6 | Iron-rich, 0.81 g, 101 °C, Roasting; a steam world |
+| 0.74 | 111 | 2.5 | Hot | Rocky world | 6-3-3 | 0.75 g, 35 °C, Hot; a hot Mars with lakes |
+| 1.0 | 150 | 2.9 | Temperate | Rocky world | 4-4-5 | 0.50 g, 2 °C, Temperate; small, wet, thin air |
 | 1.4 | 209 | 3.4 | Temperate | Noricum (main world) | 8-8-6 | 1.0 g, 2 °C, day 14 h, year 1.65 yr, large moon at 4 radii |
-| 2.0 | 299 | 4.0 | Cold | Planetoid belt | 0 | From the PBG code |
+| 2.0 | 299 | 4.0 | Cold | Rocky world | 6-4-8 | 0.75 g, −102 °C, Frozen; ice, the nearest fuel |
 | 4.5 to 18 | 673 to 2,693 |  |  | Unstable |  | Cleared by the M6 companion at 900 Mkm |
-| 34 | 5,086 | 16.7 | Outer | Ice giant |  | Circles both stars; nearest fuel |
-| 76 | 11,370 | 25 | Outer | Ice giant |  |  |
-| 100 | 14,960 | 33 | Outer | Icy world | 3-2-0 | 0.22 g, Frozen; ice |
+| 25 | 3,740 | 14 | Outer | Ice giant |  | Circles both stars; nearest giant |
+| 34 | 5,086 | 17 | Outer | Ice giant |  |  |
+| 51 | 7,630 | 20 | Outer | Gas giant, Saturn-class |  | Split orbit |
+| 76 | 11,370 | 25 | Outer | Gas giant, Jupiter-class |  | Charted ice in its moons |
+| 100 | 14,960 | 29 | Outer | Icy dwarf | 2-0-7 | Ice; a Pluto |
 | Companion | 900 | 7.0 |  | M6 V |  | Own orbits out to 300 Mkm, if rolled |
-| Companion | 30,000 | 41 |  | M9 V |  |  |
+| Companion | 300,000 | 130 |  | M9 V |  |  |
 
-Nothing published was changed. The one place the physics is uncomfortable is the ice-rock world at 54 Mkm, which is the sort of thing the composition roll will occasionally produce in the Inner zone; a referee may call it a captured body, and it is worth a note on the record.
+Nothing published was changed. Fourteen bodies fit inside 100 HD once the five widest gaps were split, and none had to go beyond the far companion. The two Temperate-zone worlds a third of an HD apart are the kind of neighbours real systems have, and the one at 1.0 is worth a note on the record: a second habitable world in a system whose published data mentions only Noricum itself.
 
 ## 13. Options and design notes
 

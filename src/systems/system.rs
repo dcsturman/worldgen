@@ -2278,6 +2278,7 @@ fn companion_overrides(bodies: &[Constraint]) -> SystemOverrides {
         tertiary_bodies: Vec::new(),
         main_world_orbit: None,
         main_world_num_satellites: None,
+        counts: Default::default(),
     });
     // Autopop, despite there being no PBG digits here: it means "this
     // description is authoritative", which is exactly what a source table
