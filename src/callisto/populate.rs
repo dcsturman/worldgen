@@ -9,7 +9,9 @@
 use crate::callisto::body::{BodyClass, Fuel, GiantKind, IceAvailability, TransitFuel};
 use crate::callisto::dice::Roller;
 use crate::callisto::fill::{self, Codes, FirstGiant, Filled, Known};
-use crate::callisto::orbits::{Gap, MAX_POSITION_HD, Zone, sig2};
+use crate::callisto::orbits::{
+    Gap, MAX_POSITION_HD, SPLIT_RATIO, Zone, beyond, sig2, spacing_ratio, split_widest,
+};
 use crate::callisto::star::{StarData, days_at_thrust_1};
 use crate::systems::constraint::PartialUwp;
 
@@ -145,6 +147,7 @@ pub fn place_giants(
     count_known: bool,
     gaps: &[Gap],
     notes: &mut Vec<String>,
+    roller: &mut impl Roller,
 ) {
     let mut last: Option<usize> = None;
     let mut added = 0;
@@ -177,7 +180,7 @@ pub fn place_giants(
                 .or_else(|| cold_or_outer_from(slots, 0))
         };
         let added_orbit = if target.is_none() && (count_known || added == 0) {
-            giant_orbit(slots, gaps).map(|position| {
+            giant_orbit(slots, gaps, roller).map(|position| {
                 added += 1;
                 let at = slots.iter().position(|s| s.position > position).unwrap_or(slots.len());
                 slots.insert(
@@ -226,15 +229,16 @@ pub fn place_giants(
     }
 }
 
-/// Where Section 5.4 adds an orbit for a giant: 1.75 × the outermost orbit,
-/// if that is within 100 HD and clear of every companion's gap; otherwise
-/// halfway, in ratio terms, between the adjacent Cold or Outer orbits that
-/// are furthest apart, so the giant sits among the outer orbits rather than
-/// beyond them. `None` when neither works.
-pub fn giant_orbit(slots: &[Slot], gaps: &[Gap]) -> Option<f32> {
+/// Where Section 5.4 adds an orbit for a giant: a Table 12 ratio outward
+/// from the outermost orbit, if that stays within 100 HD and clear of every
+/// companion's gap; otherwise the geometric mean of the widest-spaced pair of
+/// neighbouring Cold or Outer orbits, if they are at least 1.56 apart, so the
+/// giant sits among the outer orbits rather than beyond them. `None` when
+/// neither works.
+pub fn giant_orbit(slots: &[Slot], gaps: &[Gap], roller: &mut impl Roller) -> Option<f32> {
     let clear = |p: f32| !gaps.iter().any(|g| g.contains(p));
     let outermost = slots.last()?.position;
-    let beyond = sig2(outermost * 1.75);
+    let beyond = sig2(outermost * spacing_ratio(roller));
     if beyond <= MAX_POSITION_HD && clear(beyond) {
         return Some(beyond);
     }
@@ -243,7 +247,11 @@ pub fn giant_orbit(slots: &[Slot], gaps: &[Gap]) -> Option<f32> {
         .filter(|s| matches!(s.zone(), Zone::Cold | Zone::Outer))
         .map(|s| s.position)
         .collect();
-    let mut pairs: Vec<(f32, f32)> = outer.windows(2).map(|w| (w[0], w[1])).collect();
+    let mut pairs: Vec<(f32, f32)> = outer
+        .windows(2)
+        .map(|w| (w[0], w[1]))
+        .filter(|&(a, b)| b / a >= SPLIT_RATIO)
+        .collect();
     pairs.sort_by(|a, b| (b.1 / b.0).total_cmp(&(a.1 / a.0)));
     pairs
         .into_iter()
@@ -319,9 +327,9 @@ pub fn fill_open(slots: &mut [Slot], small_star: bool, belts_known: bool, roller
 pub fn place_published_belts(
     slots: &mut Vec<Slot>,
     count: usize,
-    ratio: f32,
     gaps: &[Gap],
     crossed: &mut Vec<f32>,
+    notes: &mut Vec<String>,
     roller: &mut impl Roller,
 ) {
     for _ in 0..count {
@@ -332,7 +340,7 @@ pub fn place_published_belts(
             None
         }
         .or_else(|| slots.iter().position(Slot::is_open))
-        .unwrap_or_else(|| add_outward(slots, ratio, gaps, crossed));
+        .unwrap_or_else(|| add_orbit(slots, gaps, crossed, notes, roller));
         slots[target].fill = Fill::Body(Body::new(BodyClass::Belt));
     }
 }
@@ -344,16 +352,16 @@ pub fn place_published_worlds(
     slots: &mut Vec<Slot>,
     count: usize,
     small_star: bool,
-    ratio: f32,
     gaps: &[Gap],
     crossed: &mut Vec<f32>,
+    notes: &mut Vec<String>,
     roller: &mut impl Roller,
 ) {
     for _ in 0..count {
         let target = slots
             .iter()
             .position(Slot::is_open)
-            .unwrap_or_else(|| add_outward(slots, ratio, gaps, crossed));
+            .unwrap_or_else(|| add_orbit(slots, gaps, crossed, notes, roller));
         let class = fill::published_kind(slots[target].zone(), small_star, roller);
         let mut b = Body::new(class);
         b.rolled = true;
@@ -373,21 +381,47 @@ pub fn close_out(slots: &mut Vec<Slot>) {
     slots.truncate(last_body.map_or(0, |i| i + 1));
 }
 
-/// A new orbit beyond the outermost at the last Table 12 ratio (Section
-/// 4.4), crossing out positions in a companion's gap. Published bodies need
-/// the room, so this may pass 100 HD. Returns its index.
-fn add_outward(slots: &mut Vec<Slot>, ratio: f32, gaps: &[Gap], crossed: &mut Vec<f32>) -> usize {
-    let mut position = sig2(slots.last().map_or(0.1, |s| s.position) * ratio);
-    while gaps.iter().any(|g| g.contains(position)) {
-        crossed.push(position);
-        position = sig2(position * ratio);
+/// A new orbit for a published body when they run out (Section 6 step 4,
+/// Section 4.4): a Table 12 ratio outward while that stays within 100 HD
+/// (crossing out positions in a companion's gap), then the widest gap split,
+/// and only then beyond 100 with a note. Returns its index.
+fn add_orbit(
+    slots: &mut Vec<Slot>,
+    gaps: &[Gap],
+    crossed: &mut Vec<f32>,
+    notes: &mut Vec<String>,
+    roller: &mut impl Roller,
+) -> usize {
+    let positions: Vec<f32> = slots.iter().map(|s| s.position).collect();
+    let outermost = positions.last().copied().unwrap_or(0.1);
+    let mut position = None;
+    // Worth a roll only if even Table 12's smallest ratio stays inside 100.
+    if outermost * 1.25 <= MAX_POSITION_HD {
+        let mut p = sig2(outermost * spacing_ratio(roller));
+        while p <= MAX_POSITION_HD && gaps.iter().any(|g| g.contains(p)) {
+            crossed.push(p);
+            p = sig2(p * spacing_ratio(roller));
+        }
+        position = (p <= MAX_POSITION_HD).then_some(p);
     }
-    slots.push(Slot {
-        position,
-        fill: Fill::Open,
-        pinned_orbit: None,
-    });
-    slots.len() - 1
+    let position = position
+        .or_else(|| split_widest(&positions, gaps))
+        .unwrap_or_else(|| {
+            notes.push(format!(
+                "A published body went beyond {MAX_POSITION_HD} HD: no gap was wide enough to split"
+            ));
+            beyond(outermost, gaps, roller, crossed)
+        });
+    let at = slots.partition_point(|s| s.position < position);
+    slots.insert(
+        at,
+        Slot {
+            position,
+            fill: Fill::Open,
+            pinned_orbit: None,
+        },
+    );
+    at
 }
 
 /// Roll each body's codes (Section 7.1 to 7.4; Table 22 for the others).
@@ -489,6 +523,7 @@ mod tests {
         let mut s = slots(&[0.45, 0.61, 1.0, 1.6]);
         s[2].fill = Fill::MainWorld;
         let mut notes = Vec::new();
+        // Table 12 2D = 7: 1.6 × 1.75 = 2.8.
         place_giants(
             &mut s,
             vec![(GiantKind::SaturnClass, None)],
@@ -496,6 +531,7 @@ mod tests {
             false,
             &[],
             &mut notes,
+            &mut Scripted::new(&[(D2, 7)]),
         );
         assert_eq!(s.len(), 5);
         assert_eq!(s[4].position, 2.8);
@@ -516,6 +552,7 @@ mod tests {
             true,
             &[],
             &mut Vec::new(),
+            &mut Scripted::new(&[]),
         );
         assert!(matches!(s[4].fill, Fill::Giant { .. }));
         assert!(matches!(s[5].fill, Fill::Giant { .. }));
@@ -535,6 +572,7 @@ mod tests {
             false,
             &[],
             &mut Vec::new(),
+            &mut Scripted::new(&[]),
         );
         assert!(matches!(s[0].fill, Fill::Giant { .. }));
         let mut s = slots(&[0.1, 0.2, 0.3, 1.0]);
@@ -547,6 +585,7 @@ mod tests {
             false,
             &[],
             &mut Vec::new(),
+            &mut Scripted::new(&[]),
         );
         assert!(matches!(s[0].fill, Fill::Giant { .. }));
     }
@@ -558,10 +597,11 @@ mod tests {
         s[2].fill = Fill::MainWorld;
         let mut crossed = Vec::new();
         // One belt, 1D = 2: the innermost free Cold or Outer orbit (2.0).
-        place_published_belts(&mut s, 1, 1.75, &[], &mut crossed, &mut Scripted::new(&[(D1, 2)]));
+        let mut notes = Vec::new();
+        place_published_belts(&mut s, 1, &[], &mut crossed, &mut notes, &mut Scripted::new(&[(D1, 2)]));
         // Two worlds: 0.3 and 0.5. Table 21 Inner 4 is Belt, read as World;
         // Hot 10 is a sub-Neptune.
-        place_published_worlds(&mut s, 2, false, 1.75, &[], &mut crossed, &mut Scripted::new(&[(D2, 4), (D2, 10)]));
+        place_published_worlds(&mut s, 2, false, &[], &mut crossed, &mut notes, &mut Scripted::new(&[(D2, 4), (D2, 10)]));
         close_out(&mut s);
         let kinds: Vec<&str> = s
             .iter()
@@ -577,15 +617,26 @@ mod tests {
     }
 
     #[test]
-    fn out_of_orbits_adds_more_at_the_last_ratio() {
+    fn out_of_orbits_adds_outward_then_splits() {
+        // Outward first: Table 12 2D = 5 is 1.55, which lands in the gap and
+        // is crossed out; 2D = 4 from there is 1.45, clear.
         let mut s = slots(&[1.0]);
         s[0].fill = Fill::MainWorld;
         let gap = Gap { lo: 1.2, hi: 2.0 };
-        let mut crossed = Vec::new();
-        place_published_worlds(&mut s, 1, false, 1.5, &[gap], &mut crossed, &mut Scripted::new(&[(D2, 7)]));
-        // 1.5 is in the gap and crossed out; 2.2 is clear.
-        assert_eq!(crossed, [1.5]);
-        assert_eq!(s[1].position, 2.2);
+        let (mut crossed, mut notes) = (Vec::new(), Vec::new());
+        place_published_worlds(&mut s, 1, false, &[gap], &mut crossed, &mut notes, &mut Scripted::new(&[(D2, 5), (D2, 4), (D2, 7)]));
+        assert_eq!(crossed, [1.6]);
+        assert_eq!(s[1].position, 2.3);
+        // At 100 there is no room outward, so the widest gap is split.
+        let mut s = slots(&[1.0, 10.0, 100.0]);
+        for x in s.iter_mut() {
+            x.fill = Fill::Empty;
+        }
+        s[0].fill = Fill::MainWorld;
+        place_published_worlds(&mut s, 1, false, &[], &mut crossed, &mut notes, &mut Scripted::new(&[(D2, 7)]));
+        // 1 to 10 and 10 to 100 tie at 10×; the first is split.
+        assert!(s.iter().any(|x| x.position == 3.2));
+        assert!(notes.is_empty());
     }
 
     #[test]
@@ -596,6 +647,6 @@ mod tests {
         for x in s.iter_mut() {
             x.fill = Fill::Empty;
         }
-        assert_eq!(giant_orbit(&s, &[]), Some(20.0));
+        assert_eq!(giant_orbit(&s, &[], &mut Scripted::new(&[(D2, 7)])), Some(20.0));
     }
 }

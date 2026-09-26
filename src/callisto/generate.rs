@@ -180,6 +180,9 @@ pub fn generate(
         })
         .count();
 
+    // A known body count (anything published) is met by splitting gaps when
+    // the orbits run short (Section 4.4); a rolled one just stops at 100.
+    let counts_known = constraints.counts != PublishedCounts::None;
     let mut primary_notes = Vec::new();
     if !primary.can_host_main_world() {
         match host {
@@ -201,6 +204,7 @@ pub fn generate(
             Some(mw_position),
             pdata.innermost_hd,
             &primary_gaps,
+            counts_known,
             roller,
         );
         if primary_gaps.iter().any(|g| g.contains(mw_position)) {
@@ -211,7 +215,7 @@ pub fn generate(
         }
         plan
     } else {
-        lay_out(number_of_orbits(0, roller), None, pdata.innermost_hd, &primary_gaps, roller)
+        lay_out(number_of_orbits(0, roller), None, pdata.innermost_hd, &primary_gaps, false, roller)
     };
 
     // Each companion's own orbits reach a third of the way to its partner.
@@ -231,11 +235,13 @@ pub fn generate(
             let limit_hd = partner_hd * pdata.hd_mkm / 3.0 / data.hd_mkm;
             let hosted = host == Some(i);
             let known = if hosted { known_bodies } else { c.bodies.len() };
+            let is_known = if hosted { counts_known } else { !c.bodies.is_empty() };
             let plan = lay_out(
                 number_of_orbits(known, roller),
                 hosted.then_some(mw_position),
                 data.innermost_hd,
                 &[],
+                is_known,
                 roller,
             );
             clip(plan, limit_hd)
@@ -570,8 +576,6 @@ fn populate_host(
     let small_star = star.mass < 0.3;
     let counts = constraints.counts;
     let free = counts == PublishedCounts::None;
-    // More orbits for published bodies come at the last Table 12 ratio.
-    let ratio = plan.last_ratio.unwrap_or(1.75);
 
     // Bodies a source pins to a Book 6 orbit go in first.
     let mut pins = Vec::new();
@@ -654,7 +658,7 @@ fn populate_host(
     }
     let any_pinned_giant = slots.iter().any(|s| matches!(s.fill, Fill::Giant { .. }));
     let first = (!giants.is_empty() && !any_pinned_giant).then(|| first_giant(roller));
-    place_giants(slots, giants, first, !free, gaps, notes);
+    place_giants(slots, giants, first, !free, gaps, notes, roller);
 
     // Step 10: ice. Under a published belt count the charted ice belt is one
     // of the published belts, so it needs one to spare.
@@ -669,20 +673,20 @@ fn populate_host(
     let belts_to_place = belts_left.saturating_sub(usize::from(ice_belt));
     match counts {
         PublishedCounts::All => {
-            place_published_belts(slots, belts_to_place, ratio, gaps, &mut plan.crossed_out, roller);
+            place_published_belts(slots, belts_to_place, gaps, &mut plan.crossed_out, notes, roller);
             place_published_worlds(
                 slots,
                 others_total - pinned_others,
                 small_star,
-                ratio,
                 gaps,
                 &mut plan.crossed_out,
+                notes,
                 roller,
             );
             close_out(slots);
         }
         PublishedCounts::GiantsAndBelts => {
-            place_published_belts(slots, belts_to_place, ratio, gaps, &mut plan.crossed_out, roller);
+            place_published_belts(slots, belts_to_place, gaps, &mut plan.crossed_out, notes, roller);
             fill_open(slots, small_star, true, roller);
         }
         PublishedCounts::None => fill_open(slots, small_star, false, roller),
@@ -816,6 +820,12 @@ fn build_system(
         notes.push(format!(
             "{} orbit(s) could not be placed: no room inside {MAX_POSITION_HD} HD",
             plan.shortfall
+        ));
+    }
+    if plan.beyond_100 > 0 {
+        notes.push(format!(
+            "{} orbit(s) went beyond {MAX_POSITION_HD} HD: no gap was wide enough to split",
+            plan.beyond_100
         ));
     }
     system.callisto = Some(Box::new(Layout {
@@ -966,52 +976,57 @@ mod tests {
                 ApiStar::new(StarType::M, 9, StarSize::V),
                 ApiStar::new(StarType::M, 6, StarSize::V),
             ],
-            2,
-            1,
-            3,
+            4,
+            0,
+            9,
         )
         .unwrap()
     }
 
     /// Rulebook 12.3, Noricum, as far as stage 2 goes: the rolls it lists, in
-    /// the order the generator makes them. Where the example and the rules
-    /// part (see below) the rules win.
+    /// the order the generator makes them.
     #[test]
     fn noricum() {
         let mut r = Scripted::new(&[
-            (D2, 9), // M9 separation: 200 HD
+            (D2, 11), // M9 separation: 2,000 HD
             (D2, 6), // M6 separation: 6 HD
             (D1, 6), // main world position: 1.4
-            (D2, 4), // orbits: 2, but 7 bodies
+            (D2, 4), // orbits: 2, but 14 bodies
             (D1, 1),
-            (D2, 8), (D2, 9),
+            (D2, 8), (D2, 9), (D2, 7), (D2, 10),
             (D2, 4), (D2, 10), (D2, 7), (D2, 10),
             (D2, 8), (D2, 10), (D2, 6),
             // The companions' own orbits (the example leaves them unrolled).
             (D2, 2), (D2, 2),
             (D2, 2), (D2, 2),
-            (D2, 4), (D2, 3), // giants: ice, ice
+            (D2, 4), (D2, 3), (D2, 9), (D1, 2), (D2, 10), (D1, 6), // giants' kinds
             (D1, 1), // first giant: Outer
-            (D2, 5), // ice: charted, but no orbit beyond the last giant
-            (D1, 1), // the published belt: innermost free Cold/Outer, else any
-            (D2, 8), (D2, 7), (D2, 7), // three published worlds' kinds
-            (D2, 8), (D1, 4), (D2, 4), (D2, 6), // 0.74: size, composition, atmosphere, hydro
-            (D2, 5), (D1, 3), (D2, 8), (D2, 3), // 56: the icy world
-            (D2, 7), (D1, 3), (D2, 7), (D2, 7), // 680
+            (D2, 7), // ice: charted, but the published count has no belts
+            // The nine published worlds' kinds, innermost first.
+            (D2, 7), (D2, 3), (D2, 10), (D2, 6), (D2, 8), (D2, 5), (D2, 7), (D2, 9), (D2, 12),
+            (D2, 9), (D1, 5), (D2, 6), // 0.093
+            (D2, 5), (D1, 2), // 0.14: size 1, so no atmosphere or hydrographics
+            (D1, 3), (D1, 2), // 0.21: sub-Neptune
+            (D2, 11), (D1, 6), (D2, 9), // 0.36
+            (D2, 7), (D1, 3), (D2, 8), (D2, 10), // 0.52
+            (D2, 8), (D1, 4), (D2, 4), (D2, 6), // 0.74
+            (D2, 6), (D1, 4), (D2, 7), (D2, 8), // 1.0
+            (D2, 8), (D1, 3), (D2, 5), (D2, 9), // 2.0
+            (D3, 2), (D1, 3), // 100: icy dwarf
             (D1, 3), // main world composition
         ]);
         let system = generate(noricum_constraints(), &mut r).unwrap();
         assert_eq!(r.remaining(), 0);
         let layout = system.callisto.as_deref().unwrap();
         let positions: Vec<f32> = layout.orbits.iter().map(|o| o.position_hd).collect();
-        // The example keeps 76 and 100, but the M9 at 200 HD has a gap of its
-        // own, 67 to 600, which the example overlooks: both are crossed out.
-        // With seven published bodies and five orbits, the second giant takes
-        // the free Cold orbit at 2.0, the belt the innermost orbit left, and
-        // the worlds go innermost first, then outward at the last ratio
-        // (1.65), past the M9's gap.
-        assert_eq!(positions, [0.36, 0.74, 1.4, 2.0, 6.0, 34.0, 56.0, 680.0]);
-        assert_eq!(layout.crossed_out, [4.5, 7.9, 18.0, 76.0, 100.0, 92.0, 150.0, 250.0, 410.0]);
+        // Fourteen bodies inside 100 HD, five of them in split gaps, plus the
+        // M6 companion's own slot at 6 HD. (The example prints the innermost
+        // as 0.091; the rules' rounding gives 0.093, see orbits.rs.)
+        assert_eq!(
+            positions,
+            [0.093, 0.14, 0.21, 0.36, 0.52, 0.74, 1.0, 1.4, 2.0, 6.0, 25.0, 34.0, 51.0, 76.0, 100.0]
+        );
+        assert!(layout.notes.is_empty(), "{:?}", layout.notes);
         let kinds: Vec<String> = system
             .orbit_slots
             .iter()
@@ -1019,7 +1034,7 @@ mod tests {
                 Some(OrbitContent::World(w)) if w.is_mainworld() => "main".to_string(),
                 Some(OrbitContent::World(w)) => {
                     let p = w.callisto.as_deref().unwrap();
-                    format!("{} {}", p.class.name(), w.to_uwp())
+                    format!("{} {}", p.class.name(), &w.to_uwp()[1..4])
                 }
                 Some(OrbitContent::GasGiant(g)) => g.callisto.unwrap().name().to_string(),
                 Some(OrbitContent::Tertiary) => "M6".to_string(),
@@ -1029,22 +1044,37 @@ mod tests {
         assert_eq!(
             kinds,
             [
-                "Belt Y000000-0",
-                "World Y633000-0",
+                "World 520",
+                "World 100",
+                "Sub-Neptune DA0",
+                "World 770",
+                "World 576",
+                "World 633",
+                "World 445",
                 "main",
-                "Ice giant",
+                "World 648",
                 "M6",
                 "Ice giant",
-                "World Y320000-0",
-                "World Y535000-0",
+                "Ice giant",
+                "Gas giant, Saturn-class",
+                "Gas giant, Jupiter-class",
+                "Icy dwarf 207",
             ]
         );
         // The main world: rocky, 1 g.
-        let mw = system.orbit_slots[2].as_ref().unwrap();
-        let OrbitContent::World(mw) = mw else { panic!() };
+        let mw = system
+            .orbit_slots
+            .iter()
+            .flatten()
+            .find_map(|s| match s {
+                OrbitContent::World(w) if w.is_mainworld() => Some(w),
+                _ => None,
+            })
+            .unwrap();
         let p = mw.callisto.as_deref().unwrap();
         assert_eq!((p.composition, p.gravity), (Some(Composition::Rocky), Some(1.0)));
-        // Fuel: a giant for transit; the nearer giant, at 2.0 HD, is 4 days out.
+        // Fuel: a giant for transit; the nearest source is the frozen world
+        // at 2.0 HD, 4 days out (the example's 299 Mkm and 4.0 days).
         let fuel = layout.fuel.as_ref().unwrap();
         assert_eq!(fuel.transit, TransitFuel::GiantPlanet);
         assert!((fuel.local_days.unwrap() - days_at_thrust_1(2.0 * 150.0)).abs() < 1e-4);
@@ -1112,7 +1142,7 @@ mod tests {
     fn published_counts_come_out_exactly() {
         use crate::api::{UpstreamSystem, system_from_upstream};
         for hex in ["0101", "0507", "1212", "2020", "3140"] {
-            for (pbg, worlds) in [("213", Some(9)), ("402", Some(5)), ("100", Some(1))] {
+            for (pbg, worlds) in [("213", Some(9)), ("402", Some(5)), ("100", Some(1)), ("804", Some(14))] {
                 let (seed, cs) = system_from_upstream(&UpstreamSystem {
                     sector: "Test",
                     hex,
@@ -1127,6 +1157,14 @@ mod tests {
                 let w = worlds.unwrap() as usize - b - g;
                 let s = generate_from_constraints_seeded(seed, cs).unwrap();
                 assert_eq!(census(&s), (g, b, w), "{hex} pbg {pbg} W {worlds:?}");
+                // Published bodies stay within 100 HD unless noted.
+                let l = s.callisto.as_deref().unwrap();
+                assert!(
+                    l.orbits.iter().all(|o| o.position_hd <= 100.0)
+                        || l.notes.iter().any(|n| n.contains("beyond")),
+                    "{hex} pbg {pbg}: {:?}",
+                    l.orbits.iter().map(|o| o.position_hd).collect::<Vec<_>>()
+                );
             }
             // Without a world count only the belts and giants are exact.
             let (seed, cs) = system_from_upstream(&UpstreamSystem {
@@ -1186,7 +1224,7 @@ mod dump {
     fn callisto_dump() {
         let dir = std::env::var("CALLISTO_DUMP_DIR").unwrap_or_else(|_| "/tmp".to_string());
         let systems = [
-            ("Trojan Reach", "3128", "Noricum", "D8867BB-1", "213", "G2 V M9 V M6 V", Some(7)),
+            ("Trojan Reach", "2018", "Noricum", "D8867BB-1", "804", "G2 V M9 V M6 V", Some(14)),
             ("Spinward Marches", "1910", "Regina", "A788899-C", "703", "F7 V BD M3 V", Some(8)),
             ("Trojan Reach", "2424", "Hilfer", "BA5077A-6", "400", "M6 V", Some(3)),
             ("Spinward Marches", "1717", "Mora", "AA99AC7-F", "503", "F0 V", Some(9)),
