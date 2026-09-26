@@ -23,6 +23,7 @@ pub mod backend;
 // depending on worldgen as a Cargo dep (with `default-features = false`)
 // sees these and nothing else.
 pub mod api;
+pub mod callisto;
 pub mod decorations;
 pub mod seed;
 pub mod sysmap;

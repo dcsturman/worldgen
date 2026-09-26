@@ -1,0 +1,146 @@
+% Callisto System Generation — booklet template
+% Build: python3 build.py   (needs pandoc and xelatex; fonts in ./fonts)
+\documentclass[letterpaper,10pt,openany,oneside]{memoir}
+
+% ---------- fonts ----------
+\usepackage{fontspec}
+\defaultfontfeatures{Ligatures=TeX}
+\setmainfont{LibertinusSerif}[Path=fonts/, Extension=.otf,
+  UprightFont=*-Regular, ItalicFont=*-Italic, BoldFont=*-Bold, BoldItalicFont=*-BoldItalic,
+  Numbers=OldStyle]
+\setsansfont{LibertinusSans}[Path=fonts/, Extension=.otf,
+  UprightFont=*-Regular, ItalicFont=*-Italic, BoldFont=*-Bold, BoldItalicFont=*-Bold]
+% The Traveller wordmark is set in Optima. The build looks for fonts/Optima.ttc (copy it from
+% /System/Library/Fonts/Optima.ttc on a Mac; keep it out of version control), then for a system
+% font called Optima, and otherwise falls back to the sans face.
+\IfFileExists{fonts/Optima.ttc}%
+  {\newfontfamily\wordmarkfont{Optima.ttc}[Path=fonts/, FontIndex=0, ItalicFont=Optima.ttc, ItalicFeatures={FontIndex=1}, BoldFont=Optima.ttc, BoldFeatures={FontIndex=2}, BoldItalicFont=Optima.ttc, BoldItalicFeatures={FontIndex=3}]}%
+  {\IfFontExistsTF{Optima}{\newfontfamily\wordmarkfont{Optima}[BoldItalicFont=* Bold Italic]}%
+    {\newfontfamily\wordmarkfont{LibertinusSans}[Path=fonts/, Extension=.otf, UprightFont=*-Regular, ItalicFont=*-Italic, BoldFont=*-Bold, BoldItalicFont=*-Bold]}}
+
+% ---------- packages ----------
+\usepackage{microtype}
+\usepackage{booktabs,tabularx,array,ragged2e}
+\usepackage[table]{xcolor}
+\usepackage{graphicx}
+\usepackage{tikz}
+\usepackage{multicol}
+\setlength{\columnsep}{0.28in}
+\usepackage{caption}
+\usepackage{hyperref}
+
+% ---------- colours ----------
+\definecolor{cal}{HTML}{2B6CB0}   % the rule, the wordmark, the headings
+\definecolor{ink}{HTML}{1A1A1A}
+\hypersetup{colorlinks=true, linkcolor=cal, urlcolor=cal, pdftitle={Callisto System Generation}, pdfauthor={Daniel Sturman}}
+
+% ---------- page ----------
+\setlrmarginsandblock{0.7in}{0.7in}{*}
+\setulmarginsandblock{0.85in}{0.85in}{*}
+\setheadfoot{\onelineskip}{2\onelineskip}
+\checkandfixthelayout
+\raggedbottom
+
+% running heads
+\makepagestyle{callisto}
+\makeevenhead{callisto}{\sffamily\small\color{cal}Callisto System Generation}{}{}
+\makeoddhead{callisto}{\sffamily\small\color{cal}Callisto System Generation}{}{}
+\makeevenfoot{callisto}{}{\sffamily\small\thepage}{}
+\makeoddfoot{callisto}{}{\sffamily\small\thepage}{}
+\pagestyle{callisto}
+\makeatletter
+\renewcommand{\sectionmark}[1]{\markright{#1}}
+\makeatother
+
+% ---------- headings ----------
+\setsecnumdepth{none}            % the headings carry their own numbers
+\maxsecnumdepth{none}
+\settocdepth{subsection}
+\setsecheadstyle{\Large\sffamily\bfseries\color{cal}\raggedright}
+\setbeforesecskip{-1.4\onelineskip}
+\setaftersecskip{0.6\onelineskip}
+\setsubsecheadstyle{\large\sffamily\bfseries\color{cal}\raggedright}
+\setbeforesubsecskip{-0.9\onelineskip}
+\setaftersubsecskip{0.3\onelineskip}
+\setsubsubsecheadstyle{\sffamily\bfseries\raggedright}
+
+% ---------- tables ----------
+\counterwithout{table}{chapter}
+\captionsetup{font={sf,small}, labelfont={bf,color=cal}, labelsep=colon, justification=raggedright, singlelinecheck=false, skip=4pt}
+\renewcommand{\arraystretch}{1.12}
+\setlength{\tabcolsep}{4pt}
+% keep tables and their captions together in the column
+\newenvironment{ruletable}{\par\medskip\noindent\begin{minipage}{\columnwidth}}{\end{minipage}\par\medskip}
+
+% ---------- lists, paragraphs ----------
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.45\onelineskip}
+\usepackage{enumitem}
+\setlist{nosep, leftmargin=1.2em}
+\providecommand{\tightlist}{\setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+
+% ---------- contents ----------
+\renewcommand{\contentsname}{Contents}
+\renewcommand{\listtablename}{Tables}
+\renewcommand{\cftsectionfont}{\sffamily}
+\renewcommand{\cftsectionpagefont}{\sffamily}
+\renewcommand{\cftsubsectionfont}{\small}
+\renewcommand{\cftsubsectionpagefont}{\small}
+\renewcommand{\cfttablefont}{\small}
+\renewcommand{\cfttablepagefont}{\small}
+\setlength{\cftbeforesectionskip}{0.4em}
+
+\begin{document}
+
+% ================= COVER =================
+% If cover.jpg (or cover.png) exists beside this file it is used full-bleed, with the title
+% band laid over its lower third. Otherwise the cover is typographic: a deep field with the band.
+\thispagestyle{empty}
+\begin{tikzpicture}[remember picture, overlay]
+  \IfFileExists{cover.jpg}{%
+    \node[anchor=center, inner sep=0pt] at (current page.center)
+      {\includegraphics[width=\paperwidth, height=\paperheight, keepaspectratio=false]{cover.jpg}};}%
+  {\IfFileExists{cover.png}{%
+    \node[anchor=center, inner sep=0pt] at (current page.center)
+      {\includegraphics[width=\paperwidth, height=\paperheight, keepaspectratio=false]{cover.png}};}%
+  {\fill[black!92!cal] (current page.south west) rectangle (current page.north east);}}
+  % title band across the lower third
+  \fill[black, opacity=0.78] ([yshift=2.15in]current page.south west) rectangle ([yshift=3.75in]current page.south east);
+  \fill[cal] ([yshift=3.75in]current page.south west) rectangle ([yshift=3.81in]current page.south east);
+  \node[anchor=north west, text=white, font=\sffamily\bfseries\fontsize{40}{44}\selectfont, inner sep=0pt]
+    at ([xshift=0.6in, yshift=3.45in]current page.south west) {Callisto};
+  \node[anchor=north west, text=white, font=\sffamily\fontsize{26}{30}\selectfont, inner sep=0pt]
+    at ([xshift=0.6in, yshift=2.85in]current page.south west) {System Generation};
+  \node[anchor=south west, text=white!80!cal, font=\sffamily\fontsize{12}{14}\selectfont, inner sep=0pt, align=left]
+    at ([xshift=0.6in, yshift=2.3in]current page.south west) {A referee's system for building star systems, for Mongoose Traveller 2nd Edition};
+  \node[anchor=south east, text=white, font=\sffamily\fontsize{13}{15}\selectfont, inner sep=0pt]
+    at ([xshift=-0.6in, yshift=2.3in]current page.south east) {Daniel Sturman};
+\end{tikzpicture}
+\null\clearpage
+
+% ================= FRONT MATTER =================
+\thispagestyle{empty}
+\vspace*{2in}
+{\sffamily\bfseries\color{cal}\Huge Callisto System Generation\par}
+\vspace{0.5em}
+{\large A system for generating Traveller star systems from current astrophysics. Written for Mongoose Traveller 2nd Edition; usable with most versions of Traveller.\par}
+\vspace{1.5em}
+{Daniel Sturman\par}
+\vfill
+{\small Callisto System Generation is a free, non-commercial work for referees. It may not be sold.\par}
+\vspace{0.6em}
+{\small\itshape The Traveller, 2300AD, Twilight: 2000 and Dark Conspiracy games in all forms are owned by Mongoose Publishing. Copyright 1977 -- 2025 Mongoose Publishing. Traveller is a registered trademark of Mongoose Publishing. Mongoose Publishing permits web sites and fanzines for this game, provided it contains this notice, that Mongoose Publishing is notified, and subject to a withdrawal of permission on 90 days notice. The contents of this work are for personal, non-commercial use only. Any use of Mongoose Publishing's copyrighted material or trademarks anywhere in this work and its files should not be viewed as a challenge to those copyrights or trademarks. This work may not be republished or distributed without the consent of its author.\par}
+\vspace{0.6em}
+{\small\itshape Refuelling rates in Section 11 are summarised from the Drinaxian Companion, copyright \textcopyright{} Mongoose Publishing, all rights reserved.\par}
+\newpage
+\tableofcontents*
+\clearpage
+\listoftables*
+\clearpage
+
+% ================= BODY =================
+\begin{multicols}{2}
+\input{body.tex}
+\end{multicols}
+
+\end{document}
