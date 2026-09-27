@@ -258,6 +258,31 @@ pub enum Constraint {
     Empty { orbit: i32 },
 }
 
+/// Where a source places a body in its star's order of orbits, for
+/// Callisto. Book 6 places the same body by its orbit number instead; an
+/// override carries both, and each generator reads its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NthPin {
+    /// 0 the primary, 1 the secondary, 2 the tertiary.
+    pub star: u8,
+    /// The body's Book 6 orbit number in the same override, which is how the
+    /// generator finds its constraint.
+    pub book6_orbit: Option<i32>,
+    pub name: Option<String>,
+    pub place: NthPlace,
+}
+
+/// A place in a star's order of orbits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NthPlace {
+    /// The Nth orbit from the star, 1-based, empty orbits counted, the way a
+    /// system table lists them: "the third planet".
+    Nth(usize),
+    /// The Nth orbit beyond the main world: "the one orbit between Torpol and
+    /// Traefar".
+    BeyondMain(usize),
+}
+
 /// How much of a system's body count a source publishes, which decides how
 /// Callisto fills its orbits (rulebook Section 7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -316,6 +341,12 @@ pub struct SystemConstraints {
     /// Which body counts are published (Callisto only; Book 6 always reads
     /// the constraints as the whole list). See [`PublishedCounts`].
     pub counts: PublishedCounts,
+    /// Bodies a source places by their order among the orbits (Callisto
+    /// only; see [`NthPin`]).
+    pub nth_pins: Vec<NthPin>,
+    /// The main world's place in its star's order of orbits, 1-based
+    /// (Callisto only): fixes how many orbits lie inside it.
+    pub main_world_nth: Option<usize>,
     /// The main world's total satellite count. `None` rolls it.
     ///
     /// Counted as a *total*: a moon named explicitly in an override is
@@ -336,6 +367,8 @@ impl SystemConstraints {
             main_world_orbit: None,
             main_world_num_satellites: None,
             counts: Default::default(),
+            nth_pins: Vec::new(),
+            main_world_nth: None,
             bodies: vec![Constraint::Planet {
                 name: Some(name.to_string()),
                 orbit: None,
@@ -596,6 +629,8 @@ mod tests {
             main_world_orbit: None,
             main_world_num_satellites: None,
             counts: Default::default(),
+            nth_pins: Vec::new(),
+            main_world_nth: None,
         };
         let errs = cs.validate();
         assert!(
@@ -629,6 +664,8 @@ mod tests {
             main_world_orbit: None,
             main_world_num_satellites: None,
             counts: Default::default(),
+            nth_pins: Vec::new(),
+            main_world_nth: None,
         };
         let errs = cs.validate();
         assert!(
@@ -655,6 +692,8 @@ mod tests {
             main_world_orbit: None,
             main_world_num_satellites: None,
             counts: Default::default(),
+            nth_pins: Vec::new(),
+            main_world_nth: None,
         };
         let errs = cs.validate();
         assert!(

@@ -1,6 +1,6 @@
 # Callisto review: Trojan Reach
 
-Worlds whose published data strains the physics, from `cargo run --bin callisto-review --features backend -- "Trojan Reach"`. Replaced on every run. 327 systems, 2 strained world(s), 4 odd.
+Worlds whose published data strains the physics, from `cargo run --bin callisto-review --features backend -- "Trojan Reach"`. Replaced on every run. 327 systems, 2 strained world(s), 5 odd.
 
 **Strained** worlds are ones where a published fact forces something the physics can't support: the data to check first. **Oddities** have an easy story (rulebook Section 14.2), or are what the rules themselves leave odd.
 
@@ -27,6 +27,11 @@ Worlds whose published data strains the physics, from `cargo run --bin callisto-
 
 - **Published:** EABA000-0 around K2 II M2 V
 - **Story:** Hydrographics 10 under a corrosive or insidious atmosphere: the oceans are acid
+
+## 2020 Norwhon (in the Oghma system)
+
+- **Published:** Y711000-0 around K5 V M5 V M4 V
+- **Story:** Hydrographics 1 on an airless world in the Hot zone: the water is ice in permanently shadowed craters
 
 ## 2915 Sabruse
 

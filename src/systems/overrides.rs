@@ -140,6 +140,17 @@ pub enum BodySpec {
         name: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         orbit: Option<i32>,
+        /// Callisto only: this body's place in its star's order of orbits,
+        /// 1-based, empty orbits counted, when the source gives an order
+        /// ("the third planet") rather than a distance. Book 6 keeps using
+        /// `orbit`; keep both.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        nth: Option<usize>,
+        /// Callisto only: the Nth orbit beyond the main world, for a source
+        /// that places a body relative to it ("between Torpol and
+        /// Traefar").
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        beyond_main: Option<usize>,
         /// Relative position, for when the source says "the next world out"
         /// rather than a number. Mutually exclusive with `orbit`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -189,6 +200,17 @@ pub enum BodySpec {
         name: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         orbit: Option<i32>,
+        /// Callisto only: this body's place in its star's order of orbits,
+        /// 1-based, empty orbits counted, when the source gives an order
+        /// ("the third planet") rather than a distance. Book 6 keeps using
+        /// `orbit`; keep both.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        nth: Option<usize>,
+        /// Callisto only: the Nth orbit beyond the main world, for a source
+        /// that places a body relative to it ("between Torpol and
+        /// Traefar").
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        beyond_main: Option<usize>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         position: Option<PositionSpec>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -215,6 +237,17 @@ pub enum BodySpec {
         name: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         orbit: Option<i32>,
+        /// Callisto only: this body's place in its star's order of orbits,
+        /// 1-based, empty orbits counted, when the source gives an order
+        /// ("the third planet") rather than a distance. Book 6 keeps using
+        /// `orbit`; keep both.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        nth: Option<usize>,
+        /// Callisto only: the Nth orbit beyond the main world, for a source
+        /// that places a body relative to it ("between Torpol and
+        /// Traefar").
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        beyond_main: Option<usize>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         position: Option<PositionSpec>,
         /// `"small"` or `"large"`; omit to let the generator roll it.
@@ -270,7 +303,12 @@ pub enum BodySpec {
         substellar: Option<LatLon>,
     },
     /// An orbit known to be empty.
-    Empty { orbit: i32 },
+    Empty {
+        orbit: i32,
+        /// Callisto only: see `nth` on a planet.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        nth: Option<usize>,
+    },
     /// Where the main world sits, when a source states it.
     ///
     /// Only its placement, moons and tide lock. The main world's UWP and name
@@ -300,6 +338,12 @@ pub enum BodySpec {
     MainWorld {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         orbit: Option<i32>,
+        /// Callisto only: this body's place in its star's order of orbits,
+        /// 1-based, empty orbits counted, when the source gives an order
+        /// ("the third planet") rather than a distance. Book 6 keeps using
+        /// `orbit`; keep both.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        nth: Option<usize>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         moons: Option<i32>,
         /// See [`BodySpec::Planet`].
@@ -852,7 +896,7 @@ impl BodySpec {
                     distance_mkm: None,
                 }),
             },
-            BodySpec::Empty { orbit } => Lowered::Constraint(Constraint::Empty { orbit: *orbit }),
+            BodySpec::Empty { orbit, .. } => Lowered::Constraint(Constraint::Empty { orbit: *orbit }),
             BodySpec::MainWorld { orbit, moons, .. } => Lowered::MainWorld {
                 orbit: *orbit,
                 moons: *moons,
@@ -906,6 +950,39 @@ impl SystemOverride {
         let mut main_world_moons: Option<i32> = None;
         for b in &self.bodies {
             let star = b.star();
+            // Callisto's order-of-orbits placements ride alongside the
+            // constraints; Book 6 never reads them.
+            let star_index = match star {
+                StarRef::Primary => 0,
+                StarRef::Secondary => 1,
+                StarRef::Tertiary => 2,
+            };
+            let pin = |orbit: &Option<i32>, name: &Option<String>, place| {
+                crate::systems::constraint::NthPin {
+                    star: star_index,
+                    book6_orbit: *orbit,
+                    name: name.clone(),
+                    place,
+                }
+            };
+            use crate::systems::constraint::NthPlace;
+            match b {
+                BodySpec::Planet { orbit, name, nth, beyond_main, .. }
+                | BodySpec::Belt { orbit, name, nth, beyond_main, .. }
+                | BodySpec::GasGiant { orbit, name, nth, beyond_main, .. } => {
+                    if let Some(n) = nth {
+                        cs.nth_pins.push(pin(orbit, name, NthPlace::Nth(*n)));
+                    }
+                    if let Some(n) = beyond_main {
+                        cs.nth_pins.push(pin(orbit, name, NthPlace::BeyondMain(*n)));
+                    }
+                }
+                BodySpec::Empty { orbit, nth: Some(n) } => {
+                    cs.nth_pins.push(pin(&Some(*orbit), &None, NthPlace::Nth(*n)));
+                }
+                BodySpec::MainWorld { nth: Some(n), .. } => cs.main_world_nth = Some(*n),
+                _ => {}
+            }
             for l in b.lower_all()? {
                 match (l, star) {
                     // A companion's bodies go to that companion's own
@@ -1753,7 +1830,7 @@ mod tests {
 
     #[test]
     fn bad_values_are_reported_not_swallowed() {
-        let bad_size = BodySpec::GasGiant {
+        let bad_size = BodySpec::GasGiant { nth: None, beyond_main: None, 
             star: StarRef::Primary,
             position: None,
             name: None,
@@ -1795,7 +1872,7 @@ mod tests {
             world: "Pourne".into(),
             note: None,
             system_name: None,
-            bodies: vec![BodySpec::GasGiant {
+            bodies: vec![BodySpec::GasGiant { nth: None, beyond_main: None, 
                 star: StarRef::Primary,
                 position: None,
                 name: None,
@@ -1826,8 +1903,8 @@ mod tests {
             note: None,
             system_name: None,
             bodies: vec![
-                BodySpec::GasGiant { star: StarRef::Primary, name: None, orbit: Some(5), position: None, size: None, moons: None },
-                BodySpec::GasGiant { star: StarRef::Primary, name: None, orbit: Some(9), position: None, size: None, moons: None },
+                BodySpec::GasGiant { nth: None, beyond_main: None, star: StarRef::Primary, name: None, orbit: Some(5), position: None, size: None, moons: None },
+                BodySpec::GasGiant { nth: None, beyond_main: None, star: StarRef::Primary, name: None, orbit: Some(9), position: None, size: None, moons: None },
             ],
         };
         let merged = ov.merge_into(cs).unwrap();
@@ -1936,7 +2013,7 @@ mod tests {
             world: "Pourne".into(),
             note: None,
             system_name: None,
-            bodies: vec![BodySpec::Planet {
+            bodies: vec![BodySpec::Planet { nth: None, beyond_main: None, 
                 tide_locked: None,
                 substellar: None,
                 distance_mkm: None,
@@ -2047,7 +2124,7 @@ mod tests {
     /// so the year (and a locked world's day) follow it.
     #[test]
     fn a_stated_distance_reaches_the_main_world() {
-        let sys = generate(vec![BodySpec::MainWorld {
+        let sys = generate(vec![BodySpec::MainWorld { nth: None, 
             orbit: None,
             moons: None,
             tide_locked: Some(true),
@@ -2073,7 +2150,7 @@ mod tests {
     #[test]
     fn a_nonsense_distance_is_rejected() {
         for bad in [0.0, -3.0, f32::NAN, f32::INFINITY] {
-            let b = BodySpec::MainWorld {
+            let b = BodySpec::MainWorld { nth: None, 
                 orbit: None,
                 moons: None,
                 tide_locked: None,
@@ -2088,7 +2165,7 @@ mod tests {
     /// giant actually ended up outermost, not on an orbit guessed in advance.
     #[test]
     fn outermost_resolves_against_the_generated_system() {
-        let sys = generate(vec![BodySpec::GasGiant {
+        let sys = generate(vec![BodySpec::GasGiant { nth: None, beyond_main: None, 
             star: StarRef::Primary,
             name: Some("Bulhai".into()),
             orbit: None,
@@ -2125,7 +2202,7 @@ mod tests {
     /// actual orbit, with the UWP applied to whichever world that is.
     #[test]
     fn after_resolves_to_the_next_body_beyond_the_named_one() {
-        let sys = generate(vec![BodySpec::Planet {
+        let sys = generate(vec![BodySpec::Planet { nth: None, beyond_main: None, 
             tide_locked: None,
             substellar: None,
             distance_mkm: None,
@@ -2172,7 +2249,7 @@ mod tests {
     #[test]
     fn a_moon_can_find_its_parent_by_name() {
         let sys = generate(vec![
-            BodySpec::GasGiant {
+            BodySpec::GasGiant { nth: None, beyond_main: None, 
                 star: StarRef::Primary,
                 name: Some("Bulhai".into()),
                 orbit: None,
@@ -2219,7 +2296,7 @@ mod tests {
             world: "Oghma".into(),
             note: None,
             system_name: None,
-            bodies: vec![BodySpec::GasGiant {
+            bodies: vec![BodySpec::GasGiant { nth: None, beyond_main: None, 
                 star: StarRef::Secondary,
                 name: Some("Khazha".into()),
                 orbit: Some(1),
@@ -2290,7 +2367,7 @@ mod tests {
     #[test]
     fn a_moon_can_pin_its_orbit_around_its_parent() {
         let sys = generate(vec![
-            BodySpec::GasGiant {
+            BodySpec::GasGiant { nth: None, beyond_main: None, 
                 star: StarRef::Primary,
                 name: Some("Ra-La-Lantra".into()),
                 orbit: None,
@@ -2331,7 +2408,7 @@ mod tests {
     /// nothing quietly is the failure this whole effort exists to remove.
     #[test]
     fn an_unresolvable_position_is_reported() {
-        let sys = generate(vec![BodySpec::Planet {
+        let sys = generate(vec![BodySpec::Planet { nth: None, beyond_main: None, 
             tide_locked: None,
             substellar: None,
             distance_mkm: None,
@@ -2377,7 +2454,7 @@ mod tests {
             ))
             .expect("the PBG digit put a belt somewhere") as i32;
 
-        let sys = generate(vec![BodySpec::Belt {
+        let sys = generate(vec![BodySpec::Belt { nth: None, beyond_main: None, 
             star: StarRef::Primary,
             facilities: vec!["mining".into()],
             zone: Some("amber".into()),
@@ -2406,7 +2483,7 @@ mod tests {
     /// dropped — same reasoning as `deny_unknown_fields`.
     #[test]
     fn bad_facilities_and_zones_are_rejected() {
-        let bad_fac = BodySpec::Planet {
+        let bad_fac = BodySpec::Planet { nth: None, beyond_main: None, 
             tide_locked: None,
             substellar: None,
             distance_mkm: None,
@@ -2421,7 +2498,7 @@ mod tests {
         };
         assert!(bad_fac.lower_all().unwrap_err().contains("shipyard"));
 
-        let bad_zone = BodySpec::Planet {
+        let bad_zone = BodySpec::Planet { nth: None, beyond_main: None, 
             tide_locked: None,
             substellar: None,
             distance_mkm: None,
@@ -2441,7 +2518,7 @@ mod tests {
     /// attach to, and says so.
     #[test]
     fn attributes_need_a_locatable_body() {
-        let floating = BodySpec::Planet {
+        let floating = BodySpec::Planet { nth: None, beyond_main: None, 
             tide_locked: None,
             substellar: None,
             distance_mkm: None,
@@ -2460,7 +2537,7 @@ mod tests {
     /// An orbit and a position say two different things about one body.
     #[test]
     fn orbit_and_position_together_are_rejected() {
-        let b = BodySpec::GasGiant {
+        let b = BodySpec::GasGiant { nth: None, beyond_main: None, 
             star: StarRef::Primary,
             name: None,
             orbit: Some(5),
@@ -2638,7 +2715,7 @@ mod tests {
     #[test]
     fn an_explicit_lock_applies_to_any_star() {
         assert!(!main_world_of(&generate(Vec::new())).is_tide_locked());
-        let sys = generate(vec![BodySpec::MainWorld {
+        let sys = generate(vec![BodySpec::MainWorld { nth: None, 
             tide_locked: Some(true),
             substellar: Some(LatLon::from_degrees(-10.0, 45.0).unwrap()),
             distance_mkm: None,
@@ -2656,7 +2733,7 @@ mod tests {
         assert_eq!(mw.day_length_years(), Some(mw.orbital_period_years()));
 
         // A planet, found by its name.
-        let sys = generate(vec![BodySpec::Planet {
+        let sys = generate(vec![BodySpec::Planet { nth: None, beyond_main: None, 
             tide_locked: Some(true),
             substellar: None,
             distance_mkm: None,
@@ -2751,7 +2828,7 @@ mod tests {
     fn a_named_moon_takes_its_lock_either_way_it_is_attached() {
         // By parent name: created in the post pass, locked at birth.
         let sys = generate(vec![
-            BodySpec::GasGiant {
+            BodySpec::GasGiant { nth: None, beyond_main: None, 
                 star: StarRef::Primary,
                 name: Some("Bulhai".into()),
                 orbit: None,

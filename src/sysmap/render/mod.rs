@@ -1007,6 +1007,7 @@ fn draw_moons<R: Renderer + ?Sized>(
         let rr = parent_r + 2.5;
         r.stroke_ellipse(parent_cx, parent_cy, rr, rr * 0.45, (BELT_TONE_A.0, BELT_TONE_A.1, BELT_TONE_A.2, 200), 1.4);
     }
+    let callisto_map = moons.iter().any(|m| m.callisto.is_some());
     let moons: Vec<&World> = moons.iter().filter(|m| !is_ring(m)).collect();
     if moons.is_empty() {
         return;
@@ -1027,7 +1028,13 @@ fn draw_moons<R: Renderer + ?Sized>(
     // stays a pure function of the system.
     let mut chosen: Vec<(usize, &World)> = moons.iter().copied().enumerate().collect();
     if chosen.len() > MAX_MOONS_DRAWN {
-        chosen.sort_by_key(|(idx, m)| (std::cmp::Reverse(m.get_population()), *idx));
+        // On a Callisto map a moon without physics is one a source named
+        // (the post pass adds it), so it outranks a rolled one of equal
+        // population: PRC Base, not the fifth rockball.
+        let named = |m: &World| u8::from(callisto_map && m.callisto.is_none());
+        chosen.sort_by_key(|(idx, m)| {
+            (std::cmp::Reverse(m.get_population()), std::cmp::Reverse(named(m)), *idx)
+        });
         chosen.truncate(MAX_MOONS_DRAWN);
         chosen.sort_by_key(|(idx, _)| *idx);
     }
@@ -1132,8 +1139,7 @@ fn draw_header<R: Renderer + ?Sized>(r: &mut R, system: &System) {
     if let Some(layout) = system.callisto.as_deref() {
         y += 22.0;
         let line = format!(
-            "Callisto \u{b7} 1 HD = {} Mkm \u{b7} jump shadow {} Mkm",
-            format_mkm(layout.star.hd_mkm),
+            "Callisto \u{b7} jump shadow {} Mkm",
             format_mkm(layout.star.jump_shadow_mkm)
         );
         r.fill_text(x, y, 13.0, &line, LABEL_DIM);
@@ -1404,8 +1410,8 @@ fn legend_rows(rings: &Rings<'_>) -> Vec<LegendRow> {
                     rows.push(j);
                 }
                 rows.push(LegendRow {
-                    name: format!("{} HD", format_hd(info.position_hd)),
-                    kind: Some(format!("Open, {}", info.zone.name())),
+                    name: "Open orbit".to_string(),
+                    kind: Some(info.zone.name().to_string()),
                     color: LABEL_DIM,
                     dist: format_mkm(dist),
                     radius_mkm: Some(dist),
@@ -1418,6 +1424,10 @@ fn legend_rows(rings: &Rings<'_>) -> Vec<LegendRow> {
         };
         let dist = slot_radius_mkm(system, orbit, content);
         let (name, kind): (&str, String) = match content {
+            // A belt named for what it is ("Ice Belt") needs no kind after it.
+            OrbitContent::World(w) if matches!(w.name.as_str(), "Ice Belt" | "Planetoid Belt") => {
+                (&w.name, String::new())
+            }
             OrbitContent::World(w) => (&w.name, world_kind(w)),
             OrbitContent::GasGiant(gg) => (
                 &gg.name,
@@ -1440,8 +1450,8 @@ fn legend_rows(rings: &Rings<'_>) -> Vec<LegendRow> {
                         rows.push(j);
                     }
                     rows.push(LegendRow {
-                        name: format!("{} HD", format_hd(info.position_hd)),
-                        kind: Some(format!("Empty, {}", info.zone.name())),
+                        name: "Empty orbit".to_string(),
+                        kind: Some(info.zone.name().to_string()),
                         color: LABEL_DIM,
                         dist: format_mkm(dist),
                         radius_mkm: Some(dist),
@@ -1471,7 +1481,7 @@ fn legend_rows(rings: &Rings<'_>) -> Vec<LegendRow> {
         };
         rows.push(LegendRow {
             name: name.to_string(),
-            kind: Some(kind),
+            kind: (!kind.is_empty()).then_some(kind),
             temp: match content {
                 OrbitContent::World(w) => w.callisto.as_deref().and_then(|p| {
                     let t = p.temperature?;
@@ -1695,17 +1705,6 @@ fn travel_caption(system: &System) -> String {
         })
         .find(|c| fits(c))
         .unwrap_or(short)
-}
-
-/// A position in HD as the rulebook writes it: two figures.
-fn format_hd(p: f32) -> String {
-    if p >= 10.0 {
-        format!("{p:.0}")
-    } else if p >= 1.0 {
-        format!("{p:.1}")
-    } else {
-        format!("{p:.2}")
-    }
 }
 
 fn format_mkm(d: f32) -> String {
