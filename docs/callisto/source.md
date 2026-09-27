@@ -241,7 +241,7 @@ Then roll 2D on Table 8 for the separation. Separations are given in the **prima
 
 For a Sun-like primary the rows run from 7.5 Mkm (a pair almost touching, about one binary in thirty) to 900,000 Mkm (seven months apart at thrust 1). Around a red dwarf the same rows are tighter in Mkm, which is also what surveys find.
 
-**Check the habitable zone.** Position 1.0 must fall outside the gap: either below "worlds orbit the primary alone out to" or above "worlds orbit both stars beyond". On rows 4 and 5 it falls inside the gap, and on those rows there can be no habitable world; this is real, and about one binary in five is like that. If the system has no main world, or its main world is not in the Temperate zone, leave the result as rolled. If the system is being built around a habitable main world, the companion must move: roll 1D. On 1 to 3 move it **inward** one row at a time until position 1.0 is above "worlds orbit both stars beyond" (the main world circles both suns, close together in its sky). On 4 to 6 move it **outward** one row at a time until position 1.0 is below "worlds orbit the primary alone out to" (the main world has one sun and a bright distant companion). Note the move on the record. A published main world is never moved; only the companion is.
+**The habitable zone.** On rows 4 and 5 of Table 8, position 1.0 falls inside the gap, and on those rows there can be no habitable world around the primary; this is real, and about one binary in five is like that. A system with no main world keeps the separation as rolled.
 
 **Table 9: A third star** (compare its separation with the second star's)
 
@@ -251,7 +251,7 @@ For a Sun-like primary the rows run from 7.5 Mkm (a pair almost touching, about 
 | More than three times the second star's | Both orbit the primary independently, the third star outside the second |
 | Between a third and three times | The two companions form a close pair: they orbit each other at one tenth of the smaller separation, and the pair orbits the primary at the larger separation. Use the larger separation's limits for the primary's worlds |
 
-**Which star hosts the main world.** The main world orbits the primary. If the primary cannot host it (a white dwarf, a giant, a brown dwarf) and a class V companion exists, the main world orbits that companion instead; note this on the record. This is often how a garden world listed with a white dwarf turns out to make sense.
+**Which star hosts the main world.** The main world orbits the primary. If the main world is habitable (atmosphere 4 to 9, hydrographics 1 or more) and the primary cannot support life (a white dwarf, a giant, a brown dwarf), and a class V companion exists, the main world orbits that companion instead; note this on the record. This is often how a garden world listed with a white dwarf turns out to make sense. A main world that is not habitable orbits the primary whatever it is: rocky worlds are found around giants and white dwarfs alike, and it is only life that such stars cannot keep.
 
 **A companion's own worlds.** A companion may have orbits of its own, generated exactly as for the primary from its own row of Table 5, but only inside a third of the separation. Since the companion's HD differs from the primary's, make that one comparison in Mkm: a third of the separation in Mkm, against each of the companion's orbits in Mkm.
 
@@ -267,16 +267,24 @@ If the system is being built around a known main world, its position comes first
 
 | Main world | Position band (HD) | Notes |
 | --- | --- | --- |
-| Atmosphere 4 or 5, hydrographics 1+ | 0.85 to 1.00 | Thin air holds little heat, so the world sits close to the inner edge |
-| Atmosphere 6 or 7, hydrographics 1+ | 0.90 to 1.15 | Earth-like. With Earth's greenhouse a world is cold beyond 1.15 |
-| Atmosphere 8 or 9, hydrographics 1+ | 1.10 to 1.40 | A dense atmosphere keeps a world warm further out |
+| Atmosphere 4 or 5, hydrographics 1 to 3 | 0.88 to 1.04 | Thin air holds little heat, but a dry world reflects little light |
+| Atmosphere 4 or 5, hydrographics 4 to 8 | 0.83 to 0.99 | Thin air holds little heat, so the world sits near the inner edge |
+| Atmosphere 4 or 5, hydrographics 9 or A | 0.74 to 0.86 | Cloud over a world ocean reflects much of the light, so the world sits closer in |
+| Atmosphere 6 or 7, hydrographics 1 to 3 | 0.98 to 1.18 | A dry world absorbs more light and can sit further out |
+| Atmosphere 6 or 7, hydrographics 4 to 8 | 0.91 to 1.11 | Earth-like |
+| Atmosphere 6 or 7, hydrographics 9 or A | 0.81 to 0.99 | An ocean world under heavy cloud |
+| Atmosphere 8 or 9, hydrographics 1 to 3 | 1.18 to 1.48 | A dense atmosphere keeps a world warm further out |
+| Atmosphere 8 or 9, hydrographics 4 to 8 | 1.10 to 1.38 | A dense atmosphere keeps a world warm further out |
+| Atmosphere 8 or 9, hydrographics 9 or A | 0.99 to 1.23 | Dense air under heavy cloud |
 | Atmosphere 4 to 9, hydrographics 0 | Roll 1D: 1 to 4, 0.60 to 0.85 (a hot desert); 5 to 6, 1.25 to 1.60 (a cold desert) |  |
 | Atmosphere 2 or 3 | 0.75 to 0.95 | Very thin air: a Mars with more of it, near the inner edge |
-| Atmosphere 0 or 1 | Roll 2D: 2 0.10, 3 0.16, 4 0.25, 5 0.40, 6 0.63, 7 1.0, 8 1.6, 9 2.5, 10 4.0, 11 6.3, 12 10 | Airless worlds can be anywhere; hydrographics above 0 means ice |
+| Atmosphere 0 or 1 | Roll 2D: 2 0.10, 3 0.16, 4 0.25, 5 0.40, 6 0.63, 7 1.0, 8 1.6, 9 2.5, 10 4.0, 11 6.3, 12 10. If hydrographics is 1 or more, roll 1D + 6 instead | Airless worlds can be anywhere; hydrographics above 0 means ice, which lasts on an airless surface only away from the star |
 | Atmosphere A (exotic) or F (unusual) | 1.00 to 1.30 |  |
 | Atmosphere B or C | Roll 1D: 1 to 3, 0.30 to 0.90 (Venus-like); 4 to 6, 2.5 to 3.7 (a cold world kept mild by a thick poisonous atmosphere) |  |
 | Atmosphere D (dense, high) | 1.60 to 2.10 | The dense atmosphere does the work; the world sits in the Cold zone |
 | Atmosphere E (thin, low) | 0.80 to 1.00 |  |
+
+**A companion in the way.** If the system has a companion star and the main world's position falls in its gap (Table 8), the companion moves; a published main world never does. Roll 1D. On 1 to 3, move the companion **inward** one row of Table 8 at a time until the main world's position is above "worlds orbit both stars beyond" (the main world circles both suns, close together in its sky). On 4 to 6, move it **outward** one row at a time until the position is below "worlds orbit the primary alone out to" (one sun and a bright distant companion). If the table runs out before the position is clear, go the other way instead. If there is a third star, read Table 9 again with the new separation. Note the move on the record. This applies to every main world, habitable or not, including one whose position was taken from a sourcebook.
 
 These bands are the positions at which the temperature rules in Section 7.5 give a Temperate result for that atmosphere, so a main world placed this way comes out livable. The Core Rulebook's world creation includes a temperature step (2D with DMs for atmosphere, giving Frozen to Roasting); it is not part of the UWP and is rolled without reference to the star or the orbit. If you rolled one, set it aside: Section 7.5 works the main world's temperature out from where it actually sits, and that replaces the earlier roll.
 
@@ -572,12 +580,24 @@ The result is a **global average**: the mean over the whole surface and the whol
 | 0.40 | 156 | 143 | 130 | 106 | 66 |
 | 0.50 | 110 | 99 | 87 | 66 | 30 |
 | 0.63 | 69 | 59 | 48 | 29 | −3 |
+| 0.67 | 58 | 49 | 38 | 20 | −11 |
+| 0.71 | 49 | 39 | 29 | 11 | −19 |
+| 0.75 | 40 | 31 | 21 | 4 | −26 |
 | 0.80 | 30 | 21 | 12 | −5 | −34 |
+| 0.85 | 21 | 13 | 3 | −13 | −41 |
+| 0.90 | 13 | 4 | −5 | −20 | −47 |
 | 0.95 | 5 | −3 | −12 | −27 | −53 |
 | 1.0 | −2 | −10 | −18 | −33 | −59 |
+| 1.05 | −8 | −16 | −25 | −39 | −64 |
 | 1.1 | −15 | −22 | −30 | −44 | −69 |
+| 1.15 | −20 | −28 | −36 | −50 | −73 |
+| 1.2 | −26 | −33 | −41 | −54 | −78 |
 | 1.25 | −31 | −38 | −45 | −59 | −82 |
+| 1.3 | −35 | −42 | −50 | −63 | −85 |
+| 1.35 | −40 | −46 | −54 | −67 | −89 |
 | 1.4 | −44 | −51 | −58 | −70 | −92 |
+| 1.45 | −48 | −54 | −62 | −74 | −95 |
+| 1.5 | −52 | −58 | −65 | −77 | −98 |
 | 1.6 | −59 | −65 | −72 | −84 | −104 |
 | 1.7 | −65 | −71 | −78 | −89 | −109 |
 | 2.0 | −81 | −87 | −93 | −104 | −122 |
@@ -615,7 +635,7 @@ Earth is the 1.0 row, Earth-like column: −18 °C before its atmosphere adds 35
 
 **Ice check.** If the first reading is Cold or Frozen and the world has hydrographics 1 or more, its water freezes and brightens it: move to the Ice column and read again. That is the final answer; do not repeat. If the first reading is Roasting and the world has hydrographics 1 or more, the oceans have boiled: the hydrographics stays as written (it is in the air as steam), the world is Cloudy, and it is Roasting whatever the second reading says.
 
-**Example.** Earth: position 1.0, atmosphere 6, hydrographics 7, so Earth-like: −18 °C from Table 25, plus 35 for a standard atmosphere, gives 17 °C, Temperate. Mars: position 1.5 (nearest row 1.6), atmosphere 1, hydrographics 0, so Rock: −59 °C plus 0, Frozen. A world at 1.4 with atmosphere 8 and hydrographics 7: Earth-like gives −58, plus 60 is 2 °C, Temperate, though only just; with hydrographics 9 it is Cloudy, −70 plus 60 is −10, Cold, and the ice check makes it Frozen at −32. In the outer half of the Temperate zone the star alone is not enough to keep a world above freezing; only a dense atmosphere, trapping the heat, makes a world there livable. That is why Table 10 places a main world with atmosphere 8 or 9 further out than one with atmosphere 6 or 7.
+**Example.** Earth: position 1.0, atmosphere 6, hydrographics 7, so Earth-like: −18 °C from Table 25, plus 35 for a standard atmosphere, gives 17 °C, Temperate. Mars: position 1.5, atmosphere 1, hydrographics 0, so Rock: −52 °C plus 0, Frozen. A world at 1.4 with atmosphere 8 and hydrographics 7: Earth-like gives −58, plus 60 is 2 °C, Temperate, though only just; with hydrographics 9 it is Cloudy, −70 plus 60 is −10, Cold, and the ice check makes it colder still: Ice class, −92 plus 60 is −32, still Cold. In the outer half of the Temperate zone the star alone is not enough to keep a world above freezing; only a dense atmosphere, trapping the heat, makes a world there livable. That is why Table 10 places a main world with atmosphere 8 or 9 further out than one with atmosphere 6 or 7, and a cloudy world further in than a clear one.
 
 ### 7.6 The world record
 
@@ -940,7 +960,7 @@ The core rules gave a main world of size 7, atmosphere 6, hydrographics 7, so th
 
 **Stars.** Number of stars 2D = 5: one star. Spectral class 2D = 10 on the habitable column of Table 3: F. Subtype 2D = 2, minus 2: 0. Class V without a roll. Table 5, F0 V: 1 HD is 347 Mkm, days to 1 HD 4.4, jump shadow 209 Mkm, innermost orbit 0.05, lock limit 0.20, moon limit 231.
 
-**Main world position.** Atmosphere 6, hydrographics 7: band 0.90 to 1.15. 1D = 3: two fifths of the way in, position 1.0. Distance 347 Mkm, 4.4 days.
+**Main world position.** Atmosphere 6, hydrographics 7: band 0.91 to 1.11. 1D = 4: three fifths of the way out, 1.03, which rounds to 1.0. Distance 347 Mkm, 4.4 days.
 
 **Orbits.** Number of orbits (Section 4.2, 2D − 2): 2D = 6, minus 2, gives 4. Split (Section 4.3): 1D = 5, two thirds of the other three inward, so 2 inward and 1 outward. Inward ratios 2D = 6 (1.65) and 2D = 3 (1.35): 1.0 ÷ 1.65 = 0.61, then 0.61 ÷ 1.35 = 0.45. Outward ratio 2D = 5 (1.55): 1.0 × 1.55 = 1.6. Zones: 0.45 Inner, 0.61 Hot, 1.0 and 1.6 Temperate.
 
@@ -978,9 +998,9 @@ A scout survey of an unnamed M4 V. We take the star as given and roll the rest w
 
 Travellermap gives Noricum as D8867BB-1, stars **G2 V M9 V M6 V**, 4 gas giants, no planetoid belts, and 14 bodies in all counting the main world. Everything published is kept. The main world is size 8, atmosphere 8 (dense), hydrographics 6. This is a crowded system, and it shows how the published count is honoured when the orbits run short.
 
-**Stars.** G2 V primary as listed: Table 5 gives 1 HD as 150 Mkm, days to 1 HD 2.9, shadow 139 Mkm, lock limit 0.40, moon limit 117. Companions M9 V and M6 V, as listed, so only separations are rolled on Table 8. M9: 2D = 11: 2,000 HD, which is 300,000 Mkm, 130 days; worlds orbit the primary alone out to 670 HD, so it never touches the orbits. M6: 2D = 6: 6 HD, which is 900 Mkm, 7 days; worlds orbit the primary alone out to 2 HD and both stars beyond 18 HD. Table 9: the M9's separation is more than three times the M6's, so both orbit the primary independently. Position 1.0 is inside the 2 HD limit: the habitable zone is stable.
+**Stars.** G2 V primary as listed: Table 5 gives 1 HD as 150 Mkm, days to 1 HD 2.9, shadow 139 Mkm, lock limit 0.40, moon limit 117. Companions M9 V and M6 V, as listed, so only separations are rolled on Table 8. M9: 2D = 11: 2,000 HD, which is 300,000 Mkm, 130 days; worlds orbit the primary alone out to 670 HD, so it never touches the orbits. M6: 2D = 6: 6 HD, which is 900 Mkm, 7 days; worlds orbit the primary alone out to 2 HD and both stars beyond 18 HD. Table 9: the M9's separation is more than three times the M6's, so both orbit the primary independently.
 
-**Main world position.** Atmosphere 8: band 1.10 to 1.40. 1D = 6: 1.4, which is 209 Mkm, 3.4 days.
+**Main world position.** Atmosphere 8, hydrographics 6: band 1.10 to 1.38. 1D = 6: 1.38, which rounds to 1.4, 209 Mkm, 3.4 days. That is inside the M6's 2 HD limit, so the companion stays where it is.
 
 **Orbits.** Number of orbits (Section 4.2, 2D − 2): 2D = 4, minus 2, gives 2, but the system is known to have 14 bodies, so 14 orbits. Split 1D = 1: one third of the other 13 inward: 4 inward, 9 outward. Inward ratios 2D = 8 (1.90), 9 (2.05), 7 (1.75) and 10 (2.25): 0.74, 0.36, 0.21 and 0.091. Outward ratios 2D = 4 (1.45), 10 (2.25), 7 (1.75) and 10 (2.25): 2.0, 4.5, 7.9 and 18. The M6 companion's gap runs from 2 HD to 18 HD, which crosses out 4.5, 7.9 and 18 (673, 1,182 and 2,693 Mkm). Keep multiplying: 2D = 8 (1.90): 34, at 5,086 Mkm; 2D = 10 (2.25): 76, at 11,370 Mkm; 2D = 6 (1.65): 130, capped at 100, 14,960 Mkm, and there the outward run stops. That is 9 stable orbits for 14 bodies, so the other 5 come from splitting the widest gaps (Section 4.4), with the edges of the companion gap counting as neighbours. Widest first: 0.091 to 0.21 (ratio 2.3) gives 0.14; 34 to 76 (2.2) gives 51; 0.36 to 0.74 (2.1) gives 0.52; 0.74 to 1.4 (1.9) gives 1.0; the gap's outer edge at 18 to 34 (1.9) gives 25. Fourteen orbits: 0.091, 0.14, 0.21, 0.36, 0.52, 0.74, 1.0, 1.4, 2.0, 25, 34, 51, 76 and 100. The outer five circle the primary and the M6 together.
 
@@ -1024,7 +1044,7 @@ Nothing published was changed. Fourteen bodies fit inside 100 HD once the five w
 
 When a system is generated from published data (Travellermap, the Traveller Wiki, a sourcebook), the following are fixed and are never changed: the main world's UWP; the stars as listed; the number of gas giants and belts; the count of worlds; and anything the referee has already recorded for the system. Everything else is free: orbit positions, the compositions, atmospheres and water of the other worlds, moons, rotation, tilt, eccentricity.
 
-Sometimes the fixed facts cannot be made physically consistent with each other. A garden world whose only listed star is a white dwarf is the clearest case. Do this: honour the facts; generate the system anyway, placing the main world by Table 10 as usual; and write on the record what the physics would have said ("physics: no habitable orbit around this star"), so that the oddity is visible rather than buried. Two kinds of oddity have easy stories. A small world with a thick atmosphere is cold and dense with heavy gases; an airless world with hydrographics has ice, not seas. Two kinds do not: a habitable world around a white dwarf or a giant star, and a temperature code that contradicts the world's atmosphere and water. For the first, look for a companion star to host the world (Section 3.5); for the second, ignore the temperature code, as Section 4.1 says.
+Sometimes the fixed facts cannot be made physically consistent with each other. A garden world whose only listed star is a white dwarf is the clearest case. Do this: honour the facts; generate the system anyway, placing the main world by Table 10 as usual; and write on the record what the physics would have said ("physics: no habitable orbit around this star"), so that the oddity is visible rather than buried. Three kinds of oddity have easy stories. A small world with a thick atmosphere is cold and dense with heavy gases; an airless world with hydrographics has ice, not seas; a corrosive or insidious atmosphere over wide oceans makes those oceans acid. Two kinds do not: a habitable world around a white dwarf or a giant star, and a temperature code that contradicts the world's atmosphere and water. For the first, look for a companion star to host the world (Section 3.5); for the second, ignore the temperature code, as Section 4.1 says.
 
 When the star is not listed (a bare UWP, or an entry with no stars given), Table 3 chooses one that suits the main world, and Table 10 chooses the orbit that suits it. That is the ordinary case, and it never needs a note.
 

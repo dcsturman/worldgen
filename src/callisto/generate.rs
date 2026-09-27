@@ -24,7 +24,7 @@ use crate::callisto::orbits::{
     Gap, MAX_POSITION_HD, OrbitPlan, Zone, lay_out, main_world_position, number_of_orbits,
 };
 use crate::callisto::stars::{
-    CStar, Move, SeparationRow, ThirdStar, companion_from_mass, keep_habitable_zone_clear,
+    CStar, Move, SeparationRow, ThirdStar, clear_main_world, companion_from_mass,
     number_of_stars, primary_luminosity, primary_spectral, roll_separation, subtype, third_star,
     white_dwarf_age,
 };
@@ -68,6 +68,9 @@ struct Companion {
     gap: Gap,
     contact: bool,
     moved: Option<Move>,
+    /// The Table 8 row it was rolled on; `None` for a stated separation or a
+    /// listed contact pair, which never move.
+    row: Option<SeparationRow>,
     /// Set when the separation came from a constraint rather than a roll.
     pinned: bool,
     /// Bodies a source lists around this companion, orbit numbers its own.
@@ -79,7 +82,14 @@ pub fn generate(
     constraints: SystemConstraints,
     roller: &mut impl Roller,
 ) -> Result<System, Vec<ConstraintError>> {
-    let errors = constraints.validate();
+    // Published UWPs are not validated here (IMPLEMENTATION.md §3): a
+    // combination the core rules would not roll is published data all the
+    // same, and gets a story instead (Section 13.2).
+    let errors: Vec<ConstraintError> = constraints
+        .validate()
+        .into_iter()
+        .filter(|e| !matches!(e, ConstraintError::ContradictoryUwp(_)))
+        .collect();
     if !errors.is_empty() {
         return Err(errors);
     }
@@ -122,7 +132,7 @@ pub fn generate(
     let mut companions: Vec<Companion> = (1..star_count)
         .map(|i| {
             let spec = listed.get(i).cloned().unwrap_or_default();
-            let mut c = resolve_companion(&spec, &primary, habitable, roller);
+            let mut c = resolve_companion(&spec, &primary, roller);
             c.bodies = match i {
                 1 => constraints.secondary_bodies.clone(),
                 2 => constraints.tertiary_bodies.clone(),
@@ -132,23 +142,11 @@ pub fn generate(
         })
         .collect();
 
-    // Table 9: a third star close to the second makes a pair, which orbits
-    // the primary at the larger separation.
-    let close_pair = companions.len() == 2
-        && third_star(companions[0].separation_hd, companions[1].separation_hd)
-            == ThirdStar::ClosePair;
-    if close_pair {
-        companions.sort_by(|a, b| b.separation_hd.total_cmp(&a.separation_hd));
-    }
-    let primary_gaps: Vec<Gap> = if close_pair {
-        vec![companions[0].gap]
-    } else {
-        companions.iter().filter(|c| !c.contact).map(|c| c.gap).collect()
-    };
-
-    // Which star hosts the main world: the primary, unless it can't and a
-    // main-sequence companion can.
-    let host = if primary.can_host_main_world() {
+    // Which star hosts the main world (Section 3.5): the primary, unless it
+    // can't support life (a white dwarf, giant or brown dwarf) and the main
+    // world is habitable, when a main-sequence companion takes it. Any other
+    // main world orbits the listed primary.
+    let host = if primary.can_host_main_world() || !habitable {
         None
     } else {
         companions
@@ -162,6 +160,42 @@ pub fn generate(
     let mw_position = match stated_mkm {
         Some(mkm) => mkm / host_data.hd_mkm,
         None => main_world_position(main_world.atmosphere, main_world.hydro, roller),
+    };
+
+    // A companion in the way (Section 4.1): a rolled companion whose gap
+    // holds the main world moves, whatever the main world is and however it
+    // was placed. The main world never moves; a published separation doesn't
+    // either.
+    if host.is_none() {
+        for c in companions.iter_mut() {
+            let Some(row) = c.row else { continue };
+            let (row, moved) = clear_main_world(row, mw_position, roller);
+            if moved.is_some() {
+                c.row = Some(row);
+                c.separation_hd = row.separation_hd;
+                c.gap = row.gap();
+                c.contact = row.is_contact();
+                c.moved = moved;
+            }
+        }
+    }
+
+    // Table 9 (read again after any move): a third star close to the second
+    // makes a pair, which orbits the primary at the larger separation.
+    let close_pair = companions.len() == 2
+        && third_star(companions[0].separation_hd, companions[1].separation_hd)
+            == ThirdStar::ClosePair;
+    // The pair goes wider companion first; the host (chosen above) follows
+    // its companion if they swap.
+    let swap = close_pair && companions[0].separation_hd < companions[1].separation_hd;
+    if swap {
+        companions.swap(0, 1);
+    }
+    let host = host.map(|i| if swap { 1 - i } else { i });
+    let primary_gaps: Vec<Gap> = if close_pair {
+        vec![companions[0].gap]
+    } else {
+        companions.iter().filter(|c| !c.contact).map(|c| c.gap).collect()
     };
 
     // Steps 6 and 7: orbits. The host gets them around the main world; the
@@ -186,16 +220,16 @@ pub fn generate(
     // the orbits run short (Section 4.4); a rolled one just stops at 100.
     let counts_known = constraints.counts != PublishedCounts::None;
     let mut primary_notes = Vec::new();
-    if !primary.can_host_main_world() {
+    if !primary.can_host_main_world() && habitable {
         match host {
             Some(i) => primary_notes.push(format!(
-                "The {} cannot host a habitable world; the main world orbits the {} companion",
+                "No habitable world forms around the {}; the main world orbits the {} companion",
                 primary.star, companions[i].star.star
             )),
             None => primary_notes.push(format!(
-                "Strained: the listed {} cannot host the main world and no main-sequence \
-                 companion can; it orbits the {} anyway",
-                primary.star, primary.star
+                "Strained: a habitable main world around the {}, with no main-sequence \
+                 companion to host it",
+                primary.star
             )),
         }
     }
@@ -323,7 +357,7 @@ pub fn generate(
 
     // What the main world's placement had to do or couldn't (Section 13.2),
     // settled into its fit once its temperature is known.
-    let mut mw_oddities = crate::callisto::fit::uwp_oddities(
+    let mw_oddities = crate::callisto::fit::uwp_oddities(
         main_world.size,
         main_world.atmosphere,
         main_world.hydro,
@@ -331,40 +365,44 @@ pub fn generate(
     );
     let mut mw_strains = Vec::new();
     let mut mw_adjustments = Vec::new();
-    if !primary.can_host_main_world() {
+    if !primary.can_host_main_world() && habitable {
         match host {
             Some(i) => mw_adjustments.push((
                 "host star".to_string(),
                 format!(
-                    "the listed {} cannot host a main world, so it orbits the {} companion",
+                    "no habitable world forms around the listed {}, so it orbits the {} \
+                     companion",
                     primary.star, companions[i].star.star
                 ),
             )),
             None => mw_strains.push(format!(
-                "The listed {} cannot host a main world (Section 3.5) and no main-sequence \
-                 companion can; the world orbits it anyway",
+                "A habitable world around the listed {}, which cannot support life, and no \
+                 main-sequence companion to host it: physics says no habitable orbit here",
                 primary.star
             )),
         }
     }
+    // Only a companion whose separation is published can still be in the
+    // way: the rest were moved.
     if host.is_none() && primary_gaps.iter().any(|g| g.contains(mw_position)) {
-        if stated_mkm.is_some() {
-            mw_strains.push(format!(
-                "Its published orbit, {mw_position:.2} HD, lies where a companion leaves no \
-                 stable orbit; kept, and the companion's orbit must be more eccentric or more \
-                 inclined than the rules assume"
-            ));
-        } else {
-            mw_oddities.push(format!(
-                "At {mw_position:.2} HD it sits where a companion leaves no stable orbit: the \
-                 rules move a companion only for a habitable main world"
-            ));
-        }
+        mw_strains.push(format!(
+            "At {mw_position:.2} HD it lies where a companion at a published separation leaves \
+             no stable orbit; kept, and the companion's orbit must be more eccentric or more \
+             inclined than the rules assume"
+        ));
     }
     if let Some(c) = companions.iter().find(|c| c.moved.is_some()) {
         mw_adjustments.push((
             "companion star".to_string(),
-            format!("the {} was moved to keep the habitable zone stable", c.star.star),
+            format!(
+                "the {} companion was moved {} to {} HD, clear of the main world's orbit",
+                c.star.star,
+                match c.moved {
+                    Some(Move::Inward) => "inward",
+                    _ => "outward",
+                },
+                c.separation_hd
+            ),
         ));
     }
     let mut mw_fit = Some(MainWorldFit {
@@ -398,7 +436,7 @@ pub fn generate(
         .map(|(i, (c, slots))| {
             let mut notes = match c.moved {
                 Some(m) => vec![format!(
-                    "Moved {} to keep the habitable zone stable",
+                    "Moved {} to clear the main world's orbit",
                     match m {
                         Move::Inward => "inward",
                         Move::Outward => "outward",
@@ -540,12 +578,7 @@ fn resolve_primary(spec: &StarSpec, habitable: bool, roller: &mut impl Roller) -
 
 /// A companion: its star as listed or from Table 7, then its separation as
 /// stated or from Table 8, moved clear of a habitable main world's orbit.
-fn resolve_companion(
-    spec: &StarSpec,
-    primary: &CStar,
-    habitable: bool,
-    roller: &mut impl Roller,
-) -> Companion {
+fn resolve_companion(spec: &StarSpec, primary: &CStar, roller: &mut impl Roller) -> Companion {
     let pdata = primary.data();
     let star = match spec.spectral {
         Some(star_type) => Star {
@@ -564,7 +597,7 @@ fn resolve_companion(
         Some(StarOrbit::System(n)) => Some(book6_orbit_mkm(n as i32) / pdata.hd_mkm),
         _ => None,
     };
-    let (separation_hd, gap, contact, moved) = match (spec.orbit, pinned_hd) {
+    let (separation_hd, gap, contact, row) = match (spec.orbit, pinned_hd) {
         (_, Some(hd)) => (hd, Gap { lo: hd / 3.0, hi: hd * 3.0 }, false, None),
         (Some(StarOrbit::Primary), _) => {
             let row = crate::callisto::stars::separation_rows()[0];
@@ -572,12 +605,7 @@ fn resolve_companion(
         }
         _ => {
             let row: SeparationRow = roll_separation(primary.star.star_type, roller);
-            let (row, moved) = if habitable {
-                keep_habitable_zone_clear(row, roller)
-            } else {
-                (row, None)
-            };
-            (row.separation_hd, row.gap(), row.is_contact(), moved)
+            (row.separation_hd, row.gap(), row.is_contact(), Some(row))
         }
     };
     Companion {
@@ -586,7 +614,8 @@ fn resolve_companion(
         separation_hd,
         gap,
         contact,
-        moved,
+        moved: None,
+        row,
         pinned: pinned_hd.is_some(),
         bodies: Vec::new(),
     }
@@ -1341,13 +1370,11 @@ mod tests {
         }
         let rate = f64::from(habitable) / n as f64;
         assert!((0.48..=0.58).contains(&rate), "habitable main worlds: {:.1}%", rate * 100.0);
-        // Not an invariant: Table 10's bands leave the outer half of a cloudy
-        // (hydrographics 9–A) world's band Cold, and the inner end of a dry
-        // (hydrographics 1–3) world's band Hot, so about four in five come
-        // out Temperate. Printed so a change to Table 10 shows up here.
+        // Table 10's bands are the positions where Section 7.5 gives
+        // Temperate, so a habitable main world placed freely always is (only a
+        // stated orbit can make it otherwise, and none is stated here).
         let t = f64::from(temperate) / f64::from(habitable);
-        println!("habitable main worlds Temperate: {:.1}%", t * 100.0);
-        assert!(t >= 0.75, "only {:.1}% of habitable main worlds came out Temperate", t * 100.0);
+        assert_eq!(temperate, habitable, "{:.1}% of habitable main worlds came out Temperate", t * 100.0);
     }
 
     #[test]

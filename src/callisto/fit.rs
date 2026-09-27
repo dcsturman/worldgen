@@ -27,6 +27,16 @@ pub fn uwp_oddities(size: i32, atmosphere: i32, hydro: i32, zone: Zone) -> Vec<S
              cold and dense with heavy gases"
         ));
     }
+    if (11..=12).contains(&atmosphere) && hydro >= 6 {
+        out.push(format!(
+            "Hydrographics {hydro} under a corrosive or insidious atmosphere: the oceans are acid"
+        ));
+    }
+    if size <= 0 && hydro >= 1 {
+        out.push(format!(
+            "Hydrographics {hydro} on a planetoid belt: ice in the belt's bodies"
+        ));
+    }
     if atmosphere <= 1 && hydro >= 1 && matches!(zone, Zone::Inner | Zone::Hot) {
         out.push(format!(
             "Hydrographics {hydro} on an airless world in the {} zone: the water is ice in \

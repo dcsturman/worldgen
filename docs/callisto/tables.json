@@ -1235,19 +1235,49 @@
   ],
   "rows": [
    [
-    "Atmosphere 4 or 5, hydrographics 1+",
-    "0.85 to 1.00",
-    "Thin air holds little heat, so the world sits close to the inner edge"
+    "Atmosphere 4 or 5, hydrographics 1 to 3",
+    "0.88 to 1.04",
+    "Thin air holds little heat, but a dry world reflects little light"
    ],
    [
-    "Atmosphere 6 or 7, hydrographics 1+",
-    "0.90 to 1.15",
-    "Earth-like. With Earth's greenhouse a world is cold beyond 1.15"
+    "Atmosphere 4 or 5, hydrographics 4 to 8",
+    "0.83 to 0.99",
+    "Thin air holds little heat, so the world sits near the inner edge"
    ],
    [
-    "Atmosphere 8 or 9, hydrographics 1+",
-    "1.10 to 1.40",
+    "Atmosphere 4 or 5, hydrographics 9 or A",
+    "0.74 to 0.86",
+    "Cloud over a world ocean reflects much of the light, so the world sits closer in"
+   ],
+   [
+    "Atmosphere 6 or 7, hydrographics 1 to 3",
+    "0.98 to 1.18",
+    "A dry world absorbs more light and can sit further out"
+   ],
+   [
+    "Atmosphere 6 or 7, hydrographics 4 to 8",
+    "0.91 to 1.11",
+    "Earth-like"
+   ],
+   [
+    "Atmosphere 6 or 7, hydrographics 9 or A",
+    "0.81 to 0.99",
+    "An ocean world under heavy cloud"
+   ],
+   [
+    "Atmosphere 8 or 9, hydrographics 1 to 3",
+    "1.18 to 1.48",
     "A dense atmosphere keeps a world warm further out"
+   ],
+   [
+    "Atmosphere 8 or 9, hydrographics 4 to 8",
+    "1.10 to 1.38",
+    "A dense atmosphere keeps a world warm further out"
+   ],
+   [
+    "Atmosphere 8 or 9, hydrographics 9 or A",
+    "0.99 to 1.23",
+    "Dense air under heavy cloud"
    ],
    [
     "Atmosphere 4 to 9, hydrographics 0",
@@ -1261,8 +1291,8 @@
    ],
    [
     "Atmosphere 0 or 1",
-    "Roll 2D: 2 0.10, 3 0.16, 4 0.25, 5 0.40, 6 0.63, 7 1.0, 8 1.6, 9 2.5, 10 4.0, 11 6.3, 12 10",
-    "Airless worlds can be anywhere; hydrographics above 0 means ice"
+    "Roll 2D: 2 0.10, 3 0.16, 4 0.25, 5 0.40, 6 0.63, 7 1.0, 8 1.6, 9 2.5, 10 4.0, 11 6.3, 12 10. If hydrographics is 1 or more, roll 1D + 6 instead",
+    "Airless worlds can be anywhere; hydrographics above 0 means ice, which lasts on an airless surface only away from the star"
    ],
    [
     "Atmosphere A (exotic) or F (unusual)",
@@ -2290,12 +2320,52 @@
     "−3"
    ],
    [
+    "0.67",
+    "58",
+    "49",
+    "38",
+    "20",
+    "−11"
+   ],
+   [
+    "0.71",
+    "49",
+    "39",
+    "29",
+    "11",
+    "−19"
+   ],
+   [
+    "0.75",
+    "40",
+    "31",
+    "21",
+    "4",
+    "−26"
+   ],
+   [
     "0.80",
     "30",
     "21",
     "12",
     "−5",
     "−34"
+   ],
+   [
+    "0.85",
+    "21",
+    "13",
+    "3",
+    "−13",
+    "−41"
+   ],
+   [
+    "0.90",
+    "13",
+    "4",
+    "−5",
+    "−20",
+    "−47"
    ],
    [
     "0.95",
@@ -2314,12 +2384,36 @@
     "−59"
    ],
    [
+    "1.05",
+    "−8",
+    "−16",
+    "−25",
+    "−39",
+    "−64"
+   ],
+   [
     "1.1",
     "−15",
     "−22",
     "−30",
     "−44",
     "−69"
+   ],
+   [
+    "1.15",
+    "−20",
+    "−28",
+    "−36",
+    "−50",
+    "−73"
+   ],
+   [
+    "1.2",
+    "−26",
+    "−33",
+    "−41",
+    "−54",
+    "−78"
    ],
    [
     "1.25",
@@ -2330,12 +2424,44 @@
     "−82"
    ],
    [
+    "1.3",
+    "−35",
+    "−42",
+    "−50",
+    "−63",
+    "−85"
+   ],
+   [
+    "1.35",
+    "−40",
+    "−46",
+    "−54",
+    "−67",
+    "−89"
+   ],
+   [
     "1.4",
     "−44",
     "−51",
     "−58",
     "−70",
     "−92"
+   ],
+   [
+    "1.45",
+    "−48",
+    "−54",
+    "−62",
+    "−74",
+    "−95"
+   ],
+   [
+    "1.5",
+    "−52",
+    "−58",
+    "−65",
+    "−77",
+    "−98"
    ],
    [
     "1.6",
