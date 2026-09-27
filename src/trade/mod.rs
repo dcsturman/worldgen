@@ -404,6 +404,13 @@ impl PortCode {
             Some('D') => PortCode::D,
             Some('E') => PortCode::E,
             Some('X') => PortCode::X,
+            // Spaceports, the codes a world other than the main world uses.
+            // These used to fall through to A, so a moon written Y… came out
+            // with a class-A starport.
+            Some('F') => PortCode::F,
+            Some('G') => PortCode::G,
+            Some('H') => PortCode::H,
+            Some('Y') => PortCode::Y,
             _ => PortCode::A,
         }
     }

@@ -5,11 +5,12 @@
       "sector": "Trojan Reach",
       "hex": "2221",
       "world": "Torpol",
-      "note": "Drinaxian Companion ch.5. TravellerMap already gives F4 V, PBG 624 (2 belts, 4 gas giants) and W=16, so only the named bodies are recorded. Traefar is \"the next world out from Torpol\", said relatively because that is what the book says — the absolute orbit is a derived fact that would go stale if generation shifted. Its UWP is now given in full (G410466-7) rather than as the partial the book's prose supported, so every column is stated rather than rolled around the two digits that were known.\n\nThe book splits the two belts by role: \"The outer planetoid belt has an extensive belter community whilst the inner one has less belters but more commercial mining operations... the Imperial megacorporation Sternmetal Horizons also has a mining base in the inner belt.\" Unpinned, both belts generated far out at orbits 10 and 11 (11,548 and 23,038 Mkm), which makes the inner one a month's travel from Torpol and nothing like the near-at-hand mining ground the text describes.\n\nSo the inner belt is pinned to orbit 6, the one orbit between Torpol (orbit 5) and Traefar, carrying the mining facility for Sternmetal Horizons' base and the Provost-owned claims — the Provosts being Torpol's ruling merchant council, which is what \"local companies operating out of Torpol\" means. Orbit 6 is 778 Mkm, not the ~600 Mkm the placement was asked for: orbit radii are a fixed Traveller grid (orbit 5 is 419 Mkm, orbit 6 is 778) and 600 is not on it, so 6 is the only orbit that sits between the two worlds at all. The outer belt keeps orbit 11 (23,038 Mkm), the belter community, far enough out to be its own world. The belt that generated at orbit 10 is gone: the PBG digit fixes the count at two, and both are now spoken for.\n\nNeither belt is named. The generator's default, \"Planetoid Belt\", is also what keeps `is_belt` (`size <= 0 && name.contains(\"planetoid\")`) true, so a belt given some other name would read as a *planet* to the post-pass and \"the first planet beyond Torpol\" would resolve onto it and rename it Traefar. Orbit is what distinguishes inner from outer here, not a label.",
+      "note": "Drinaxian Companion ch.5. TravellerMap already gives F4 V, PBG 624 (2 belts, 4 gas giants) and W=16, so only the named bodies are recorded. Traefar is \"the next world out from Torpol\", said relatively because that is what the book says — the absolute orbit is a derived fact that would go stale if generation shifted. Its UWP is now given in full (G410466-7) rather than as the partial the book's prose supported, so every column is stated rather than rolled around the two digits that were known.\n\nThe book splits the two belts by role: \"The outer planetoid belt has an extensive belter community whilst the inner one has less belters but more commercial mining operations... the Imperial megacorporation Sternmetal Horizons also has a mining base in the inner belt.\" Unpinned, both belts generated far out at orbits 10 and 11 (11,548 and 23,038 Mkm), which makes the inner one a month's travel from Torpol and nothing like the near-at-hand mining ground the text describes.\n\nSo the inner belt is pinned to orbit 6, the one orbit between Torpol (orbit 5) and Traefar, carrying the mining facility for Sternmetal Horizons' base and the Provost-owned claims — the Provosts being Torpol's ruling merchant council, which is what \"local companies operating out of Torpol\" means. Orbit 6 is 778 Mkm, not the ~600 Mkm the placement was asked for: orbit radii are a fixed Traveller grid (orbit 5 is 419 Mkm, orbit 6 is 778) and 600 is not on it, so 6 is the only orbit that sits between the two worlds at all. The outer belt keeps orbit 11 (23,038 Mkm), the belter community, far enough out to be its own world. The belt that generated at orbit 10 is gone: the PBG digit fixes the count at two, and both are now spoken for.\n\nNeither belt is named. The generator's default, \"Planetoid Belt\", is also what keeps `is_belt` (`size <= 0 && name.contains(\"planetoid\")`) true, so a belt given some other name would read as a *planet* to the post-pass and \"the first planet beyond Torpol\" would resolve onto it and rename it Traefar. Orbit is what distinguishes inner from outer here, not a label. Under Callisto the inner belt is placed as the first orbit beyond Torpol (beyond_main 1), which is what the book describes; the outer belt keeps its Book 6 orbit, read as a distance (23,000 Mkm), far out as the book has it.",
       "bodies": [
         {
           "type": "belt",
           "orbit": 6,
+          "beyond_main": 1,
           "facilities": [
             "mining"
           ]
@@ -64,7 +65,7 @@
       "sector": "Trojan Reach",
       "hex": "2020",
       "world": "Oghma",
-      "note": "Reach Adventure 8: Makergod, Library Data p.31 - full system table. Counts already match TravellerMap (PBG=404 gives 4 gas giants, W=11 the non-satellite count), so what is recorded is the names, UWPs and structure upstream has no room for. Oghma's orbit is pinned because the book puts it three orbits beyond a K5 V's habitable zone and the rules agree: at size 5 the -2 DM for being outside gives a mean atmosphere of exactly the 3 it has, and the -4 hydrographics DM is why only 40% is water and that water is frozen. The book gives the tertiary as M3 V where TravellerMap has M4 V.",
+      "note": "Reach Adventure 8: Makergod, Library Data p.31 - full system table. Counts already match TravellerMap (PBG=404 gives 4 gas giants, W=11 the non-satellite count), so what is recorded is the names, UWPs and structure upstream has no room for. Oghma's orbit is pinned because the book puts it three orbits beyond a K5 V's habitable zone and the rules agree: at size 5 the -2 DM for being outside gives a mean atmosphere of exactly the 3 it has, and the -4 hydrographics DM is why only 40% is water and that water is frozen. The book gives the tertiary as M3 V where TravellerMap has M4 V. The table is an ordered list, so under Callisto each body keeps its place in it (nth = the Book 6 orbit + 1, empty orbits counted), companions' bodies around their own star. Oghma's orbit is also read as a distance (1.0 AU, 2.5 HD around a K5 V: the Cold zone, as the book has it).",
       "bodies": [
         {
           "type": "star",
@@ -74,33 +75,39 @@
         },
         {
           "type": "main_world",
-          "orbit": 3
+          "orbit": 3,
+          "nth": 4
         },
         {
           "type": "gas_giant",
           "orbit": 0,
+          "nth": 1,
           "name": "Keetle",
           "size": "small"
         },
         {
           "type": "empty",
-          "orbit": 1
+          "orbit": 1,
+          "nth": 2
         },
         {
           "type": "planet",
           "orbit": 2,
+          "nth": 3,
           "name": "Vordor",
-          "uwp": "X200000-0"
+          "uwp": "Y200000-0"
         },
         {
           "type": "planet",
           "orbit": 4,
+          "nth": 5,
           "name": "Drinn",
-          "uwp": "X6A8000-0"
+          "uwp": "Y6A8000-0"
         },
         {
           "type": "gas_giant",
           "orbit": 5,
+          "nth": 6,
           "name": "Ra-La-Lantra",
           "size": "large"
         },
@@ -116,28 +123,28 @@
           "parent": "Ra-La-Lantra",
           "name": "B'kolior",
           "satellite_orbit": 8,
-          "uwp": "X621000-0"
+          "uwp": "Y621000-0"
         },
         {
           "type": "moon",
           "parent": "Ra-La-Lantra",
           "name": "Hye-Livven",
           "satellite_orbit": 11,
-          "uwp": "X300000-0"
+          "uwp": "Y300000-0"
         },
         {
           "type": "moon",
           "parent": "Ra-La-Lantra",
           "name": "Daliant",
           "satellite_orbit": 27,
-          "uwp": "X100000-0"
+          "uwp": "Y100000-0"
         },
         {
           "type": "moon",
           "parent": "Ra-La-Lantra",
           "name": "Quarren",
           "satellite_orbit": 34,
-          "uwp": "X200000-0"
+          "uwp": "Y200000-0"
         },
         {
           "type": "star",
@@ -149,6 +156,7 @@
           "type": "gas_giant",
           "star": "secondary",
           "orbit": 1,
+          "nth": 2,
           "name": "Khazha",
           "size": "small"
         },
@@ -156,50 +164,52 @@
           "type": "planet",
           "star": "secondary",
           "orbit": 2,
+          "nth": 3,
           "name": "Norwhon",
-          "uwp": "X711000-0"
+          "uwp": "Y711000-0"
         },
         {
           "type": "planet",
           "star": "secondary",
           "orbit": 7,
+          "nth": 8,
           "name": "Hodi",
-          "uwp": "X300000-0"
+          "uwp": "Y300000-0"
         },
         {
           "type": "moon",
           "parent": "Khazha",
           "name": "Khazha Orbital",
           "satellite_orbit": 1,
-          "uwp": "BS00514-B"
+          "uwp": "FS00514-B"
         },
         {
           "type": "moon",
           "parent": "Khazha",
           "name": "Kletter",
           "satellite_orbit": 4,
-          "uwp": "X100000-0"
+          "uwp": "Y100000-0"
         },
         {
           "type": "moon",
           "parent": "Khazha",
           "name": "ER-016",
           "satellite_orbit": 8,
-          "uwp": "X311000-0"
+          "uwp": "Y311000-0"
         },
         {
           "type": "moon",
           "parent": "Khazha",
           "name": "Bouro",
           "satellite_orbit": 12,
-          "uwp": "XS00000-0"
+          "uwp": "YS00000-0"
         },
         {
           "type": "moon",
           "parent": "Norwhon",
           "name": "Tilili",
           "satellite_orbit": 1,
-          "uwp": "X200000-0"
+          "uwp": "Y200000-0"
         },
         {
           "type": "star",
@@ -211,13 +221,15 @@
           "type": "planet",
           "star": "tertiary",
           "orbit": 0,
+          "nth": 1,
           "name": "Treamer",
-          "uwp": "X200000-0"
+          "uwp": "Y200000-0"
         },
         {
           "type": "gas_giant",
           "star": "tertiary",
           "orbit": 1,
+          "nth": 2,
           "name": "Kholio",
           "size": "small"
         },
@@ -225,29 +237,30 @@
           "type": "planet",
           "star": "tertiary",
           "orbit": 2,
+          "nth": 3,
           "name": "Bealyup",
-          "uwp": "X200000-0"
+          "uwp": "Y200000-0"
         },
         {
           "type": "moon",
           "parent": "Kholio",
           "name": "Houloubit",
           "satellite_orbit": 6,
-          "uwp": "X500000-0"
+          "uwp": "Y500000-0"
         },
         {
           "type": "moon",
           "parent": "Kholio",
           "name": "Farenor",
           "satellite_orbit": 16,
-          "uwp": "X300000-0"
+          "uwp": "Y300000-0"
         },
         {
           "type": "moon",
           "parent": "Kholio",
           "name": "Gerben-Dar",
           "satellite_orbit": 23,
-          "uwp": "X400000-0"
+          "uwp": "Y400000-0"
         }
       ]
     },
@@ -289,12 +302,17 @@
       "sector": "Trojan Reach",
       "hex": "1919",
       "world": "Thebus",
-      "note": "Pirates of Drinax bk.1 ch.3 (\"Thebus\") and the Proactive Recycling Corporation entry. TravellerMap already gives M3 V, PBG 823 (2 belts, 3 gas giants) and W=15, which Shadows of Sindal corroborates (\"three gas giants, two planetoid belts and several terrestrial planets, most of which are rockballs\"), so only the named bodies are recorded. Olo is \"the third planet in the system, a gas giant according to the old charts\" — orbit 2 is that count in the generator's 0-based numbering, with Thebus itself innermost. Pinned rather than said relatively only because the schema's relative positions run in the post-generation pass, which renames an existing body but cannot create one: gen_gas_giants picks uniformly at random from the empty orbits beyond the habitable index (0 for an M3 V, so every orbit from 1 out), and this system's seed simply put all three at orbits 12-14. The pin is squarely within what the generator would produce on another draw, not a fight with it. The PRC's base is \"in orbit of Olo\", a junkyard of spare parts and wrecks that their six ships fly out of; the book gives it no name of its own and no UWP. Only the size column is pinned, to 0: on a satellite that renders as `R`, a ring, so the junkyard sits *in* Olo's ring debris rather than on a moon — which suits a salvage operation that would rather not be easy to find. Left unpinned it re-rolled with the seed, landing on a lifeless rockball once and a ring the next time; pinning keeps the reading that was wanted instead of leaving it to the dice. Every other column still rolls, since the book supplies none of them. Magg's Moon is a referee decision, not a citation: bk.1 p.123 names \"the battle of Magg's Moon\" as one of the last decisive encounters of the war and says it might be worth looking for wreckage \"in that system\" after mentioning Thebus, but it never actually states that Magg's Moon is in Thebus and never says which body it orbits. Placed here as a moon of the world one orbit out from Olo, which is where this campaign puts it. That world is named Magg, since \"Magg's Moon\" reads as the moon *of* Magg — which makes the battle's name explain itself instead of floating free. Magg carries X645000-0: size 6 and hydrographics 5 say it was a real world rather than a rockball, atmosphere 4 (thin, tainted) and population/government/law/TL all 0 behind an X starport say nobody survived what happened to it. The generator would never roll that combination on its own — a body with no population is named \"{system} {roman}\" and rolled as filler — so both the name and the corpse-UWP have to be stated. Keyed by its parent's name, Magg, which the override states, so it follows Magg wherever the generator places it (Book 6 or Callisto). Its UWP X300000-0 is stated rather than rolled: a vacuum rock with nobody on it and no port, which is what a battlefield a thousand years cold should be. The vacuum is the point — bk.1 opens the Thebus chapter with \"The void preserves. A ship that died two thousand years ago is almost indistinguishable from a ship that perished only a few days past\", which is the whole reason the book sends you looking for wreckage here.",
+      "note": "Pirates of Drinax bk.1 ch.3 (\"Thebus\") and its Proactive Recycling Corporation entry; Shadows of Sindal corroborates TravellerMap's counts (\"three gas giants, two planetoid belts and several terrestrial planets, most of which are rockballs\"). Olo is \"the third planet in the system, a gas giant\", counting Thebus itself as the first, and the PRC's base is \"in orbit of Olo\", in its ring debris. Magg and Magg's Moon are a referee decision: bk.1 p.123 names \"the battle of Magg's Moon\" without placing it; this campaign puts it around Magg, a dead world one orbit out from Olo. Book 6 reads the bodies' orbit numbers, Callisto their order (nth).",
       "bodies": [
+        {
+          "type": "main_world",
+          "nth": 1
+        },
         {
           "type": "gas_giant",
           "name": "Olo",
-          "orbit": 2
+          "orbit": 2,
+          "nth": 3
         },
         {
           "type": "moon",
@@ -306,13 +324,14 @@
           "type": "planet",
           "name": "Magg",
           "orbit": 3,
-          "uwp": "X645000-0"
+          "nth": 4,
+          "uwp": "Y645000-0"
         },
         {
           "type": "moon",
           "name": "Magg's Moon",
           "parent": "Magg",
-          "uwp": "X300000-0"
+          "uwp": "Y300000-0"
         }
       ]
     },

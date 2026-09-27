@@ -103,12 +103,60 @@ pub struct Pin {
     pub fill: Fill,
     /// A published number of moons for it.
     pub moon_total: Option<usize>,
+    /// Its place in the order of orbits, when the source gives one; this
+    /// wins over the Book 6 orbit's distance.
+    pub nth: Option<crate::systems::constraint::NthPlace>,
 }
 
-/// Put pinned bodies in the orbit nearest their stated distance, or a new
-/// orbit at it when nothing free lies within a Table 12 step (×1.25).
-pub fn place_pins(slots: &mut Vec<Slot>, pins: Vec<Pin>, notes: &mut Vec<String>) {
-    for pin in pins {
+/// Put pinned bodies where their source puts them. A body with a place in
+/// the order of orbits ([`Pin::nth`]) takes exactly that orbit, orbits being
+/// added outward if the star has too few. Otherwise its Book 6 orbit is read
+/// as a distance: the nearest free orbit within a Table 12 step (×1.25), or a
+/// new orbit at it.
+pub fn place_pins(slots: &mut Vec<Slot>, pins: Vec<Pin>, gaps: &[Gap], notes: &mut Vec<String>) {
+    use crate::systems::constraint::NthPlace;
+    let (ordered, by_distance): (Vec<Pin>, Vec<Pin>) = pins.into_iter().partition(|p| p.nth.is_some());
+    let mut fallback = Vec::new();
+    for pin in ordered {
+        let mw = slots.iter().position(|s| matches!(s.fill, Fill::MainWorld));
+        let index = match pin.nth {
+            Some(NthPlace::Nth(n)) => n.checked_sub(1),
+            Some(NthPlace::BeyondMain(k)) => mw.map(|m| m + k),
+            None => None,
+        };
+        let Some(index) = index else {
+            fallback.push(pin);
+            continue;
+        };
+        while slots.len() <= index {
+            let outermost = slots.last().map_or(0.1, |s| s.position);
+            let mut position = sig2(outermost * 1.75);
+            while gaps.iter().any(|g| g.contains(position)) {
+                position = sig2(position * 1.75);
+            }
+            slots.push(Slot {
+                position,
+                ..Default::default()
+            });
+        }
+        if slots[index].is_open() {
+            slots[index].fill = pin.fill;
+            slots[index].pinned_orbit = Some(pin.book6_orbit);
+            slots[index].moon_total = pin.moon_total;
+        } else {
+            notes.push(format!(
+                "A body a source places {} could not take that orbit, already held; placed by \
+                 distance instead",
+                match pin.nth {
+                    Some(NthPlace::Nth(n)) => format!("{n}th from the star"),
+                    Some(NthPlace::BeyondMain(k)) => format!("{k} orbit(s) beyond the main world"),
+                    None => String::new(),
+                }
+            ));
+            fallback.push(pin);
+        }
+    }
+    for pin in by_distance.into_iter().chain(fallback) {
         let nearest = slots
             .iter()
             .enumerate()
@@ -139,7 +187,7 @@ pub fn place_pins(slots: &mut Vec<Slot>, pins: Vec<Pin>, notes: &mut Vec<String>
                     },
                 );
                 notes.push(format!(
-                    "Added an orbit at {position} HD for a body a source places at Book 6 orbit {}",
+                    "Added an orbit for a body a source places at Book 6 orbit {}",
                     pin.book6_orbit
                 ));
             }
@@ -206,7 +254,7 @@ pub fn place_giants(
                         ..Default::default()
                     },
                 );
-                notes.push(format!("Added an orbit at {position} HD for a giant planet"));
+                notes.push("Added an orbit for a giant planet".to_string());
                 at
             })
         } else {
@@ -218,9 +266,8 @@ pub fn place_giants(
                 notes.push(match fallback {
                     Some(i) => format!(
                         "A published giant planet had no Cold or Outer orbit and went in the \
-                         {} zone at {} HD",
-                        slots[i].zone().name(),
-                        slots[i].position
+                         {} zone",
+                        slots[i].zone().name()
                     ),
                     None => "A published giant planet found no free orbit at all".to_string(),
                 });
@@ -422,9 +469,11 @@ fn add_orbit(
     let position = position
         .or_else(|| split_widest(&positions, gaps))
         .unwrap_or_else(|| {
-            notes.push(format!(
-                "A published body went beyond {MAX_POSITION_HD} HD: no gap was wide enough to split"
-            ));
+            notes.push(
+                "A published body went beyond the outermost orbit the rules allow: no gap was \
+                 wide enough to split"
+                    .to_string(),
+            );
             beyond(outermost, gaps, roller, crossed)
         });
     let at = slots.partition_point(|s| s.position < position);

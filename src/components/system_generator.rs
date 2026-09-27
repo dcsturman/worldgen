@@ -510,6 +510,8 @@ pub fn World() -> impl IntoView {
             main_world_orbit: None,
             main_world_num_satellites: None,
             counts: Default::default(),
+            nth_pins: Vec::new(),
+            main_world_nth: None,
         };
         match System::generate_from_constraints(constraints) {
             Ok(sys) => {

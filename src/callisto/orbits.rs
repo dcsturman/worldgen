@@ -288,15 +288,41 @@ pub fn beyond(outermost: f32, gaps: &[Gap], roller: &mut impl Roller, crossed: &
 /// `known` says the count is a known number of bodies rather than a 2D roll:
 /// if the outward run passes 100 HD short of it, the widest gaps are split
 /// until it is met (Section 5.4).
+///
+/// `inward` fixes how many orbits lie inside the main world, for a source
+/// that gives its place in the order ("the fourth planet"); otherwise 1D
+/// splits them.
 pub fn lay_out(
     count: usize,
     main_world: Option<f32>,
     innermost: f32,
     gaps: &[Gap],
     known: bool,
+    inward: Option<usize>,
     roller: &mut impl Roller,
 ) -> OrbitPlan {
-    let mut plan = lay_out_run(count, main_world, innermost, gaps, roller);
+    let count = inward.map_or(count, |n| count.max(n + 1));
+    let mut plan = lay_out_run(count, main_world, innermost, gaps, inward, roller);
+    // A main world whose place in the order is given needs exactly that many
+    // orbits inside it; where the inward run came up short (the innermost
+    // orbit, a companion's gap), split the widest gaps inside it.
+    if let (Some(want), Some(mw)) = (inward, main_world) {
+        loop {
+            let inside: Vec<f32> = plan.positions.iter().copied().filter(|&p| p < mw).collect();
+            if inside.len() >= want {
+                break;
+            }
+            let mut bounded = vec![innermost];
+            bounded.extend(inside.iter().copied().filter(|&p| p > innermost));
+            bounded.push(mw);
+            let Some(p) = split_widest(&bounded, gaps).filter(|&p| p < mw && p >= innermost) else {
+                break;
+            };
+            let at = plan.positions.partition_point(|&x| x < p);
+            plan.positions.insert(at, p);
+        }
+        plan.main_world = plan.positions.iter().position(|&p| p == mw);
+    }
     if known {
         while plan.positions.len() < count {
             let p = match split_widest(&plan.positions, gaps) {
@@ -323,6 +349,7 @@ fn lay_out_run(
     main_world: Option<f32>,
     innermost: f32,
     gaps: &[Gap],
+    inward: Option<usize>,
     roller: &mut impl Roller,
 ) -> OrbitPlan {
     let in_gap = |p: f32| gaps.iter().any(|g| g.contains(p));
@@ -345,11 +372,11 @@ fn lay_out_run(
     // Split the other orbits by 1D: 1–2 a third inward, 3–4 half, 5–6 two
     // thirds, rounding down.
     let others = count.saturating_sub(1);
-    let inward_n = match roller.d1() {
+    let inward_n = inward.unwrap_or_else(|| match roller.d1() {
         1 | 2 => others / 3,
         3 | 4 => others / 2,
         _ => others * 2 / 3,
-    };
+    });
     let outward_n = others - inward_n;
 
     // Inward: divide, stopping at the innermost orbit. An inward orbit that
@@ -518,7 +545,7 @@ mod tests {
     fn example_12_1_orbits() {
         let mut r = Scripted::new(&[(D2, 6), (D1, 5), (D2, 6), (D2, 3), (D2, 5)]);
         let n = number_of_orbits(0, &mut r);
-        let plan = lay_out(n, Some(1.0), 0.05, &[], false, &mut r);
+        let plan = lay_out(n, Some(1.0), 0.05, &[], false, None, &mut r);
         assert_eq!(plan.positions, [0.45, 0.61, 1.0, 1.6]);
         assert_eq!(plan.main_world, Some(2));
         assert_eq!(r.remaining(), 0);
@@ -530,7 +557,7 @@ mod tests {
     fn example_12_2_orbits() {
         let mut r = Scripted::new(&[(D2, 5), (D2, 6), (D2, 8), (D2, 2)]);
         let n = number_of_orbits(0, &mut r);
-        let plan = lay_out(n, None, 0.14, &[], false, &mut r);
+        let plan = lay_out(n, None, 0.14, &[], false, None, &mut r);
         // 0.125 moves out to 0.14; ×1.90 = 0.27; ×1.25 = 0.34.
         assert_eq!(plan.positions, [0.14, 0.27, 0.34]);
         assert_eq!(r.remaining(), 0);
@@ -551,7 +578,7 @@ mod tests {
         let n = number_of_orbits(14, &mut r);
         assert_eq!(n, 14);
         let gap = Gap { lo: 2.0, hi: 18.0 };
-        let plan = lay_out(n, Some(1.4), 0.05, &[gap], true, &mut r);
+        let plan = lay_out(n, Some(1.4), 0.05, &[gap], true, None, &mut r);
         // The example prints the innermost as 0.091, dividing the unrounded
         // 0.2057 by 2.25; the rule rounds every position, so 0.21 ÷ 2.25 is
         // 0.093 and its split with 0.21 is 0.14 either way.
