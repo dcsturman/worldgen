@@ -1,4 +1,4 @@
-//! Temperature: rulebook Section 7.5, Tables 24 to 27.
+//! Temperature: rulebook Section 8.5, Tables 24 to 27.
 //!
 //! Read, not rolled: an albedo class (Table 24), the equilibrium temperature
 //! for the world's position and class (Table 25, which is a formula
@@ -36,7 +36,7 @@ impl AlbedoClass {
 
     /// Which class a world is in (Table 24). Combinations the table doesn't
     /// name are read as the nearest it does: an airless world with water has
-    /// ice (Section 13.2), and an exotic or unusual atmosphere over a dry
+    /// ice (Section 14.2), and an exotic or unusual atmosphere over a dry
     /// surface is thin air.
     pub fn of(atmosphere: i32, hydro: i32, hydro_is_ice: bool) -> AlbedoClass {
         if hydro_is_ice {
@@ -125,7 +125,7 @@ pub struct Temperature {
     pub steam: bool,
 }
 
-/// Work out a world's temperature (Section 7.5), with the ice check: a Cold
+/// Work out a world's temperature (Section 8.5), with the ice check: a Cold
 /// or Frozen world with water freezes over and is read again in the Ice
 /// column, once. A Roasting world with water has boiled its oceans: it is
 /// read in the Cloudy column and stays Roasting whatever that says.
@@ -211,7 +211,7 @@ mod tests {
         assert_eq!(TempBand::of(81.0), TempBand::Roasting);
     }
 
-    /// The rulebook's examples (Section 7.5).
+    /// The rulebook's examples (Section 8.5).
     #[test]
     fn earth_mars_and_the_dense_world() {
         // Earth: 1.0, atmosphere 6, hydrographics 7: 17 °C, Temperate.
@@ -223,14 +223,13 @@ mod tests {
         let dense = temperature(1.4, 8, 7, false);
         assert_eq!((dense.celsius.round(), dense.band), (2.0, TempBand::Temperate));
         // With hydrographics 9 it is Cloudy, Cold, and the ice check reads it
-        // again at −32. The example calls that Frozen, but Table 27 puts −32
-        // in Cold (−50 to 0), and the table wins.
+        // again at −32: still Cold (Table 27, −50 to 0).
         let cloudy = temperature(1.4, 8, 9, false);
         assert_eq!((cloudy.celsius.round(), cloudy.band), (-32.0, TempBand::Cold));
         assert_eq!(cloudy.albedo_class, AlbedoClass::Ice);
     }
 
-    /// Noricum's steam world (12.3): 0.52, atmosphere 7, hydrographics 6.
+    /// Noricum's steam world (13.3): 0.52, atmosphere 7, hydrographics 6.
     #[test]
     fn a_roasting_world_boils_its_oceans() {
         let t = temperature(0.52, 7, 6, false);

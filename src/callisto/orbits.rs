@@ -1,4 +1,4 @@
-//! Orbits and zones: rulebook Section 4, Tables 10 to 14.
+//! Orbits and zones: rulebook Section 5, Tables 10 to 14.
 //!
 //! An orbit is placed by its **position** in habitable distances (HD), and
 //! everything here works in HD; [`crate::callisto::star::StarData::hd_mkm`]
@@ -65,7 +65,7 @@ impl Zone {
     }
 }
 
-/// The widest position orbits are generated to (Section 4.4: "stop when a
+/// The widest position orbits are generated to (Section 5.4: "stop when a
 /// position passes 100").
 pub const MAX_POSITION_HD: f32 = 100.0;
 
@@ -172,7 +172,7 @@ fn airless_position(list: &str, roll: i32) -> f32 {
         .unwrap_or_else(|| panic!("Table 10's airless row has no {roll}"))
 }
 
-/// Number of orbits (Section 4.2): 2D − 2, minimum 1, and at least as many
+/// Number of orbits (Section 5.2): 2D − 2, minimum 1, and at least as many
 /// as the bodies already known to be there.
 pub fn number_of_orbits(known_bodies: usize, roller: &mut impl Roller) -> usize {
     ((roller.d2() - 2).max(1) as usize).max(known_bodies)
@@ -227,11 +227,11 @@ pub struct OrbitPlan {
     /// The last Table 12 ratio rolled.
     pub last_ratio: Option<f32>,
     /// Orbits a known count forced beyond 100 HD because no gap could be
-    /// split (Section 4.4); each deserves a note on the record.
+    /// split (Section 5.4); each deserves a note on the record.
     pub beyond_100: usize,
 }
 
-/// Split the widest gap between neighbouring positions (Section 4.4, "More
+/// Split the widest gap between neighbouring positions (Section 5.4, "More
 /// orbits for a known count"): the geometric mean of the two, if they are at
 /// least 1.56 apart so both halves keep Table 12's minimum of 1.25. The edges
 /// of a companion's gap count as positions, but a new orbit never goes inside
@@ -277,7 +277,7 @@ pub fn beyond(outermost: f32, gaps: &[Gap], roller: &mut impl Roller, crossed: &
     p
 }
 
-/// Lay out a star's orbits (Sections 4.3 and 4.4).
+/// Lay out a star's orbits (Sections 5.3 and 5.4).
 ///
 /// - `count`: orbits wanted, from [`number_of_orbits`].
 /// - `main_world`: the main world's position, or `None` to build outward from
@@ -287,7 +287,7 @@ pub fn beyond(outermost: f32, gaps: &[Gap], roller: &mut impl Roller, crossed: &
 ///
 /// `known` says the count is a known number of bodies rather than a 2D roll:
 /// if the outward run passes 100 HD short of it, the widest gaps are split
-/// until it is met (Section 4.4).
+/// until it is met (Section 5.4).
 pub fn lay_out(
     count: usize,
     main_world: Option<f32>,
@@ -316,7 +316,7 @@ pub fn lay_out(
     plan
 }
 
-/// Section 4.3's run: inward and outward from the main world by Table 12
+/// Section 5.3's run: inward and outward from the main world by Table 12
 /// ratios, or outward from Table 11's first orbit.
 fn lay_out_run(
     count: usize,
@@ -475,7 +475,7 @@ mod tests {
         assert!(row_matches("Atmosphere 4 to 9, hydrographics 0", 7, 0));
     }
 
-    /// Rulebook 7.5 via Table 10: every habitable main world, at every 1D
+    /// Rulebook 8.5 via Table 10: every habitable main world, at every 1D
     /// result, comes out Temperate.
     #[test]
     fn habitable_main_worlds_placed_by_table_10_are_temperate() {
@@ -499,7 +499,7 @@ mod tests {
 
     #[test]
     fn the_band_spreads_over_the_die() {
-        // Example 12.1: atmosphere 6, hydrographics 7, band 0.91 to 1.11,
+        // Example 13.1: atmosphere 6, hydrographics 7, band 0.91 to 1.11,
         // 1D = 4 → 1.03 → 1.0.
         assert_eq!(main_world_position(6, 7, &mut Scripted::new(&[(D1, 4)])), 1.0);
         // Noricum: atmosphere 8, band 1.10 to 1.38, 1D = 6 → 1.38 → 1.4.
@@ -513,7 +513,7 @@ mod tests {
         assert_eq!(main_world_position(6, 0, &mut Scripted::new(&[(D1, 5), (D1, 6)])), 1.6);
     }
 
-    /// Example 12.1's orbits: four orbits around a main world at 1.0.
+    /// Example 13.1's orbits: four orbits around a main world at 1.0.
     #[test]
     fn example_12_1_orbits() {
         let mut r = Scripted::new(&[(D2, 6), (D1, 5), (D2, 6), (D2, 3), (D2, 5)]);
@@ -524,7 +524,7 @@ mod tests {
         assert_eq!(r.remaining(), 0);
     }
 
-    /// Example 12.2's orbits: no main world around an M4 V, whose innermost
+    /// Example 13.2's orbits: no main world around an M4 V, whose innermost
     /// orbit is 0.14.
     #[test]
     fn example_12_2_orbits() {
@@ -536,7 +536,7 @@ mod tests {
         assert_eq!(r.remaining(), 0);
     }
 
-    /// Noricum's orbits (rulebook 12.3): fourteen known bodies, the M6
+    /// Noricum's orbits (rulebook 13.3): fourteen known bodies, the M6
     /// companion's gap from 2 to 18 HD, and the outward run stopping at 100
     /// nine orbits short of fourteen, so the five widest gaps are split.
     #[test]

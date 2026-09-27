@@ -1,5 +1,5 @@
 //! How well a world's published facts and the physics agree
-//! (IMPLEMENTATION.md §7; rulebook Section 13.2).
+//! (IMPLEMENTATION.md §7; rulebook Section 14.2).
 //!
 //! Published data always wins: nothing here changes a world. It says what
 //! the physics would have said, so the oddity is on the record rather than
@@ -10,7 +10,7 @@ use crate::callisto::body::Fit;
 use crate::callisto::orbits::Zone;
 use crate::callisto::temperature::{TempBand, Temperature};
 
-/// What a published UWP asks that the world-building rolls (Section 7)
+/// What a published UWP asks that the world-building rolls (Section 8)
 /// could not have produced, each with the story that makes it work. Section
 /// 13.2 calls these oddities with easy stories: on the record, not strained.
 pub fn uwp_oddities(size: i32, atmosphere: i32, hydro: i32, zone: Zone) -> Vec<String> {
@@ -21,7 +21,7 @@ pub fn uwp_oddities(size: i32, atmosphere: i32, hydro: i32, zone: Zone) -> Vec<S
              it is a thin, slowly escaping envelope renewed from the interior"
         ));
     } else if atmosphere <= 9 && atmosphere > size + 6 {
-        // Section 7.3 tops out at 2D − 7 + size, +1 for iron: size + 6.
+        // Section 8.3 tops out at 2D − 7 + size, +1 for iron: size + 6.
         out.push(format!(
             "Size {size} with atmosphere {atmosphere}: a small world with a thick atmosphere, \
              cold and dense with heavy gases"

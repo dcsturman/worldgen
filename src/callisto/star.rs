@@ -1,4 +1,4 @@
-//! Star data: rulebook Section 3.4, Tables 5 and 6.
+//! Star data: rulebook Section 4.4, Tables 5 and 6.
 //!
 //! Table 5 (luminosity class V, B0 to M9) is read from the rulebook's data as
 //! printed; every later step uses one or two of its columns. Table 6 changes a
@@ -61,7 +61,7 @@ impl WhiteDwarfAge {
 const LOCK_ALL_HD: f32 = 3.0;
 
 /// Days at thrust 1 for a distance in Mkm: accelerate to the midpoint, then
-/// decelerate (rulebook Section 11.1).
+/// decelerate (rulebook Section 12.1).
 pub fn days_at_thrust_1(mkm: f32) -> f32 {
     0.234 * mkm.sqrt()
 }
@@ -145,7 +145,7 @@ pub fn class_v(star_type: StarType, subtype: u8) -> StarData {
         .unwrap_or_else(|| panic!("Table 5 has no {star_type:?}{subtype} V"))
 }
 
-/// The class V row whose mass is nearest `mass` (Section 3.5: a companion's
+/// The class V row whose mass is nearest `mass` (Section 4.5: a companion's
 /// spectral class and subtype come from its mass).
 pub fn nearest_by_mass(mass: f32) -> (StarType, u8) {
     CLASS_V

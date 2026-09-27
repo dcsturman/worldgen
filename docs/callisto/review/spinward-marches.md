@@ -2,7 +2,7 @@
 
 Worlds whose published data strains the physics, from `cargo run --bin callisto-review --features backend -- "Spinward Marches"`. Replaced on every run. 439 systems, 0 strained world(s), 6 odd.
 
-**Strained** worlds are ones where a published fact forces something the physics can't support: the data to check first. **Oddities** have an easy story (rulebook Section 13.2), or are what the rules themselves leave odd.
+**Strained** worlds are ones where a published fact forces something the physics can't support: the data to check first. **Oddities** have an easy story (rulebook Section 14.2), or are what the rules themselves leave odd.
 
 # Oddities
 

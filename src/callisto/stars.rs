@@ -1,4 +1,4 @@
-//! Stars: rulebook Sections 3.1 to 3.3 and 3.5, Tables 2, 3, 4, 7, 8 and 9.
+//! Stars: rulebook Sections 4.1 to 4.3 and 4.5, Tables 2, 3, 4, 7, 8 and 9.
 //!
 //! Rolling the stars a system doesn't list, and placing its companions.
 
@@ -21,7 +21,7 @@ impl CStar {
     }
 
     /// Can a main world orbit it? Not a white dwarf, a giant or a brown dwarf
-    /// (Section 3.5, "Which star hosts the main world").
+    /// (Section 4.5, "Which star hosts the main world").
     pub fn can_host_main_world(&self) -> bool {
         matches!(self.star.size, StarSize::V | StarSize::VI | StarSize::IV)
     }
@@ -205,7 +205,7 @@ pub enum Move {
     Outward,
 }
 
-/// Section 4.1's "A companion in the way": if the main world's position lies
+/// Section 5.1's "A companion in the way": if the main world's position lies
 /// in the companion's gap, roll 1D: 1 to 3 move the companion inward a row of
 /// Table 8 at a time until the position is beyond "orbit both"; 4 to 6
 /// outward until it is inside "primary alone". If the table runs out, go the

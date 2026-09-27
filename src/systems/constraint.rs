@@ -259,7 +259,7 @@ pub enum Constraint {
 }
 
 /// How much of a system's body count a source publishes, which decides how
-/// Callisto fills its orbits (rulebook Section 6).
+/// Callisto fills its orbits (rulebook Section 7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PublishedCounts {
     /// Giants, belts and the world total (TravellerMap's PBG and `W`): the

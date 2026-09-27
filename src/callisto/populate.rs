@@ -1,9 +1,9 @@
 //! Filling a star's orbits: rulebook steps 9 to 13.
 //!
 //! [`Slot`]s are the orbits while they're being filled. Pinned bodies go in
-//! first, then the giants (Section 5.4), the ice belt (Section 5.5), and
+//! first, then the giants (Section 6.4), the ice belt (Section 6.5), and
 //! Table 21 for the rest; the counts are then matched to any published ones,
-//! and each body gets its codes (Section 7). The refuelling line (Section
+//! and each body gets its codes (Section 8). The refuelling line (Section
 //! 5.6) is read off the result.
 
 use crate::callisto::body::{BodyClass, Fuel, GiantKind, IceAvailability, TransitFuel};
@@ -133,7 +133,7 @@ pub fn place_pins(slots: &mut Vec<Slot>, pins: Vec<Pin>, notes: &mut Vec<String>
     }
 }
 
-/// Place giants one at a time (Section 5.4). `first` is Table 18's roll for
+/// Place giants one at a time (Section 6.4). `first` is Table 18's roll for
 /// the first; later giants take the next free Cold or Outer orbit outward.
 /// With no Cold or Outer orbit free an orbit is added (see
 /// [`giant_orbit`]) — for every giant when the count is published, once at
@@ -229,7 +229,7 @@ pub fn place_giants(
     }
 }
 
-/// Where Section 5.4 adds an orbit for a giant: a Table 12 ratio outward
+/// Where Section 6.4 adds an orbit for a giant: a Table 12 ratio outward
 /// from the outermost orbit, if that stays within 100 HD and clear of every
 /// companion's gap; otherwise the geometric mean of the widest-spaced pair of
 /// neighbouring Cold or Outer orbits, if they are at least 1.56 apart, so the
@@ -320,7 +320,7 @@ pub fn fill_open(slots: &mut [Slot], small_star: bool, belts_known: bool, roller
     }
 }
 
-/// Place the published belts (Section 6, "Published counts", step 2): 1D
+/// Place the published belts (Section 7, "Published counts", step 2): 1D
 /// 1 to 4 the innermost free Cold or Outer orbit, 5 or 6 the innermost free
 /// orbit of any zone (any zone, too, when no Cold or Outer orbit is free).
 /// Orbits are added outward if they run out.
@@ -381,8 +381,8 @@ pub fn close_out(slots: &mut Vec<Slot>) {
     slots.truncate(last_body.map_or(0, |i| i + 1));
 }
 
-/// A new orbit for a published body when they run out (Section 6 step 4,
-/// Section 4.4): a Table 12 ratio outward while that stays within 100 HD
+/// A new orbit for a published body when they run out (Section 7 step 4,
+/// Section 5.4): a Table 12 ratio outward while that stays within 100 HD
 /// (crossing out positions in a companion's gap), then the widest gap split,
 /// and only then beyond 100 with a note. Returns its index.
 fn add_orbit(
@@ -424,7 +424,7 @@ fn add_orbit(
     at
 }
 
-/// Roll each body's codes (Section 7.1 to 7.4; Table 22 for the others).
+/// Roll each body's codes (Section 8.1 to 8.4; Table 22 for the others).
 pub fn roll_codes(slots: &mut [Slot], small_star: bool, roller: &mut impl Roller) {
     for s in slots.iter_mut() {
         let zone = s.zone();
@@ -441,7 +441,7 @@ pub fn roll_codes(slots: &mut [Slot], small_star: bool, roller: &mut impl Roller
     }
 }
 
-/// Is the body in this slot a place to land and melt ice (Section 5.5)?
+/// Is the body in this slot a place to land and melt ice (Section 6.5)?
 pub fn is_ice_source(slot: &Slot, ice: IceAvailability) -> bool {
     let cold = matches!(slot.zone(), Zone::Cold | Zone::Outer);
     let Fill::Body(b) = &slot.fill else { return false };
@@ -455,7 +455,7 @@ pub fn is_ice_source(slot: &Slot, ice: IceAvailability) -> bool {
         || (ice == IceAvailability::Rich && slot.zone() == Zone::Outer)
 }
 
-/// The refuelling line (Section 5.6), with `names[i]` the name slot `i` ends
+/// The refuelling line (Section 6.6), with `names[i]` the name slot `i` ends
 /// up with.
 pub fn fuel_line(
     slots: &[Slot],
@@ -516,7 +516,7 @@ mod tests {
             .collect()
     }
 
-    /// Example 12.1: one giant, no Cold or Outer orbit, so one is added at
+    /// Example 13.1: one giant, no Cold or Outer orbit, so one is added at
     /// 1.75 × 1.6 = 2.8.
     #[test]
     fn a_giant_with_nowhere_to_go_gets_an_orbit() {

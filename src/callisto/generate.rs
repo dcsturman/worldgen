@@ -1,4 +1,4 @@
-//! The Callisto generator: rulebook Section 2's procedure, from a set of
+//! The Callisto generator: rulebook Section 3's procedure, from a set of
 //! constraints to a [`System`].
 //!
 //! Stage 1 covers the stars and the orbits: Table 1 steps 1 to 8. Each orbit
@@ -84,7 +84,7 @@ pub fn generate(
 ) -> Result<System, Vec<ConstraintError>> {
     // Published UWPs are not validated here (IMPLEMENTATION.md §3): a
     // combination the core rules would not roll is published data all the
-    // same, and gets a story instead (Section 13.2).
+    // same, and gets a story instead (Section 14.2).
     let errors: Vec<ConstraintError> = constraints
         .validate()
         .into_iter()
@@ -142,7 +142,7 @@ pub fn generate(
         })
         .collect();
 
-    // Which star hosts the main world (Section 3.5): the primary, unless it
+    // Which star hosts the main world (Section 4.5): the primary, unless it
     // can't support life (a white dwarf, giant or brown dwarf) and the main
     // world is habitable, when a main-sequence companion takes it. Any other
     // main world orbits the listed primary.
@@ -162,7 +162,7 @@ pub fn generate(
         None => main_world_position(main_world.atmosphere, main_world.hydro, roller),
     };
 
-    // A companion in the way (Section 4.1): a rolled companion whose gap
+    // A companion in the way (Section 5.1): a rolled companion whose gap
     // holds the main world moves, whatever the main world is and however it
     // was placed. The main world never moves; a published separation doesn't
     // either.
@@ -217,7 +217,7 @@ pub fn generate(
         .count();
 
     // A known body count (anything published) is met by splitting gaps when
-    // the orbits run short (Section 4.4); a rolled one just stops at 100.
+    // the orbits run short (Section 5.4); a rolled one just stops at 100.
     let counts_known = constraints.counts != PublishedCounts::None;
     let mut primary_notes = Vec::new();
     if !primary.can_host_main_world() && habitable {
@@ -355,7 +355,7 @@ pub fn generate(
         oddities: Vec::new(),
     }));
 
-    // What the main world's placement had to do or couldn't (Section 13.2),
+    // What the main world's placement had to do or couldn't (Section 14.2),
     // settled into its fit once its temperature is known.
     let mw_oddities = crate::callisto::fit::uwp_oddities(
         main_world.size,
@@ -1119,7 +1119,7 @@ mod tests {
         .unwrap()
     }
 
-    /// Rulebook 12.3, Noricum, as far as stage 2 goes: the rolls it lists, in
+    /// Rulebook 13.3, Noricum, as far as stage 2 goes: the rolls it lists, in
     /// the order the generator makes them.
     #[test]
     fn noricum() {
@@ -1370,7 +1370,7 @@ mod tests {
         }
         let rate = f64::from(habitable) / n as f64;
         assert!((0.48..=0.58).contains(&rate), "habitable main worlds: {:.1}%", rate * 100.0);
-        // Table 10's bands are the positions where Section 7.5 gives
+        // Table 10's bands are the positions where Section 8.5 gives
         // Temperate, so a habitable main world placed freely always is (only a
         // stated orbit can make it otherwise, and none is stated here).
         let t = f64::from(temperate) / f64::from(habitable);
