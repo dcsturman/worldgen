@@ -37,7 +37,7 @@ impl BodyClass {
     }
 }
 
-/// What a world is made of (Section 7.2).
+/// What a world is made of (Section 8.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Composition {
     /// A large metal core, like Mercury.
@@ -75,9 +75,42 @@ pub struct Physics {
     /// icy dwarfs).
     #[serde(default)]
     pub hydro_is_ice: bool,
-    /// A place to land and melt ice for fuel (Section 5.5).
+    /// A place to land and melt ice for fuel (Section 6.5).
     #[serde(default)]
     pub ice_source: bool,
+    /// Mean surface temperature and band (Section 8.5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<crate::callisto::temperature::Temperature>,
+    /// How well the published facts and the physics agree (IMPLEMENTATION.md
+    /// §7).
+    #[serde(default)]
+    pub fit: Fit,
+    /// Oddities with an easy story (rulebook Section 14.2), and what the
+    /// rules left odd: on the record, but not strained.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub oddities: Vec<String>,
+}
+
+/// How a world's published facts and the physics agree.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Fit {
+    /// Nothing adjusted.
+    Exact,
+    /// Only unstated quantities were set: the normal case.
+    #[default]
+    Tuned,
+    /// An unconstrained star or orbit was chosen to suit the world, or a
+    /// companion was moved.
+    Adjusted { what: String, why: String },
+    /// A constraint forced a physically unviable result; the story is what
+    /// the generator settled on. These go to the review file.
+    Strained { story: String },
+}
+
+impl Fit {
+    pub fn is_strained(&self) -> bool {
+        matches!(self, Fit::Strained { .. })
+    }
 }
 
 /// The kinds of giant planet (Table 17).
@@ -122,7 +155,7 @@ pub enum IceAvailability {
 }
 
 /// The best fuel a ship passing through can use without visiting the main
-/// world (Section 5.6).
+/// world (Section 6.6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransitFuel {
     GiantPlanet,
@@ -140,7 +173,7 @@ impl TransitFuel {
     }
 }
 
-/// The system's refuelling line (Section 5.6).
+/// The system's refuelling line (Section 6.6).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Fuel {
     pub ice: IceAvailability,

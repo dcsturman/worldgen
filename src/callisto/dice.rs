@@ -2,7 +2,7 @@
 //!
 //! Every roll goes through a [`Roller`], so the same generator code runs on
 //! the seeded worldgen RNG in production and on a script of listed results
-//! in tests: the rulebook's worked examples (Section 12) give each roll as a
+//! in tests: the rulebook's worked examples (Section 13) give each roll as a
 //! result ("2D = 5"), and [`Scripted`] replays them in order.
 
 use std::collections::VecDeque;

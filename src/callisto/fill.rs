@@ -1,8 +1,8 @@
-//! What fills the orbits: rulebook Sections 5 to 7.4.
+//! What fills the orbits: rulebook Sections 6 to 8.4.
 //!
 //! Giant planets (Tables 15 to 18), ice (Table 19), what fills each remaining
 //! orbit (Tables 21 and 22), and each world's size, composition, gravity,
-//! atmosphere and hydrographics (Section 7, Table 23). The rolls live here;
+//! atmosphere and hydrographics (Section 8, Table 23). The rolls live here;
 //! [`crate::callisto::generate`] decides which orbit each lands in.
 
 use crate::callisto::body::{BodyClass, Composition, GiantKind, IceAvailability};
@@ -11,7 +11,7 @@ use crate::callisto::orbits::Zone;
 use crate::callisto::tables;
 
 /// Is there at least one giant planet (Table 15)? Traveller's rate: 2D of 9
-/// or less. (Section 13.1's physical rate, 7 or less, is an option for
+/// or less. (Section 14.1's physical rate, 7 or less, is an option for
 /// later.)
 pub fn giants_present(roller: &mut impl Roller) -> bool {
     let t = tables::table(15).dice().expect("Table 15 is a dice table");
@@ -100,7 +100,7 @@ pub fn fill(zone: Zone, small_star: bool, next_to_giant: bool, roller: &mut impl
     }
 }
 
-/// What kind of body a published world is (Section 6, "Published counts"):
+/// What kind of body a published world is (Section 7, "Published counts"):
 /// Table 21 for its zone, an Empty or Belt result read as World.
 pub fn published_kind(zone: Zone, small_star: bool, roller: &mut impl Roller) -> BodyClass {
     match fill(zone, small_star, false, roller) {
@@ -129,7 +129,7 @@ pub struct Known {
 }
 
 /// Table 22's fixed codes for a body that isn't a terrestrial world, and a
-/// full set of rolls (Section 7) for one that is.
+/// full set of rolls (Section 8) for one that is.
 pub fn codes(
     class: BodyClass,
     zone: Zone,
@@ -189,13 +189,13 @@ pub fn codes(
     }
 }
 
-/// Size (Section 7.1): 2D − 2, DM −2 Inner, DM −1 small star, at least 1.
+/// Size (Section 8.1): 2D − 2, DM −2 Inner, DM −1 small star, at least 1.
 pub fn world_size(zone: Zone, small_star: bool, roller: &mut impl Roller) -> i32 {
     let dm = if zone == Zone::Inner { -2 } else { 0 } + if small_star { -1 } else { 0 };
     (roller.d2() - 2 + dm).max(1)
 }
 
-/// Composition (Section 7.2): 1D with the zone's DM, plus `extra_dm` (a
+/// Composition (Section 8.2): 1D with the zone's DM, plus `extra_dm` (a
 /// giant's moon gets +1). 1 or less iron-rich, 2 to 4 rocky, 5 or more
 /// ice-rock.
 pub fn composition(zone: Zone, extra_dm: i32, roller: &mut impl Roller) -> Composition {
@@ -237,7 +237,7 @@ fn density(composition: Composition) -> f32 {
     }
 }
 
-/// Atmosphere (Section 7.3): 2D − 7 + size, DM +1 iron-rich, −1 ice-rock,
+/// Atmosphere (Section 8.3): 2D − 7 + size, DM +1 iron-rich, −1 ice-rock,
 /// −2 Inner, −1 Outer, −2 size 2. Size 1 has none. Clamped 0 to 15.
 pub fn atmosphere(size: i32, composition: Composition, zone: Zone, roller: &mut impl Roller) -> i32 {
     if size <= 1 {
@@ -255,7 +255,7 @@ pub fn atmosphere(size: i32, composition: Composition, zone: Zone, roller: &mut 
     (roller.d2() - 7 + size + dm).clamp(0, 15)
 }
 
-/// Hydrographics (Section 7.4): 2D − 7 + size, DM −4 if the atmosphere is
+/// Hydrographics (Section 8.4): 2D − 7 + size, DM −4 if the atmosphere is
 /// 0–1 or A+, −2 Hot. Size 1 and every Inner world have none. Clamped 0 to
 /// 10.
 pub fn hydrographics(size: i32, atmosphere: i32, zone: Zone, roller: &mut impl Roller) -> i32 {
@@ -286,7 +286,7 @@ mod tests {
         }
     }
 
-    /// Example 12.1's inner world: 2D = 11 size, 1D = 1 composition, 2D = 10
+    /// Example 13.1's inner world: 2D = 11 size, 1D = 1 composition, 2D = 10
     /// atmosphere, Inner zone.
     #[test]
     fn example_12_1_venus() {

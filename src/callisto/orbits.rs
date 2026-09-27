@@ -1,4 +1,4 @@
-//! Orbits and zones: rulebook Section 4, Tables 10 to 14.
+//! Orbits and zones: rulebook Section 5, Tables 10 to 14.
 //!
 //! An orbit is placed by its **position** in habitable distances (HD), and
 //! everything here works in HD; [`crate::callisto::star::StarData::hd_mkm`]
@@ -65,71 +65,114 @@ impl Zone {
     }
 }
 
-/// The widest position orbits are generated to (Section 4.4: "stop when a
+/// The widest position orbits are generated to (Section 5.4: "stop when a
 /// position passes 100").
 pub const MAX_POSITION_HD: f32 = 100.0;
 
-/// A main world's position band from its UWP (Table 10), rolling any sub-roll
-/// the row calls for, then spreading the band over 1D (1 the inner end, 6 the
-/// outer). Returns the position in HD, rounded to two figures.
+/// A main world's position from its UWP (Table 10), read from the table:
+/// the first row whose atmosphere (and, where the row names one,
+/// hydrographics) matches, any sub-roll the band cell calls for, then 1D
+/// spreading the band evenly (1 the inner end, 6 the outer). Rounded to two
+/// figures.
 pub fn main_world_position(atmosphere: i32, hydro: i32, roller: &mut impl Roller) -> f32 {
-    let band = match atmosphere {
-        4 | 5 if hydro >= 1 => Band::Range(0.85, 1.00),
-        6 | 7 if hydro >= 1 => Band::Range(0.90, 1.15),
-        8 | 9 if hydro >= 1 => Band::Range(1.10, 1.40),
-        4..=9 => {
-            if roller.d1() <= 4 {
-                Band::Range(0.60, 0.85) // a hot desert
-            } else {
-                Band::Range(1.25, 1.60) // a cold desert
-            }
-        }
-        2 | 3 => Band::Range(0.75, 0.95),
-        0 | 1 => Band::Exact(airless_position(roller.d2())),
-        10 | 15 => Band::Range(1.00, 1.30),
-        11 | 12 => {
-            if roller.d1() <= 3 {
-                Band::Range(0.30, 0.90) // Venus-like
-            } else {
-                Band::Range(2.5, 3.7) // cold, kept mild by a thick sky
-            }
-        }
-        13 => Band::Range(1.60, 2.10),
-        14 => Band::Range(0.80, 1.00),
-        _ => Band::Range(0.90, 1.15),
-    };
-    match band {
-        Band::Exact(p) => p,
-        Band::Range(lo, hi) => {
-            let step = (roller.d1().clamp(1, 6) - 1) as f32 / 5.0;
-            sig2(lo + (hi - lo) * step)
-        }
-    }
-}
-
-enum Band {
-    Range(f32, f32),
-    Exact(f32),
-}
-
-/// Table 10's airless row, read from its printed cell: "Roll 2D: 2 0.10,
-/// 3 0.16, …, 12 10". Airless worlds can be anywhere.
-fn airless_position(roll: i32) -> f32 {
-    let cell = &tables::table(10)
+    let t = tables::table(10);
+    let row = t
         .rows
         .iter()
-        .find(|r| r[0].starts_with("Atmosphere 0 or 1"))
-        .expect("Table 10 has an airless row")[1];
-    let list = cell.split_once(':').map_or(cell.as_str(), |(_, l)| l);
+        .find(|r| row_matches(&r[0], atmosphere, hydro))
+        .unwrap_or_else(|| panic!("Table 10 has no row for atmosphere {atmosphere}"));
+    let cell = row[1].as_str();
+    let (lo, hi) = if let Some(list) = cell.strip_prefix("Roll 2D:") {
+        // The airless row: straight to a position, 2D, or 1D + 6 for a world
+        // with water, which only lasts as ice away from the star.
+        let roll = if hydro >= 1 { roller.d1() + 6 } else { roller.d2() };
+        return airless_position(list, roll);
+    } else if let Some(options) = cell.strip_prefix("Roll 1D:") {
+        // "1 to 4, 0.60 to 0.85 (a hot desert); 5 to 6, 1.25 to 1.60 (…)"
+        let roll = roller.d1();
+        options
+            .split(';')
+            .find_map(|opt| {
+                let (rolls, band) = opt.trim().split_once(", ")?;
+                let range = crate::callisto::tables::parse_roll(rolls)?;
+                range.contains(&roll).then(|| parse_band(band))?
+            })
+            .unwrap_or_else(|| panic!("Table 10: no band for 1D = {roll} in {cell:?}"))
+    } else {
+        parse_band(cell).unwrap_or_else(|| panic!("Table 10: can't read band {cell:?}"))
+    };
+    let step = (roller.d1().clamp(1, 6) - 1) as f32 / 5.0;
+    sig2(lo + (hi - lo) * step)
+}
+
+/// "0.88 to 1.04", with anything after it (a parenthesised note) ignored.
+fn parse_band(text: &str) -> Option<(f32, f32)> {
+    let (lo, rest) = text.trim().split_once(" to ")?;
+    let hi: String = rest.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
+    Some((lo.trim().parse().ok()?, hi.parse().ok()?))
+}
+
+/// Does a Table 10 row label ("Atmosphere 4 or 5, hydrographics 9 or A",
+/// "Atmosphere A (exotic) or F (unusual)") cover this world?
+fn row_matches(label: &str, atmosphere: i32, hydro: i32) -> bool {
+    let Some(rest) = label.strip_prefix("Atmosphere ") else {
+        return false;
+    };
+    let (atm, hyd) = match rest.split_once(", hydrographics ") {
+        Some((a, h)) => (a, Some(h)),
+        None => (rest, None),
+    };
+    codes_match(atm, atmosphere) && hyd.is_none_or(|h| codes_match(h, hydro))
+}
+
+/// "4 or 5", "4 to 9", "9 or A", "0", "A (exotic) or F (unusual)": does the
+/// list of ehex codes or range cover `value`?
+fn codes_match(spec: &str, value: i32) -> bool {
+    // Drop parenthesised notes.
+    let mut clean = String::new();
+    let mut depth = 0;
+    for c in spec.chars() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            _ if depth == 0 => clean.push(c),
+            _ => {}
+        }
+    }
+    let code = |t: &str| {
+        t.trim()
+            .chars()
+            .next()
+            .and_then(crate::util::ehex_to_value)
+            .map(|v| v as i32)
+    };
+    clean.split(" or ").any(|part| match part.split_once(" to ") {
+        Some((a, b)) => code(a).zip(code(b)).is_some_and(|(a, b)| (a..=b).contains(&value)),
+        None => code(part) == Some(value),
+    })
+}
+
+/// Table 10's airless list: "2 0.10, 3 0.16, …, 12 10. If hydrographics …".
+fn airless_position(list: &str, roll: i32) -> f32 {
+    let list = list.split('.').collect::<Vec<_>>();
+    // The list's own decimals are split by '.', so rejoin up to the sentence
+    // that starts with "If".
+    let joined = list
+        .iter()
+        .take_while(|s| !s.trim_start().starts_with("If"))
+        .copied()
+        .collect::<Vec<_>>()
+        .join(".");
     let roll = roll.clamp(2, 12);
-    list.split(',')
+    joined
+        .split(',')
         .filter_map(|pair| pair.trim().split_once(' '))
         .find(|(r, _)| r.parse() == Ok(roll))
-        .map(|(_, p)| parse_f32(p))
+        .map(|(_, p)| parse_f32(p.trim()))
         .unwrap_or_else(|| panic!("Table 10's airless row has no {roll}"))
 }
 
-/// Number of orbits (Section 4.2): 2D − 2, minimum 1, and at least as many
+/// Number of orbits (Section 5.2): 2D − 2, minimum 1, and at least as many
 /// as the bodies already known to be there.
 pub fn number_of_orbits(known_bodies: usize, roller: &mut impl Roller) -> usize {
     ((roller.d2() - 2).max(1) as usize).max(known_bodies)
@@ -184,11 +227,11 @@ pub struct OrbitPlan {
     /// The last Table 12 ratio rolled.
     pub last_ratio: Option<f32>,
     /// Orbits a known count forced beyond 100 HD because no gap could be
-    /// split (Section 4.4); each deserves a note on the record.
+    /// split (Section 5.4); each deserves a note on the record.
     pub beyond_100: usize,
 }
 
-/// Split the widest gap between neighbouring positions (Section 4.4, "More
+/// Split the widest gap between neighbouring positions (Section 5.4, "More
 /// orbits for a known count"): the geometric mean of the two, if they are at
 /// least 1.56 apart so both halves keep Table 12's minimum of 1.25. The edges
 /// of a companion's gap count as positions, but a new orbit never goes inside
@@ -234,7 +277,7 @@ pub fn beyond(outermost: f32, gaps: &[Gap], roller: &mut impl Roller, crossed: &
     p
 }
 
-/// Lay out a star's orbits (Sections 4.3 and 4.4).
+/// Lay out a star's orbits (Sections 5.3 and 5.4).
 ///
 /// - `count`: orbits wanted, from [`number_of_orbits`].
 /// - `main_world`: the main world's position, or `None` to build outward from
@@ -244,7 +287,7 @@ pub fn beyond(outermost: f32, gaps: &[Gap], roller: &mut impl Roller, crossed: &
 ///
 /// `known` says the count is a known number of bodies rather than a 2D roll:
 /// if the outward run passes 100 HD short of it, the widest gaps are split
-/// until it is met (Section 4.4).
+/// until it is met (Section 5.4).
 pub fn lay_out(
     count: usize,
     main_world: Option<f32>,
@@ -273,7 +316,7 @@ pub fn lay_out(
     plan
 }
 
-/// Section 4.3's run: inward and outward from the main world by Table 12
+/// Section 5.3's run: inward and outward from the main world by Table 12
 /// ratios, or outward from Table 11's first orbit.
 fn lay_out_run(
     count: usize,
@@ -415,34 +458,62 @@ mod tests {
     }
 
     #[test]
-    fn table_10_constants_are_still_printed() {
-        let printed = tables::table(10)
-            .rows
-            .iter()
-            .map(|r| r[1].as_str())
-            .collect::<Vec<_>>()
-            .join(" | ");
-        for band in [
-            "0.85 to 1.00", "0.90 to 1.15", "1.10 to 1.40", "0.60 to 0.85", "1.25 to 1.60",
-            "0.75 to 0.95", "1.00 to 1.30", "0.30 to 0.90", "2.5 to 3.7", "1.60 to 2.10",
-            "0.80 to 1.00",
-        ] {
-            assert!(printed.contains(band), "Table 10 no longer prints {band}");
+    fn table_10_rows_are_read() {
+        // Every atmosphere and hydrographics a main world can have finds a row.
+        for atm in 0..=15 {
+            for hyd in 0..=10 {
+                assert!(
+                    tables::table(10).rows.iter().any(|r| row_matches(&r[0], atm, hyd)),
+                    "no Table 10 row for atmosphere {atm}, hydrographics {hyd}"
+                );
+            }
+        }
+        assert!(row_matches("Atmosphere 4 or 5, hydrographics 9 or A", 5, 10));
+        assert!(!row_matches("Atmosphere 4 or 5, hydrographics 9 or A", 5, 8));
+        assert!(row_matches("Atmosphere A (exotic) or F (unusual)", 15, 3));
+        assert!(!row_matches("Atmosphere A (exotic) or F (unusual)", 11, 3));
+        assert!(row_matches("Atmosphere 4 to 9, hydrographics 0", 7, 0));
+    }
+
+    /// Rulebook 8.5 via Table 10: every habitable main world, at every 1D
+    /// result, comes out Temperate.
+    #[test]
+    fn habitable_main_worlds_placed_by_table_10_are_temperate() {
+        use crate::callisto::dice::Scripted;
+        use crate::callisto::temperature::{TempBand, temperature};
+        for atm in 4..=9 {
+            for hyd in 1..=10 {
+                for d in 1..=6 {
+                    let p = main_world_position(atm, hyd, &mut Scripted::new(&[(D1, d)]));
+                    let t = temperature(p, atm, hyd, false);
+                    assert_eq!(
+                        t.band,
+                        TempBand::Temperate,
+                        "atmosphere {atm}, hydrographics {hyd}, 1D = {d}: {p} HD, {:.1} °C",
+                        t.celsius
+                    );
+                }
+            }
         }
     }
 
     #[test]
     fn the_band_spreads_over_the_die() {
-        // Example 12.1: atmosphere 6, hydrographics 7, 1D = 3 → 1.0.
-        assert_eq!(main_world_position(6, 7, &mut Scripted::new(&[(D1, 3)])), 1.0);
-        // Noricum: atmosphere 8, 1D = 6 → 1.4.
+        // Example 13.1: atmosphere 6, hydrographics 7, band 0.91 to 1.11,
+        // 1D = 4 → 1.03 → 1.0.
+        assert_eq!(main_world_position(6, 7, &mut Scripted::new(&[(D1, 4)])), 1.0);
+        // Noricum: atmosphere 8, band 1.10 to 1.38, 1D = 6 → 1.38 → 1.4.
         assert_eq!(main_world_position(8, 6, &mut Scripted::new(&[(D1, 6)])), 1.4);
         assert_eq!(main_world_position(8, 6, &mut Scripted::new(&[(D1, 1)])), 1.1);
-        // Airless: 2D straight to a position.
+        // Airless: 2D straight to a position; with water, 1D + 6.
         assert_eq!(main_world_position(0, 0, &mut Scripted::new(&[(D2, 7)])), 1.0);
+        assert_eq!(main_world_position(1, 3, &mut Scripted::new(&[(D1, 1)])), 1.0);
+        assert_eq!(main_world_position(1, 3, &mut Scripted::new(&[(D1, 6)])), 10.0);
+        // A cold desert: sub-roll 5, then 1D = 6 → 1.60 → 1.6.
+        assert_eq!(main_world_position(6, 0, &mut Scripted::new(&[(D1, 5), (D1, 6)])), 1.6);
     }
 
-    /// Example 12.1's orbits: four orbits around a main world at 1.0.
+    /// Example 13.1's orbits: four orbits around a main world at 1.0.
     #[test]
     fn example_12_1_orbits() {
         let mut r = Scripted::new(&[(D2, 6), (D1, 5), (D2, 6), (D2, 3), (D2, 5)]);
@@ -453,7 +524,7 @@ mod tests {
         assert_eq!(r.remaining(), 0);
     }
 
-    /// Example 12.2's orbits: no main world around an M4 V, whose innermost
+    /// Example 13.2's orbits: no main world around an M4 V, whose innermost
     /// orbit is 0.14.
     #[test]
     fn example_12_2_orbits() {
@@ -465,7 +536,7 @@ mod tests {
         assert_eq!(r.remaining(), 0);
     }
 
-    /// Noricum's orbits (rulebook 12.3): fourteen known bodies, the M6
+    /// Noricum's orbits (rulebook 13.3): fourteen known bodies, the M6
     /// companion's gap from 2 to 18 HD, and the outward run stopping at 100
     /// nine orbits short of fourteen, so the five widest gaps are split.
     #[test]

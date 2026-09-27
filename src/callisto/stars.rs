@@ -1,4 +1,4 @@
-//! Stars: rulebook Sections 3.1 to 3.3 and 3.5, Tables 2, 3, 4, 7, 8 and 9.
+//! Stars: rulebook Sections 4.1 to 4.3 and 4.5, Tables 2, 3, 4, 7, 8 and 9.
 //!
 //! Rolling the stars a system doesn't list, and placing its companions.
 
@@ -21,7 +21,7 @@ impl CStar {
     }
 
     /// Can a main world orbit it? Not a white dwarf, a giant or a brown dwarf
-    /// (Section 3.5, "Which star hosts the main world").
+    /// (Section 4.5, "Which star hosts the main world").
     pub fn can_host_main_world(&self) -> bool {
         matches!(self.star.size, StarSize::V | StarSize::VI | StarSize::IV)
     }
@@ -198,40 +198,50 @@ pub fn roll_separation(primary: StarType, roller: &mut impl Roller) -> Separatio
     separation_rows()[index]
 }
 
-/// How a companion was moved to keep a habitable main world's orbit stable.
+/// Which way a companion was moved to clear the main world's orbit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Move {
     Inward,
     Outward,
 }
 
-/// Section 3.5's habitable-zone check. If position 1.0 falls in the
-/// companion's gap, roll 1D: 1 to 3 move it inward a row at a time until 1.0
-/// is beyond "orbit both"; 4 to 6 outward until 1.0 is inside "primary
-/// alone".
-pub fn keep_habitable_zone_clear(
+/// Section 5.1's "A companion in the way": if the main world's position lies
+/// in the companion's gap, roll 1D: 1 to 3 move the companion inward a row of
+/// Table 8 at a time until the position is beyond "orbit both"; 4 to 6
+/// outward until it is inside "primary alone". If the table runs out, go the
+/// other way.
+pub fn clear_main_world(
     row: SeparationRow,
+    position: f32,
     roller: &mut impl Roller,
 ) -> (SeparationRow, Option<Move>) {
-    if !row.gap().contains(1.0) {
+    if !row.gap().contains(position) {
         return (row, None);
     }
     let rows = separation_rows();
-    if roller.d1() <= 3 {
-        let moved = rows[..row.index]
+    let inward = || {
+        rows[..row.index]
             .iter()
             .rev()
-            .find(|r| r.both_hd < 1.0)
+            .find(|r| r.both_hd < position)
             .copied()
-            .unwrap_or(rows[0]);
-        (moved, Some(Move::Inward))
-    } else {
-        let moved = rows[row.index..]
+            .map(|r| (r, Move::Inward))
+    };
+    let outward = || {
+        rows[row.index..]
             .iter()
-            .find(|r| r.alone_hd > 1.0)
+            .find(|r| r.alone_hd >= position)
             .copied()
-            .unwrap_or(rows[rows.len() - 1]);
-        (moved, Some(Move::Outward))
+            .map(|r| (r, Move::Outward))
+    };
+    let moved = if roller.d1() <= 3 {
+        inward().or_else(outward)
+    } else {
+        outward().or_else(inward)
+    };
+    match moved {
+        Some((r, m)) => (r, Some(m)),
+        None => (row, None),
     }
 }
 
@@ -268,17 +278,21 @@ mod tests {
     }
 
     #[test]
-    fn a_gap_over_the_habitable_zone_moves_the_companion() {
+    fn a_companion_in_the_way_moves() {
         let rows = separation_rows();
-        // Row "5" (2 HD): the gap 0.67 to 6 covers 1.0.
-        let (moved, how) = keep_habitable_zone_clear(rows[3], &mut Scripted::new(&[(D1, 2)]));
+        // Row "5" (2 HD): the gap 0.67 to 6 covers a main world at 1.0.
+        let (moved, how) = clear_main_world(rows[3], 1.0, &mut Scripted::new(&[(D1, 2)]));
         assert_eq!(how, Some(Move::Inward));
         assert_eq!(moved.separation_hd, 0.2); // both beyond 0.6
-        let (moved, how) = keep_habitable_zone_clear(rows[3], &mut Scripted::new(&[(D1, 5)]));
+        let (moved, how) = clear_main_world(rows[3], 1.0, &mut Scripted::new(&[(D1, 5)]));
         assert_eq!(how, Some(Move::Outward));
         assert_eq!(moved.separation_hd, 6.0); // alone out to 2
-        // Row "6" (6 HD) is already clear.
-        assert_eq!(keep_habitable_zone_clear(rows[4], &mut Scripted::new(&[])).1, None);
+        // Row "6" (6 HD) is already clear of 1.0.
+        assert_eq!(clear_main_world(rows[4], 1.0, &mut Scripted::new(&[])).1, None);
+        // Nothing lies inside 0.015, so inward runs out and it goes outward.
+        let (moved, how) = clear_main_world(rows[0], 0.1, &mut Scripted::new(&[(D1, 1)]));
+        assert_eq!(how, Some(Move::Outward));
+        assert!(moved.alone_hd >= 0.1);
     }
 
     #[test]

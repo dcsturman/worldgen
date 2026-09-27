@@ -80,6 +80,9 @@ pub struct BodyMeta {
     /// consumer that wants to treat, say, a sub-Neptune differently from a
     /// world it can land on. `None` on Book 6 bodies.
     pub class: Option<&'static str>,
+    /// More `data-*` attributes, name without the prefix: a Callisto world's
+    /// temperature, band and fit.
+    pub extra: Vec<(&'static str, String)>,
 }
 
 impl BodyMeta {
@@ -92,7 +95,29 @@ impl BodyMeta {
             distance_mkm: None,
             spectral: None,
             class: None,
+            extra: Vec::new(),
         }
+    }
+
+    /// A Callisto world's physics as data attributes.
+    fn physics(mut self, w: &World) -> Self {
+        let Some(p) = w.callisto.as_deref() else {
+            return self;
+        };
+        if let Some(t) = p.temperature {
+            self.extra.push(("temperature-c", format!("{:.0}", t.celsius)));
+            self.extra.push(("temperature-band", t.band.name().to_string()));
+        }
+        if let Some(c) = p.composition {
+            self.extra.push(("composition", c.name().to_string()));
+        }
+        if let Some(g) = p.gravity {
+            self.extra.push(("gravity", format!("{g:.2}")));
+        }
+        if p.fit.is_strained() {
+            self.extra.push(("fit", "strained".to_string()));
+        }
+        self
     }
 
     fn class(mut self, class: Option<&'static str>) -> Self {
@@ -573,7 +598,8 @@ fn draw_bodies<R: Renderer + ?Sized>(r: &mut R, rings: &Rings<'_>) {
                     &BodyMeta::new(kind, w.name.clone())
                         .orbit(orbit, mkm)
                         .uwp(w.to_uwp())
-                        .class(world_class(w)),
+                        .class(world_class(w))
+                        .physics(w),
                 );
                 // For a belt `draw_world` only emits the label and returns;
                 // the scatter/band is then drawn over it (order preserved
@@ -1178,8 +1204,10 @@ fn dist_col_right() -> f32 {
 /// lands in this band is drawn across the ring (and across whatever body sits
 /// there). Derived from the same constants the ring is drawn with, so moving
 /// the star or resizing the diagram moves the band with it.
-fn ring_band_at_legend() -> (f32, f32) {
-    let dx = ((LEGEND_X - STAR_CX) / MAX_ORBIT_RADIUS).clamp(-1.0, 1.0);
+/// The band for a legend whose left edge is `x`: [`LEGEND_X`] on a Book 6
+/// map, further left on a Callisto one to make room for its °C column.
+fn ring_band_at(x: f32) -> (f32, f32) {
+    let dx = ((x - STAR_CX) / MAX_ORBIT_RADIUS).clamp(-1.0, 1.0);
     let half = MAX_ORBIT_RADIUS * TILT_RATIO * (1.0 - dx * dx).sqrt();
     (STAR_CY - half, STAR_CY + half)
 }
@@ -1204,6 +1232,8 @@ struct LegendRow {
     /// it.
     travel_mkm: Option<f32>,
     jump_limit: bool,
+    /// Mean surface temperature, °C, for a Callisto body with a surface.
+    temp: Option<String>,
 }
 
 /// Where the times are measured to: the main world's name, and its distance
@@ -1329,6 +1359,7 @@ fn legend_rows(rings: &Rings<'_>) -> Vec<LegendRow> {
         radius_mkm: Some(0.0),
         travel_mkm: origin.as_ref().map(|o| o.radius_mkm),
         jump_limit: false,
+        temp: None,
     }];
     let jump_travel = match &origin {
         Some(o) if o.radius_mkm < jump_mkm => Some(jump_mkm - o.radius_mkm),
@@ -1343,6 +1374,7 @@ fn legend_rows(rings: &Rings<'_>) -> Vec<LegendRow> {
         radius_mkm: Some(jump_mkm),
         travel_mkm: jump_travel,
         jump_limit: true,
+        temp: None,
     });
 
     for (orbit, slot) in system.orbit_slots.iter().enumerate() {
@@ -1364,6 +1396,7 @@ fn legend_rows(rings: &Rings<'_>) -> Vec<LegendRow> {
                     radius_mkm: Some(dist),
                     travel_mkm: travel_to(dist),
                     jump_limit: false,
+                    temp: None,
                 });
             }
             continue;
@@ -1399,6 +1432,7 @@ fn legend_rows(rings: &Rings<'_>) -> Vec<LegendRow> {
                         radius_mkm: Some(dist),
                         travel_mkm: travel_to(dist),
                         jump_limit: false,
+                        temp: None,
                     });
                     continue;
                 }
@@ -1423,6 +1457,13 @@ fn legend_rows(rings: &Rings<'_>) -> Vec<LegendRow> {
         rows.push(LegendRow {
             name: name.to_string(),
             kind: Some(kind),
+            temp: match content {
+                OrbitContent::World(w) => w.callisto.as_deref().and_then(|p| {
+                    let t = p.temperature?;
+                    (p.class != BodyClass::SubNeptune).then(|| format!("{:.0}", t.celsius))
+                }),
+                _ => None,
+            },
             color,
             dist: format_mkm(dist),
             radius_mkm: Some(dist),
@@ -1466,6 +1507,7 @@ fn legend_rows(rings: &Rings<'_>) -> Vec<LegendRow> {
             radius_mkm: sep.map(|s| s.mkm),
             travel_mkm: sep.and_then(|s| travel_to(s.mkm)),
             jump_limit: false,
+            temp: None,
         });
     }
     // A companion's own companion — Callisto's close pairs (Table 9) — is
@@ -1489,6 +1531,7 @@ fn legend_rows(rings: &Rings<'_>) -> Vec<LegendRow> {
                     radius_mkm: None,
                     travel_mkm: None,
                     jump_limit: false,
+                    temp: None,
                 });
             }
         }
@@ -1517,8 +1560,20 @@ fn fit_row_label(name: &str, kind: Option<&str>, max_w: f32) -> String {
         .unwrap_or(full)
 }
 
-fn draw_legend_header<R: Renderer + ?Sized>(r: &mut R, y: f32) {
-    r.fill_text(LEGEND_X, y, LEGEND_FONT, "Body", LABEL_DIM);
+/// Width of a Callisto legend's °C column, taken from the left of the table
+/// so the names keep the room they have on a Book 6 map.
+const TEMP_COL_W: f32 = 40.0;
+
+/// Right edge of the °C column: where a Book 6 legend's names end.
+fn temp_col_right() -> f32 {
+    dist_col_right() - DIST_COL_W
+}
+
+fn draw_legend_header<R: Renderer + ?Sized>(r: &mut R, y: f32, x: f32, temp: bool) {
+    r.fill_text(x, y, LEGEND_FONT, "Body", LABEL_DIM);
+    if temp {
+        draw_right(r, temp_col_right(), y, "\u{b0}C", LABEL_DIM);
+    }
     draw_right(r, dist_col_right(), y, "Mkm", LABEL_DIM);
     for (i, g) in THRUSTS_G.iter().enumerate() {
         draw_right(r, time_col_right(i), y, &format!("{g}G"), LABEL_DIM);
@@ -1532,7 +1587,11 @@ fn draw_right<R: Renderer + ?Sized>(r: &mut R, right: f32, y: f32, text: &str, r
 
 fn draw_legend<R: Renderer + ?Sized>(r: &mut R, rings: &Rings<'_>) {
     let system = rings.system;
-    r.fill_text(LEGEND_X, LEGEND_TITLE_Y, 14.0, "System Objects", LABEL);
+    // A Callisto map adds a °C column, and the table grows to the left to
+    // make room for it.
+    let temp = system.callisto.is_some();
+    let x = if temp { LEGEND_X - TEMP_COL_W } else { LEGEND_X };
+    r.fill_text(x, LEGEND_TITLE_Y, 14.0, "System Objects", LABEL);
     // Caption over the thrust columns, so "1G 2G 6G" reads as travel times
     // rather than as a property of each body — and says "typical", because
     // the separations are averaged over orbital positions, not measured.
@@ -1546,7 +1605,7 @@ fn draw_legend<R: Renderer + ?Sized>(r: &mut R, rings: &Rings<'_>) {
         LABEL_DIM,
     );
     let mut y = LEGEND_TITLE_Y + 22.0;
-    draw_legend_header(r, y);
+    draw_legend_header(r, y, x, temp);
     y += LEGEND_LINE_H;
 
     // The table flows in up to two blocks: above the outermost ring where it
@@ -1554,7 +1613,7 @@ fn draw_legend<R: Renderer + ?Sized>(r: &mut R, rings: &Rings<'_>) {
     // resuming below it with the header repeated. Before travel times the
     // single block simply ran down through the ring, drawing rows across
     // outer-orbit bodies and their labels once a system passed ~13 rows.
-    let (band_top, band_bottom) = ring_band_at_legend();
+    let (band_top, band_bottom) = ring_band_at(x);
     let top_block_max_y = band_top - RING_CLEAR_ABOVE;
     let bottom_block_y = band_bottom + RING_CLEAR_BELOW;
     let max_y = CANVAS_H - 16.0;
@@ -1565,7 +1624,7 @@ fn draw_legend<R: Renderer + ?Sized>(r: &mut R, rings: &Rings<'_>) {
         if in_top_block && y > top_block_max_y {
             in_top_block = false;
             y = bottom_block_y;
-            draw_legend_header(r, y);
+            draw_legend_header(r, y, x, temp);
             y += LEGEND_LINE_H;
         }
         if y > max_y {
@@ -1574,10 +1633,13 @@ fn draw_legend<R: Renderer + ?Sized>(r: &mut R, rings: &Rings<'_>) {
         if row.jump_limit {
             // A miniature of the map's jump-shadow ring, so the row reads as
             // "that grey ellipse" rather than as another body.
-            r.stroke_ellipse(LEGEND_X - 9.0, y - 4.0, 5.0, 2.5, JUMP_SHADOW, 1.0);
+            r.stroke_ellipse(x - 9.0, y - 4.0, 5.0, 2.5, JUMP_SHADOW, 1.0);
         }
         let label = fit_row_label(&row.name, row.kind.as_deref(), name_max_w);
-        r.fill_text(LEGEND_X, y, LEGEND_FONT, &label, row.color);
+        r.fill_text(x, y, LEGEND_FONT, &label, row.color);
+        if let Some(t) = &row.temp {
+            draw_right(r, temp_col_right(), y, t, LABEL_DIM);
+        }
         draw_right(r, dist_col_right(), y, &row.dist, LABEL_DIM);
         for (i, g) in THRUSTS_G.iter().enumerate() {
             let t = row.travel_mkm.map_or_else(
@@ -1743,7 +1805,7 @@ mod tests {
         assert!(time_col_right(THRUSTS_G.len() - 1) <= CANVAS_W);
         // The top block has room for a dozen rows above the ring band, so
         // the common case never splits; the bottom block starts on-canvas.
-        let (top, bottom) = ring_band_at_legend();
+        let (top, bottom) = ring_band_at(LEGEND_X);
         assert!(top - RING_CLEAR_ABOVE > LEGEND_TITLE_Y + 22.0 + 12.0 * LEGEND_LINE_H);
         assert!(bottom + RING_CLEAR_BELOW < CANVAS_H - 16.0);
     }
