@@ -40,6 +40,9 @@ impl Roller for Rng {
 /// what a test wants: the generator made a roll the example doesn't list.
 pub struct Scripted {
     rolls: VecDeque<(Kind, i32)>,
+    /// Once the script runs out, carry on with the worldgen RNG instead of
+    /// panicking: for a worked example that lists only some of the rolls.
+    then_rng: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,6 +56,17 @@ impl Scripted {
     pub fn new(rolls: &[(Kind, i32)]) -> Self {
         Scripted {
             rolls: rolls.iter().copied().collect(),
+            then_rng: false,
+        }
+    }
+
+    /// A script that hands over to the worldgen RNG when it runs out: the
+    /// listed rolls are checked, the rest (a worked example doesn't list
+    /// every moon) come from the seeded stream.
+    pub fn then_rng(rolls: &[(Kind, i32)]) -> Self {
+        Scripted {
+            then_rng: true,
+            ..Scripted::new(rolls)
         }
     }
 
@@ -63,6 +77,13 @@ impl Scripted {
     }
 
     fn next(&mut self, want: Kind) -> i32 {
+        if self.then_rng && self.rolls.is_empty() {
+            return match want {
+                Kind::D1 => roll_1d6(),
+                Kind::D2 => roll_2d6(),
+                Kind::D3 => (roll_1d6() + 1) / 2,
+            };
+        }
         let (kind, n) = self
             .rolls
             .pop_front()

@@ -89,6 +89,33 @@ pub struct Physics {
     /// rules left odd: on the record, but not strained.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub oddities: Vec<String>,
+    /// For a moon or ring: its orbit around its planet (Section 9).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub moon: Option<MoonInfo>,
+}
+
+/// A moon's orbit around its planet (Section 9).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MoonInfo {
+    /// Distance in the planet's radii; a ring's outer edge.
+    pub radii: f32,
+    /// `None` for a ring.
+    pub band: Option<crate::callisto::moons::MoonBand>,
+    /// A ring's inner and outer edge, radii.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ring: Option<(f32, f32)>,
+    /// Orbital period, hours; a moon is locked to its planet, so this is
+    /// also its day.
+    pub period_hours: f32,
+    /// A large moon: it slows its planet's day and steadies its tilt.
+    #[serde(default)]
+    pub large: bool,
+    /// Warmed from inside by its giant's tides (Section 9.5).
+    #[serde(default)]
+    pub tidally_heated: bool,
+    /// Active volcanoes, a young surface, a warm ocean under any ice.
+    #[serde(default)]
+    pub volcanic: bool,
 }
 
 /// How a world's published facts and the physics agree.

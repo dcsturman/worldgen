@@ -7,7 +7,10 @@
 //! yet; giants, belts and other worlds arrive with the later stages, so the
 //! PBG and world counts only size the orbit list for now.
 
-use crate::callisto::body::{BodyClass, Fit, GiantKind, IceAvailability, Physics};
+use crate::callisto::body::{BodyClass, Fit, GiantKind, IceAvailability, MoonInfo, Physics};
+use crate::callisto::moons::{MoonBand, Parent, period_hours};
+use crate::callisto::temperature::TempBand;
+use crate::systems::has_satellites::HasSatellites;
 use crate::callisto::fit::assess;
 use crate::callisto::temperature::temperature;
 use crate::callisto::dice::{Rng, Roller};
@@ -17,7 +20,7 @@ use crate::callisto::fill::{
 use crate::callisto::populate::{
     Body, Fill, Pin, Slot, close_out, fill_open, fuel_line, is_ice_source, place_giants,
     place_ice_belt, place_ice_on_world, place_pins, place_published_belts, place_published_worlds,
-    roll_codes,
+    roll_all_moons, roll_codes,
 };
 use crate::callisto::layout::{Layout, OrbitInfo, Separation, book6_orbit_mkm};
 use crate::callisto::orbits::{
@@ -353,7 +356,39 @@ pub fn generate(
         temperature: None,
         fit: Fit::Tuned,
         oddities: Vec::new(),
+        moon: None,
     }));
+
+    // Step 15: moons and rings (Section 9), around every star's bodies.
+    // Moons a source names for a body arrive from the post pass; a published
+    // total counts them, so they come off the roll.
+    let named_moons = |name: &str| {
+        constraints
+            .post
+            .iter()
+            .filter(|p| matches!(&p.target, Target::MoonOf(n) if n.eq_ignore_ascii_case(name)))
+            .count()
+    };
+    let mw_moons = constraints.main_world_num_satellites.map(|n| n.max(0) as usize);
+    roll_all_moons(
+        &mut primary_slots,
+        &pdata,
+        host.is_none().then_some(main_world.size),
+        mw_moons,
+        &named_moons,
+        roller,
+    );
+    for (i, (c, slots)) in companions.iter().zip(companion_slots.iter_mut()).enumerate() {
+        let hosted = host == Some(i);
+        roll_all_moons(
+            slots,
+            &c.star.data(),
+            hosted.then_some(main_world.size),
+            if hosted { mw_moons } else { None },
+            &named_moons,
+            roller,
+        );
+    }
 
     // What the main world's placement had to do or couldn't (Section 14.2),
     // settled into its fit once its temperature is known.
@@ -645,7 +680,7 @@ fn slots_from(plan: &OrbitPlan) -> Vec<Slot> {
         .map(|(i, &position)| Slot {
             position,
             fill: if plan.main_world == Some(i) { Fill::MainWorld } else { Fill::Open },
-            pinned_orbit: None,
+            ..Default::default()
         })
         .collect()
 }
@@ -669,10 +704,12 @@ fn populate_host(
     let mut pins = Vec::new();
     let (mut giants, mut belts_total, mut others_total) = (Vec::new(), 0usize, 0usize);
     let (mut pinned_belts, mut pinned_others) = (0usize, 0usize);
-    let mut unpinned: Vec<(BodyClass, Option<String>, Option<PartialUwp>)> = Vec::new();
+    type Unpinned = (BodyClass, Option<String>, Option<PartialUwp>, Option<i32>);
+    let mut unpinned: Vec<Unpinned> = Vec::new();
+    let mut giant_moons: Vec<(Option<String>, Option<usize>)> = Vec::new();
     for b in &constraints.bodies {
         match b {
-            Constraint::GasGiant { name, orbit, size, .. } => {
+            Constraint::GasGiant { name, orbit, size, num_satellites } => {
                 let kind = match size {
                     Some(GasGiantSize::Large) => GiantKind::JupiterClass,
                     // A source's "small" giant is an ice giant or a
@@ -687,11 +724,15 @@ fn populate_host(
                         book6_orbit: *n,
                         position_hd: book6_orbit_mkm(*n) / star.hd_mkm,
                         fill: Fill::Giant { kind, name: name.clone() },
+                        moon_total: num_satellites.map(|m| m.max(0) as usize),
                     }),
-                    None => giants.push((kind, name.clone())),
+                    None => {
+                        giants.push((kind, name.clone()));
+                        giant_moons.push((name.clone(), num_satellites.map(|m| m.max(0) as usize)));
+                    }
                 }
             }
-            Constraint::Belt { name, orbit, uwp, .. } => {
+            Constraint::Belt { name, orbit, uwp, num_satellites } => {
                 belts_total += 1;
                 match orbit {
                     Some(n) => {
@@ -703,12 +744,13 @@ fn populate_host(
                             book6_orbit: *n,
                             position_hd: book6_orbit_mkm(*n) / star.hd_mkm,
                             fill: Fill::Body(body),
+                            moon_total: num_satellites.map(|m| m.max(0) as usize),
                         });
                     }
-                    None => unpinned.push((BodyClass::Belt, name.clone(), uwp.clone())),
+                    None => unpinned.push((BodyClass::Belt, name.clone(), uwp.clone(), *num_satellites)),
                 }
             }
-            Constraint::Planet { is_mainworld: false, name, orbit, uwp, .. } => {
+            Constraint::Planet { is_mainworld: false, name, orbit, uwp, num_satellites } => {
                 others_total += 1;
                 let class = match uwp.as_ref().and_then(|u| u.size) {
                     Some(s) if s > 10 => BodyClass::SubNeptune,
@@ -724,15 +766,17 @@ fn populate_host(
                             book6_orbit: *n,
                             position_hd: book6_orbit_mkm(*n) / star.hd_mkm,
                             fill: Fill::Body(body),
+                            moon_total: num_satellites.map(|m| m.max(0) as usize),
                         });
                     }
-                    None => unpinned.push((class, name.clone(), uwp.clone())),
+                    None => unpinned.push((class, name.clone(), uwp.clone(), *num_satellites)),
                 }
             }
             Constraint::Empty { orbit } => pins.push(Pin {
                 book6_orbit: *orbit,
                 position_hd: book6_orbit_mkm(*orbit) / star.hd_mkm,
                 fill: Fill::Empty,
+                moon_total: None,
             }),
             _ => {}
         }
@@ -747,6 +791,17 @@ fn populate_host(
     let any_pinned_giant = slots.iter().any(|s| matches!(s.fill, Fill::Giant { .. }));
     let first = (!giants.is_empty() && !any_pinned_giant).then(|| first_giant(roller));
     place_giants(slots, giants, first, !free, gaps, notes, roller);
+    // Published moon counts for giants placed above: by name, else in order.
+    for (name, moons) in giant_moons.into_iter().filter(|(_, m)| m.is_some()) {
+        let target = slots.iter_mut().find(|s| {
+            s.moon_total.is_none()
+                && s.pinned_orbit.is_none()
+                && matches!(&s.fill, Fill::Giant { name: n, .. } if name.is_none() || *n == name)
+        });
+        if let Some(s) = target {
+            s.moon_total = moons;
+        }
+    }
 
     // Step 10: ice. Under a published belt count the charted ice belt is one
     // of the published belts, so it needs one to spare.
@@ -787,17 +842,42 @@ fn populate_host(
     }
     // Named or partly-specified bodies without an orbit take the first
     // generated body of their kind.
-    for (class, name, uwp) in unpinned {
-        if name.is_none() && uwp.is_none() {
+    for (class, name, uwp, moons) in unpinned {
+        if name.is_none() && uwp.is_none() && moons.is_none() {
             continue;
         }
-        let target = slots.iter_mut().find_map(|s| match &mut s.fill {
-            Fill::Body(b) if b.rolled && b.name.is_none() && b.uwp.is_none() && (b.class == class || (class == BodyClass::World && b.class != BodyClass::Belt)) => Some(b),
-            _ => None,
+        let target = slots.iter_mut().find(|s| match &s.fill {
+            Fill::Body(b) => {
+                b.rolled
+                    && b.name.is_none()
+                    && b.uwp.is_none()
+                    && s.moon_total.is_none()
+                    && (b.class == class || (class == BodyClass::World && b.class != BodyClass::Belt))
+            }
+            _ => false,
         });
-        if let Some(b) = target {
-            b.name = name;
-            b.uwp = uwp;
+        if let Some(s) = target {
+            s.moon_total = moons.map(|m| m.max(0) as usize);
+            if let Fill::Body(b) = &mut s.fill {
+                b.name = name;
+                b.uwp = uwp;
+            }
+        }
+    }
+
+    // Moons a source places by their parent's Book 6 orbit go with that
+    // parent, wherever it landed.
+    for b in &constraints.bodies {
+        let Constraint::Moon { name, parent_orbit, uwp } = b else { continue };
+        let parent = slots.iter_mut().find(|s| {
+            s.pinned_orbit == Some(*parent_orbit)
+                || (matches!(s.fill, Fill::MainWorld) && constraints.main_world_orbit == Some(*parent_orbit))
+        });
+        match parent {
+            Some(s) => s.published_moons.push((name.clone(), uwp.clone())),
+            None => notes.push(format!(
+                "A moon a source places around Book 6 orbit {parent_orbit} found no body there"
+            )),
         }
     }
 
@@ -857,6 +937,9 @@ fn build_system(
                     p.fit = assess(strains, adjustments);
                     p.oddities = oddities;
                 }
+                let gravity = w.callisto.as_deref().and_then(|p| p.gravity).unwrap_or(1.0);
+                let parent = Parent::World { size: w.size, gravity };
+                w.satellites.sats = moon_worlds(slot, parent, i, ice);
                 OrbitContent::World(w)
             }),
             Fill::Giant { kind, name } => {
@@ -867,6 +950,9 @@ fn build_system(
                 let mut g = GasGiant::new(size, i);
                 g.radius_km = crate::util::rng_random_range(kind.diameter_km()) / 2;
                 g.callisto = Some(*kind);
+                for m in moon_worlds(slot, Parent::Giant(*kind), i, ice) {
+                    g.push_satellite(m);
+                }
                 match name {
                     Some(n) => g.name = n.clone(),
                     None => g.gen_name(&system.name, i),
@@ -931,7 +1017,13 @@ fn build_system(
                     temperature: Some(temperature(slot.position, c.atmosphere, c.hydro, c.hydro_is_ice)),
                     fit: assess(Vec::new(), adjustments),
                     oddities,
+                    moon: None,
                 }));
+                let parent = match b.class {
+                    BodyClass::SubNeptune => Parent::SubNeptune { size: c.size },
+                    _ => Parent::World { size: c.size, gravity: c.gravity.unwrap_or(1.0) },
+                };
+                w.satellites.sats = moon_worlds(slot, parent, i, ice);
                 Some(OrbitContent::World(w))
             }
         };
@@ -981,6 +1073,86 @@ fn build_system(
         fuel,
     }));
     system
+}
+
+/// The satellite `World`s for a slot's moons and rings, and any moons a
+/// source placed there by orbit: each at its planet's position, with its
+/// temperature (and a giant's tidal heating, Section 9.5).
+fn moon_worlds(slot: &Slot, parent: Parent, parent_slot: usize, ice: IceAvailability) -> Vec<World> {
+    let giant = matches!(parent, Parent::Giant(_));
+    let outer_giant = giant && matches!(slot.zone(), Zone::Cold | Zone::Outer);
+    let mut out: Vec<World> = slot
+        .moons
+        .iter()
+        .map(|m| {
+            let c = m.codes;
+            let (size, atm, hyd) = c.map_or((m.size, 0, 0), |c| (c.size, c.atmosphere, c.hydro));
+            let hydro_is_ice = c.is_some_and(|c| c.hydro_is_ice);
+            let name = if m.is_ring() {
+                "Ring System".to_string()
+            } else {
+                crate::systems::name_tables::gen_moon_name()
+            };
+            let mut w = World::new(name, m.radii.round() as usize, parent_slot, size, atm, hyd, 0, true, false);
+            w.port = PortCode::Y;
+            let mut t = temperature(slot.position, atm, hyd, hydro_is_ice);
+            // A Close moon of a giant is warmed from inside: a Cold or Frozen
+            // reading goes one band warmer, and a big one is volcanic.
+            let close_giant = giant && m.band == Some(MoonBand::Close);
+            let heated = close_giant && t.band <= TempBand::Cold && !m.is_ring();
+            if heated {
+                t.band = if t.band == TempBand::Frozen { TempBand::Cold } else { TempBand::Temperate };
+            }
+            w.callisto = Some(Box::new(Physics {
+                class: BodyClass::World,
+                zone: slot.zone(),
+                position_hd: slot.position,
+                composition: c.and_then(|c| c.composition),
+                gravity: c.and_then(|c| c.gravity),
+                hydro_is_ice,
+                ice_source: outer_giant
+                    || (hydro_is_ice && size >= 1)
+                    || (ice == IceAvailability::Rich && slot.zone() == Zone::Outer),
+                temperature: (!m.is_ring()).then_some(t),
+                fit: Fit::Tuned,
+                oddities: Vec::new(),
+                moon: Some(MoonInfo {
+                    radii: m.radii,
+                    band: m.band,
+                    ring: m.ring,
+                    period_hours: period_hours(m.radii, parent),
+                    large: m.large,
+                    tidally_heated: heated,
+                    volcanic: close_giant && size >= 3,
+                }),
+            }));
+            w
+        })
+        .collect();
+    // Moons a source placed by their parent's orbit, with the UWP it gives.
+    for (name, uwp) in &slot.published_moons {
+        let u = uwp.clone().unwrap_or_default();
+        let mut w = World::new(
+            name.clone().unwrap_or_else(crate::systems::name_tables::gen_moon_name),
+            0,
+            parent_slot,
+            u.size.map_or(-1, i32::from),
+            u.atmosphere.map_or(0, i32::from),
+            u.hydro.map_or(0, i32::from),
+            u.population.map_or(0, i32::from),
+            true,
+            false,
+        );
+        w.set_subordinate_stats(
+            u.port.unwrap_or(PortCode::Y),
+            u.government.map_or(0, i32::from),
+            u.law.map_or(0, i32::from),
+            u.tech.map_or(0, i32::from),
+            Vec::new(),
+        );
+        out.push(w);
+    }
+    out
 }
 
 /// Rewrite override facts aimed at a Book 6 orbit number (`AtOrbit`) to the
@@ -1123,7 +1295,8 @@ mod tests {
     /// the order the generator makes them.
     #[test]
     fn noricum() {
-        let mut r = Scripted::new(&[
+        let _rng = crate::util::RngScope::new(13);
+        let mut r = Scripted::then_rng(&[
             (D2, 11), // M9 separation: 2,000 HD
             (D2, 6), // M6 separation: 6 HD
             (D1, 6), // main world position: 1.4
@@ -1150,6 +1323,9 @@ mod tests {
             (D2, 8), (D1, 3), (D2, 5), (D2, 9), // 2.0
             (D3, 2), (D1, 3), // 100: icy dwarf
             (D1, 3), // main world composition
+            // Then moons (Section 9), body by body, innermost first: the
+            // example gives only the main world's (tested in moons.rs), so
+            // these come from the seeded RNG.
         ]);
         let system = generate(noricum_constraints(), &mut r).unwrap();
         assert_eq!(r.remaining(), 0);
@@ -1375,6 +1551,55 @@ mod tests {
         // stated orbit can make it otherwise, and none is stated here).
         let t = f64::from(temperate) / f64::from(habitable);
         assert_eq!(temperate, habitable, "{:.1}% of habitable main worlds came out Temperate", t * 100.0);
+    }
+
+    /// Section 9 over 1,000 free systems: no moon beyond its planet's
+    /// stability limit (Table 30), and about one moon of a world in six is a
+    /// large one.
+    #[test]
+    fn moons_respect_the_stability_limit() {
+        use crate::callisto::moons::widest_orbit;
+        let (mut world_moons, mut large) = (0u32, 0u32);
+        for seed in 0..1_000 {
+            let mut cs = SystemConstraints::from_main_world("Test", "A867977-C").unwrap();
+            cs.counts = PublishedCounts::None;
+            let s = generate_from_constraints_seeded(seed, cs).unwrap();
+            for sys in std::iter::once(&s).chain(s.secondary.as_deref()).chain(s.tertiary.as_deref()) {
+                let limit = sys.callisto.as_ref().unwrap().star.moon_limit;
+                for slot in sys.orbit_slots.iter().flatten() {
+                    let (moons, giant, pos): (&[World], bool, f32) = match slot {
+                        OrbitContent::World(w) => (
+                            &w.satellites.sats,
+                            false,
+                            w.callisto.as_deref().map_or(0.0, |p| p.position_hd),
+                        ),
+                        OrbitContent::GasGiant(g) => {
+                            let pos = g.satellites().first().and_then(|m| m.callisto.as_deref()).map_or(0.0, |p| p.position_hd);
+                            (g.satellites(), true, pos)
+                        }
+                        _ => continue,
+                    };
+                    for m in moons {
+                        let Some(info) = m.callisto.as_deref().and_then(|p| p.moon.as_ref()) else { continue };
+                        if info.ring.is_some() {
+                            continue;
+                        }
+                        match widest_orbit(limit, pos, giant) {
+                            None => panic!("seed {seed}: a moon where Table 30 allows none"),
+                            Some(Some(cap)) => assert!(info.radii <= cap, "seed {seed}: {} > {cap}", info.radii),
+                            Some(None) => {}
+                        }
+                        assert!(info.period_hours > 0.0);
+                        if !giant {
+                            world_moons += 1;
+                            large += u32::from(info.large);
+                        }
+                    }
+                }
+            }
+        }
+        let rate = f64::from(large) / f64::from(world_moons);
+        assert!((0.1..=0.25).contains(&rate), "large moons: {:.1}% of {world_moons}", rate * 100.0);
     }
 
     #[test]

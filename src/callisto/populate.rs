@@ -13,21 +13,30 @@ use crate::callisto::orbits::{
     Gap, MAX_POSITION_HD, SPLIT_RATIO, Zone, beyond, sig2, spacing_ratio, split_widest,
 };
 use crate::callisto::star::{StarData, days_at_thrust_1};
+use crate::callisto::moons::{Moon, Parent, roll_moons};
 use crate::systems::constraint::PartialUwp;
 
 /// One orbit while it is filled.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Slot {
     pub position: f32,
     pub fill: Fill,
     /// The Book 6 orbit number a source pinned here, if any; kept so the
     /// override facts aimed at that orbit can find it afterwards.
     pub pinned_orbit: Option<i32>,
+    /// A published number of moons for the body here, if a source gives one.
+    pub moon_total: Option<usize>,
+    /// Moons a source names and places around this body by its orbit
+    /// (`Constraint::Moon`); they count toward its moons.
+    pub published_moons: Vec<(Option<String>, Option<PartialUwp>)>,
+    /// Its moons and ring, once rolled (Section 9).
+    pub moons: Vec<Moon>,
 }
 
 /// What an orbit holds.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum Fill {
+    #[default]
     Open,
     MainWorld,
     Giant {
@@ -92,6 +101,8 @@ pub struct Pin {
     pub book6_orbit: i32,
     pub position_hd: f32,
     pub fill: Fill,
+    /// A published number of moons for it.
+    pub moon_total: Option<usize>,
 }
 
 /// Put pinned bodies in the orbit nearest their stated distance, or a new
@@ -112,6 +123,7 @@ pub fn place_pins(slots: &mut Vec<Slot>, pins: Vec<Pin>, notes: &mut Vec<String>
             Some((i, d)) if d <= 1.25f32.ln() => {
                 slots[i].fill = pin.fill;
                 slots[i].pinned_orbit = Some(pin.book6_orbit);
+                slots[i].moon_total = pin.moon_total;
             }
             _ => {
                 let position = sig2(pin.position_hd);
@@ -122,6 +134,8 @@ pub fn place_pins(slots: &mut Vec<Slot>, pins: Vec<Pin>, notes: &mut Vec<String>
                         position,
                         fill: pin.fill,
                         pinned_orbit: Some(pin.book6_orbit),
+                        moon_total: pin.moon_total,
+                        ..Default::default()
                     },
                 );
                 notes.push(format!(
@@ -189,6 +203,7 @@ pub fn place_giants(
                         position,
                         fill: Fill::Open,
                         pinned_orbit: None,
+                        ..Default::default()
                     },
                 );
                 notes.push(format!("Added an orbit at {position} HD for a giant planet"));
@@ -419,6 +434,7 @@ fn add_orbit(
             position,
             fill: Fill::Open,
             pinned_orbit: None,
+            ..Default::default()
         },
     );
     at
@@ -438,6 +454,53 @@ pub fn roll_codes(slots: &mut [Slot], small_star: bool, roller: &mut impl Roller
             });
             b.codes = Some(fill::codes(b.class, zone, small_star, known, roller));
         }
+    }
+}
+
+/// Roll every body's moons and rings (Section 9). `main_world_size` is the
+/// main world's, if it is in these slots; `main_world_moons` a published
+/// count for it (named moons already taken off); `named` counts the moons a
+/// source names for each body, by body name, which come on top of the rolled
+/// ones.
+pub fn roll_all_moons(
+    slots: &mut [Slot],
+    star: &StarData,
+    main_world_size: Option<i32>,
+    main_world_moons: Option<usize>,
+    named: &dyn Fn(&str) -> usize,
+    roller: &mut impl Roller,
+) {
+    for s in slots.iter_mut() {
+        let (parent, total, name) = match &s.fill {
+            Fill::MainWorld => match main_world_size {
+                Some(size) if size >= 1 => (
+                    Parent::World { size, gravity: 1.0 },
+                    main_world_moons.map(|n| n + s.published_moons.len()),
+                    None,
+                ),
+                _ => continue,
+            },
+            Fill::Giant { kind, name } => (Parent::Giant(*kind), s.moon_total, name.clone()),
+            Fill::Body(b) => {
+                let size = b.codes.map_or(0, |c| c.size);
+                let parent = match b.class {
+                    BodyClass::Belt => continue,
+                    BodyClass::SubNeptune => Parent::SubNeptune { size },
+                    BodyClass::World | BodyClass::IcyDwarf if size >= 1 => Parent::World {
+                        size,
+                        gravity: b.codes.and_then(|c| c.gravity).unwrap_or(1.0),
+                    },
+                    _ => continue,
+                };
+                (parent, s.moon_total, b.name.clone())
+            }
+            Fill::Open | Fill::Empty => continue,
+        };
+        // A published total counts the named moons, which arrive on their
+        // own; roll only the rest.
+        let named_here = s.published_moons.len() + name.as_deref().map_or(0, named);
+        let count = total.map(|t| t.saturating_sub(named_here));
+        s.moons = roll_moons(parent, s.zone(), s.position, star.moon_limit, count, roller);
     }
 }
 
@@ -512,6 +575,7 @@ mod tests {
                 position,
                 fill: Fill::Open,
                 pinned_orbit: None,
+                ..Default::default()
             })
             .collect()
     }

@@ -996,6 +996,21 @@ fn draw_moons<R: Renderer + ?Sized>(
     if moons.is_empty() {
         return;
     }
+    // A Callisto ring is drawn as a ring around its planet, not as a moon.
+    // (A Book 6 ring has no physics and is drawn as before.)
+    let is_ring = |m: &World| {
+        m.callisto
+            .as_deref()
+            .is_some_and(|p| p.moon.as_ref().is_some_and(|i| i.ring.is_some()))
+    };
+    if moons.iter().any(is_ring) {
+        let rr = parent_r + 2.5;
+        r.stroke_ellipse(parent_cx, parent_cy, rr, rr * 0.45, (BELT_TONE_A.0, BELT_TONE_A.1, BELT_TONE_A.2, 200), 1.4);
+    }
+    let moons: Vec<&World> = moons.iter().filter(|m| !is_ring(m)).collect();
+    if moons.is_empty() {
+        return;
+    }
     // More moons than fit: choose by population rather than taking the
     // first few in orbital order.
     //
@@ -1010,7 +1025,7 @@ fn draw_moons<R: Renderer + ?Sized>(
     // then drawn back in orbital order so inner moons stay inner. Both
     // sorts are stable and key off nothing but the slice, so the output
     // stays a pure function of the system.
-    let mut chosen: Vec<(usize, &World)> = moons.iter().enumerate().collect();
+    let mut chosen: Vec<(usize, &World)> = moons.iter().copied().enumerate().collect();
     if chosen.len() > MAX_MOONS_DRAWN {
         chosen.sort_by_key(|(idx, m)| (std::cmp::Reverse(m.get_population()), *idx));
         chosen.truncate(MAX_MOONS_DRAWN);
