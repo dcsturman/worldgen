@@ -17,6 +17,7 @@ pub mod fill;
 pub mod fit;
 pub mod generate;
 pub mod layout;
+pub mod moons;
 pub mod orbits;
 pub mod populate;
 pub mod star;
