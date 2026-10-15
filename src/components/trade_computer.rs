@@ -916,7 +916,7 @@ fn GoodsToSellView(
         origin_world
             .get()
             .as_ref()
-            .map(|w| format!("{} [{}]", &w.name, &w.trade_classes_string()))
+            .map(|w| format!("{} [{}]", w.name, w.trade_classes_string()))
             .unwrap_or_default()
     });
 

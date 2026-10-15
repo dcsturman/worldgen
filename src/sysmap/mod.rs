@@ -267,6 +267,8 @@ mod tests {
             orbit: None,
             distance_mkm: None,
             spectral: None,
+            class: None,
+            extra: Vec::new(),
         });
         r.fill_text(0.0, 0.0, 12.0, "A & B <test>", (255, 255, 255));
         r.end_group();

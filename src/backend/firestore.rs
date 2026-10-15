@@ -93,7 +93,7 @@ pub async fn initialize_firestore() -> Result<Option<FirestoreDb>, FirestoreErro
 
     debug!(
         "Initializing Firestore client for project: {} database: {}",
-        &project_id, &database_id
+        project_id, database_id
     );
 
     // We use the special name in NULL_DATABASE to allow off-line debugging.  The code will just

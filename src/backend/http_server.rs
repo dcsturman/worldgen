@@ -42,7 +42,8 @@ use tokio::net::TcpStream;
 
 use crate::api::{
     generate_globe_apng, generate_globe_png, generate_globe_texture,
-    generate_planet_png_scaled_decorated, generate_system_png_scaled, generate_system_svg,
+    generate_planet_png_scaled_decorated, Generator, generate_system_png_with,
+    generate_system_svg_with,
     parse_hex_quad,
 };
 use crate::backend::gcs::GcsClient;
@@ -79,11 +80,15 @@ const PLANET_CANONICAL_SCALE: f32 = 2.0;
 /// band, and the plate-bias fix that removed the straight channels along
 /// continental plate boundaries. Old `world/v1/` objects are orphaned rather
 /// than deleted, so this is reversible by putting the prefix back.
-const PLANET_CACHE_PREFIX: &str = "world/v2";
+///
+/// Bumped to `v3` for the switch to Callisto system generation: a world's
+/// map now comes from its system's physics (temperature, tilt, steam, a
+/// lock), and the main-world placement moved, so every map can change.
+const PLANET_CACHE_PREFIX: &str = "world/v3";
 
 /// Extra object-path segment for renders of a *decorated* world (e.g. a
-/// tidal lock), placed after the variant: `world/v2/deco-v2/…`,
-/// `world/v2/globe/deco-v2/…`. Undecorated worlds keep their old paths.
+/// tidal lock), placed after the variant: `world/v3/deco-v2/…`,
+/// `world/v3/globe/deco-v2/…`. Undecorated worlds keep their old paths.
 ///
 /// The decorations are already in the cache key, so this isn't needed to
 /// keep decorated and undecorated renders apart. It exists so that locked
@@ -269,6 +274,18 @@ struct SystemRequest {
     /// Requested pixel scale. Used by the PNG path; the SVG path ignores it
     /// (vector output is resolution-independent).
     scale: f32,
+    /// Book 6 or Callisto: `generator=`, else [`default_generator`].
+    generator: Generator,
+}
+
+/// The generator a request without `generator=` gets: Callisto, unless the
+/// server was started with `WORLDGEN_GENERATOR=book6`, which flips a whole
+/// running instance for side-by-side comparison without touching clients.
+fn default_generator() -> Generator {
+    std::env::var("WORLDGEN_GENERATOR")
+        .ok()
+        .and_then(|v| Generator::parse(&v))
+        .unwrap_or(Generator::Callisto)
 }
 
 /// HTTP error to surface to the client: `(status code, reason, body)`.
@@ -349,6 +366,14 @@ fn parse_system_request(query: &str) -> Result<SystemRequest, HttpError> {
         .get("scale")
         .and_then(|s| s.trim().parse::<f32>().ok())
         .unwrap_or(2.0);
+    // An unknown generator is a 400, never a silent fallback: a typo would
+    // otherwise show one generator's system labelled as the other's.
+    let generator = match params.get("generator") {
+        None => default_generator(),
+        Some(g) => Generator::parse(g).ok_or_else(|| {
+            (400, "Bad Request", format!("generator must be book6 or callisto; got {g:?}"))
+        })?,
+    };
 
     // One shared path, in the library: the override validator calls exactly
     // this, so what it checks is what this endpoint will generate rather
@@ -377,6 +402,7 @@ fn parse_system_request(query: &str) -> Result<SystemRequest, HttpError> {
         seed,
         constraints,
         scale,
+        generator,
     })
 }
 
@@ -394,14 +420,16 @@ async fn handle_system(
     // so a client that already holds this response costs nothing to serve.
     let etag = system_etag(query);
     if etag_matches(if_none_match, &etag) {
-        return write_not_modified(stream, &etag, SYSTEM_CACHE_CONTROL).await;
+        return write_not_modified(stream, &etag, system_cache_control()).await;
     }
     let req = match parse_system_request(query) {
         Ok(r) => r,
         Err((code, reason, body)) => return write_simple(stream, code, reason, &body).await,
     };
 
-    let png = match catch_render(|| generate_system_png_scaled(req.seed, req.constraints, req.scale))
+    let png = match catch_render(|| {
+        generate_system_png_with(req.generator, req.seed, req.constraints, req.scale)
+    })
     {
         Ok(Ok(b)) => b,
         Ok(Err(e)) => {
@@ -427,14 +455,14 @@ async fn handle_system_svg(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let etag = system_etag(query);
     if etag_matches(if_none_match, &etag) {
-        return write_not_modified(stream, &etag, SYSTEM_CACHE_CONTROL).await;
+        return write_not_modified(stream, &etag, system_cache_control()).await;
     }
     let req = match parse_system_request(query) {
         Ok(r) => r,
         Err((code, reason, body)) => return write_simple(stream, code, reason, &body).await,
     };
 
-    let svg = match catch_render(|| generate_system_svg(req.seed, req.constraints)) {
+    let svg = match catch_render(|| generate_system_svg_with(req.generator, req.seed, req.constraints)) {
         Ok(Ok(s)) => s,
         Ok(Err(e)) => {
             return write_simple(stream, 500, "Internal Server Error", &format!("{e}")).await;
@@ -581,7 +609,7 @@ async fn handle_world(
     // the requested scale is part of what the client holds.
     let etag = world_etag(&cache_object, Some(output_scale));
     if etag_matches(if_none_match, &etag) {
-        return write_not_modified(stream, &etag, WORLD_CACHE_CONTROL).await;
+        return write_not_modified(stream, &etag, world_cache_control()).await;
     }
 
     // Try cache first. Disabled-mode GCS returns Ok(None) here so the
@@ -679,7 +707,7 @@ async fn handle_world(
 /// Renders the planet as an orthographic globe — either a static PNG
 /// (`format=png`/`static`) or a spinning animated PNG (default, or
 /// `format=apng`). Both are cached in GCS under a projection-specific path
-/// (`world/v2/globe[-anim]/…`) so they never collide with the flat map's
+/// (`world/v3/globe[-anim]/…`) so they never collide with the flat map's
 /// cache. The render size and frame count are fixed server-side
 /// ([`GLOBE_PNG_SIZE`] etc.) so the cache key stays `(seed, uwp, name, deco)`
 /// per variant.
@@ -734,7 +762,7 @@ async fn handle_world_globe(
     let cache_object = planet_cache_object(Some(variant), cache_key, deco);
     let etag = world_etag(&cache_object, None);
     if etag_matches(if_none_match, &etag) {
-        return write_not_modified(stream, &etag, WORLD_CACHE_CONTROL).await;
+        return write_not_modified(stream, &etag, world_cache_control()).await;
     }
 
     let uwp_owned = uwp.to_string();
@@ -778,7 +806,7 @@ async fn handle_world_globe(
 /// in one bad request becomes a clean 500 instead of aborting the process.
 /// Globe texture sub-handler for `…&projection=globe&format=texture`. Serves
 /// the equirectangular surface texture (RGB surface + alpha emissive) for
-/// client-side rendering, cached under `world/v2/globe-tex/`, with the
+/// client-side rendering, cached under `world/v3/globe-tex/`, with the
 /// starport's `(lon, lat)` echoed back in an `X-Starport` header (read from the
 /// PNG's `Starport` tEXt chunk so it survives a cache hit).
 #[allow(clippy::too_many_arguments)]
@@ -800,7 +828,7 @@ async fn handle_world_globe_texture(
     let cache_object = planet_cache_object(Some(variant), cache_key, deco);
     let etag = world_etag(&cache_object, None);
     if etag_matches(if_none_match, &etag) {
-        return write_not_modified(stream, &etag, WORLD_CACHE_CONTROL).await;
+        return write_not_modified(stream, &etag, world_cache_control()).await;
     }
 
     let uwp_owned = uwp.to_string();
@@ -1007,7 +1035,55 @@ fn resolve_decorations(
     hex: &str,
     name: &str,
 ) -> Result<WorldDecorations, DecorationError> {
-    decorations_or_else(params, || overrides::decorations_for(sector, hex, name))
+    decorations_or_else(params, || {
+        callisto_decorations(params, sector, hex, name)
+            .or_else(|| overrides::decorations_for(sector, hex, name))
+    })
+}
+
+/// A body's map decorations from Callisto's physics, when the request carries
+/// its system: `stellar` (and `pbg`, `worlds`) as `/api/system` takes them,
+/// plus `mw`/`mwuwp`, the main world's name and UWP, for a body that isn't
+/// the main world (they default to the request's own `name` and `uwp`).
+/// `season=near|far` draws a two-season world at one end of its year.
+///
+/// `None` without system parameters, under `generator=book6`, or when the
+/// body isn't in the generated system: the map then falls back to what the
+/// overrides state, as it always has.
+fn callisto_decorations(
+    params: &HashMap<String, String>,
+    sector: &str,
+    hex: &str,
+    name: &str,
+) -> Option<WorldDecorations> {
+    let stellar = params.get("stellar")?;
+    let generator = params
+        .get("generator")
+        .and_then(|g| Generator::parse(g))
+        .unwrap_or_else(default_generator);
+    if generator != Generator::Callisto {
+        return None;
+    }
+    let uwp = params.get("uwp")?;
+    let upstream = crate::api::UpstreamSystem {
+        sector,
+        hex,
+        name: params.get("mw").map_or(name, |s| s.as_str()),
+        uwp: params.get("mwuwp").map_or(uwp.as_str(), |s| s.as_str()),
+        pbg: params.get("pbg").map_or("", |s| s.as_str()),
+        stellar,
+        worlds: params.get("worlds").and_then(|w| w.trim().parse().ok()),
+    };
+    let (seed, constraints) = crate::api::system_from_upstream(&upstream).ok()?;
+    let system = catch_render(|| Generator::Callisto.generate(seed, constraints))
+        .ok()?
+        .ok()?;
+    let orbit = params.get("orbit").and_then(|o| o.trim().parse().ok());
+    let season = params
+        .get("season")
+        .map_or(crate::callisto::map::Season::Mean, |s| crate::callisto::map::Season::parse(s));
+    let world = crate::callisto::map::find_world(&system, name, orbit)?;
+    crate::callisto::map::map_decorations(world, season)
 }
 
 /// [`resolve_decorations`] with the override lookup passed in, so tests can
@@ -1215,7 +1291,7 @@ async fn write_png(
          {cors}\
          \r\n",
         len = bytes.len(),
-        cache = WORLD_CACHE_CONTROL,
+        cache = world_cache_control(),
         cors = CORS_HEADERS,
     );
     stream.write_all(headers.as_bytes()).await?;
@@ -1265,7 +1341,7 @@ async fn write_texture(
          {cors}\
          \r\n",
         len = bytes.len(),
-        cache = WORLD_CACHE_CONTROL,
+        cache = world_cache_control(),
         cors = CORS_HEADERS,
     );
     stream.write_all(headers.as_bytes()).await?;
@@ -1294,7 +1370,7 @@ async fn write_system_png(
          {cors}\
          \r\n",
         len = bytes.len(),
-        cache = SYSTEM_CACHE_CONTROL,
+        cache = system_cache_control(),
         cors = CORS_HEADERS,
     );
     stream.write_all(headers.as_bytes()).await?;
@@ -1340,6 +1416,9 @@ fn system_etag(query: &str) -> String {
 ///
 /// `If-None-Match` is a comma-separated list and may be `*`.
 fn etag_matches(if_none_match: Option<&str>, etag: &str) -> bool {
+    if *NO_HTTP_CACHE {
+        return false;
+    }
     let Some(header) = if_none_match else {
         return false;
     };
@@ -1390,7 +1469,7 @@ const WORLD_CACHE_CONTROL: &str = "Cache-Control: public, max-age=1800, must-rev
 /// for the flat map, the requested scale.
 ///
 /// The cache path already holds everything that decides the image — the
-/// variant, the `world/v2` generator version, the decoration namespace, and
+/// variant, the `world/v3` generator version, the decoration namespace, and
 /// the hash of seed, UWP, name and resolved decorations — so a lock edited in
 /// the override file and a generator version bump both change it. The flat
 /// map is resized after it leaves the cache, so its scale is added; the
@@ -1415,6 +1494,28 @@ fn world_etag(cache_object: &str, scale: Option<f32>) -> String {
 /// hit was, not more expensive.
 const SYSTEM_CACHE_CONTROL: &str = "Cache-Control: public, max-age=3600, must-revalidate\r\n";
 
+/// `WORLDGEN_NO_HTTP_CACHE=1` turns HTTP caching off: every response says
+/// `no-store` and no request is answered with a 304.
+///
+/// For local development. The ETags above identify a response by its inputs
+/// and a hand-bumped version, not by the code that rendered it, so while the
+/// generator is changing under a running browser the browser keeps showing
+/// what the last build drew for up to an hour. `scripts/run-backend.sh` sets
+/// this; production never does.
+static NO_HTTP_CACHE: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
+    std::env::var("WORLDGEN_NO_HTTP_CACHE").is_ok_and(|v| v == "1")
+});
+
+const NO_STORE: &str = "Cache-Control: no-store\r\n";
+
+fn system_cache_control() -> &'static str {
+    if *NO_HTTP_CACHE { NO_STORE } else { SYSTEM_CACHE_CONTROL }
+}
+
+fn world_cache_control() -> &'static str {
+    if *NO_HTTP_CACHE { NO_STORE } else { WORLD_CACHE_CONTROL }
+}
+
 /// Write an `image/svg+xml` 200 response. Mirrors [`write_png`] but with the
 /// SVG content type; `charset=utf-8` since the body is text. Same long
 /// immutable cache headers — the output is a deterministic function of the
@@ -1435,7 +1536,7 @@ async fn write_svg(
          {cors}\
          \r\n",
         len = bytes.len(),
-        cache = SYSTEM_CACHE_CONTROL,
+        cache = system_cache_control(),
         cors = CORS_HEADERS,
     );
     stream.write_all(headers.as_bytes()).await?;
@@ -1564,11 +1665,11 @@ mod tests {
         assert_eq!(key, 0x44c4_61aa_baca_9b93);
 
         let none = WorldDecorations::default();
-        assert_eq!(planet_cache_object(None, key, &none), "world/v2/44c461aabaca9b93.png");
+        assert_eq!(planet_cache_object(None, key, &none), "world/v3/44c461aabaca9b93.png");
         for variant in ["globe", "globe-anim", "globe-tex", "globe-tex-clear"] {
             assert_eq!(
                 planet_cache_object(Some(variant), key, &none),
-                format!("world/v2/{variant}/44c461aabaca9b93.png"),
+                format!("world/v3/{variant}/44c461aabaca9b93.png"),
             );
         }
     }
@@ -1590,10 +1691,10 @@ mod tests {
     #[test]
     fn decorated_paths_sit_under_the_deco_namespace() {
         let d = locked(None);
-        assert_eq!(planet_cache_object(None, 0xab, &d), "world/v2/deco-v2/00000000000000ab.png");
+        assert_eq!(planet_cache_object(None, 0xab, &d), "world/v3/deco-v2/00000000000000ab.png");
         assert_eq!(
             planet_cache_object(Some("globe-tex"), 0xab, &d),
-            "world/v2/globe-tex/deco-v2/00000000000000ab.png",
+            "world/v3/globe-tex/deco-v2/00000000000000ab.png",
         );
     }
 

@@ -602,7 +602,7 @@ impl AvailableGoodsTable {
                 .unwrap_or_else(|| {
                     panic!(
                         "Failed to get trade table entry for index {}",
-                        &good.source_index
+                        good.source_index
                     )
                 });
 
@@ -794,7 +794,7 @@ impl Good {
                 .unwrap_or_else(|| {
                     panic!(
                         "Failed to get trade table entry for index {}",
-                        &self.source_index
+                        self.source_index
                     )
                 });
 

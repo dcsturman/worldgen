@@ -37,6 +37,8 @@ COPY assets ./assets/
 # the COPY steps here are an explicit allowlist, so anything the source reads
 # at compile time has to be named in both places.
 COPY data ./data/
+# The Callisto rulebook's tables, loaded with include_str! the same way.
+COPY docs/callisto/tables.json ./docs/callisto/tables.json
 
 # Release build is required: Cloud Run caps responses at 32 MiB per request,
 # and a debug-mode wasm easily exceeds that with debug symbols (~36 MB →
@@ -94,6 +96,8 @@ COPY assets ./assets/
 # the COPY steps here are an explicit allowlist, so anything the source reads
 # at compile time has to be named in both places.
 COPY data ./data/
+# The Callisto rulebook's tables, loaded with include_str! the same way.
+COPY docs/callisto/tables.json ./docs/callisto/tables.json
 
 # Build the server binary. Same cache-mount story as the wasm stage —
 # /server/target holds cargo's incremental cache; the cargo registry +

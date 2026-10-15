@@ -75,6 +75,11 @@ pub struct World {
     /// worlds predate it, and a world without it serializes as before.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub orbit_distance_mkm: Option<f32>,
+    /// What Callisto worked out about this body beyond its UWP: what kind
+    /// of body it is, what it's made of, its gravity. `None` on a Book 6
+    /// world, and skipped when `None` so stored worlds round-trip unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub callisto: Option<Box<crate::callisto::body::Physics>>,
 }
 
 /// Enum for facilities that can be present on a world
@@ -147,6 +152,7 @@ impl World {
             coordinates: None,
             decorations: WorldDecorations::default(),
             orbit_distance_mkm: None,
+            callisto: None,
         }
     }
     /// Generates a name for the world based on system name and orbital position
@@ -164,6 +170,12 @@ impl World {
         } else {
             self.name = format!("{} {}", system_name, arabic_to_roman(orbit + 1))
         }
+    }
+
+    /// Sets the population digit. Callisto sets it from a source's partial
+    /// UWP; its own settlement rolls arrive in a later stage.
+    pub(crate) fn set_population(&mut self, population: i32) {
+        self.population = population;
     }
 
     /// Returns the population level of the world
@@ -233,6 +245,11 @@ impl World {
             && !self.is_mainworld
             && !self.is_satellite
             && !self.name.contains("Planetoid")
+            // A Callisto belt says what it is rather than relying on a name.
+            && !self
+                .callisto
+                .as_ref()
+                .is_some_and(|p| p.class == crate::callisto::body::BodyClass::Belt)
         {
             'S'
         } else {

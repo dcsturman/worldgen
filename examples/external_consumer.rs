@@ -41,6 +41,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         tertiary_bodies: Vec::new(),
         main_world_orbit: None,
         main_world_num_satellites: None,
+        counts: Default::default(),
+        rulebook_strict: false,
+        nth_pins: Vec::new(),
+        main_world_nth: None,
     };
 
     // Generate and write the system map.

@@ -24,6 +24,8 @@
 # Without this the image build fails at compile time — the allowlist above
 # is exhaustive, so anything the source reads has to be named here.
 !data
+# The Callisto rulebook's tables (src/callisto/tables.rs), same story.
+!docs/callisto/tables.json
 
 # Re-exclude build artifacts that the broad re-includes above would pull
 # back in (e.g. a stray target/ inside src/ tooling, editor scratch).

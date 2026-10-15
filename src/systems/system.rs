@@ -199,6 +199,10 @@ pub struct System {
     pub orbit: StarOrbit,
     #[cfg_attr(feature = "frontend", store)]
     pub orbit_slots: Vec<Option<OrbitContent>>,
+    /// Where each orbit slot really is, for a system Callisto generated;
+    /// `None` for Book 6, whose slots are its orbit numbers. Parallel to
+    /// `orbit_slots` when present. See [`crate::callisto::layout`].
+    pub callisto: Option<Box<crate::callisto::layout::Layout>>,
 }
 
 // Enums
@@ -264,6 +268,9 @@ pub enum StarSize {
     #[allow(clippy::upper_case_acronyms)]
     VI,
     D,
+    /// Brown dwarf: a failed star (Callisto Table 6, "BD"). Only Callisto
+    /// generates these; Book 6 has no such class.
+    BD,
 }
 
 /// Orbital relationship of companion stars
@@ -461,6 +468,7 @@ impl System {
             tertiary: None,
             orbit,
             orbit_slots: vec![None; max_orbits],
+            callisto: None,
         }
     }
 
@@ -1865,6 +1873,7 @@ impl Default for System {
             tertiary: None,
             orbit: StarOrbit::Primary,
             orbit_slots: Vec::new(),
+            callisto: None,
         }
     }
 }
@@ -1990,6 +1999,11 @@ impl Display for StarSize {
 
 impl Display for Star {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // A brown dwarf has no spectral class worth printing; the stellar
+        // column writes it as plain "BD".
+        if self.size == StarSize::BD {
+            return f.write_str("BD");
+        }
         write!(
             f,
             "{}{} {}",
@@ -2264,6 +2278,10 @@ fn companion_overrides(bodies: &[Constraint]) -> SystemOverrides {
         tertiary_bodies: Vec::new(),
         main_world_orbit: None,
         main_world_num_satellites: None,
+        counts: Default::default(),
+        rulebook_strict: false,
+        nth_pins: Vec::new(),
+        main_world_nth: None,
     });
     // Autopop, despite there being no PBG digits here: it means "this
     // description is authoritative", which is exactly what a source table
@@ -2280,6 +2298,20 @@ fn collect_overrides(constraints: &SystemConstraints) -> SystemOverrides {
         .bodies
         .iter()
         .filter_map(|c| match c {
+            // Brown dwarfs, and white dwarfs listed without a spectral type,
+            // are Callisto's: Book 6 has no rules for them and never saw
+            // them, since the stellar parser skipped both until Callisto
+            // needed them. Dropping them here keeps every Book 6 system as
+            // it was.
+            Constraint::Star {
+                size: Some(StarSize::BD),
+                ..
+            }
+            | Constraint::Star {
+                size: Some(StarSize::D),
+                subtype: None,
+                ..
+            } => None,
             Constraint::Star {
                 orbit,
                 spectral,
@@ -3450,15 +3482,19 @@ mod tests {
     /// period became sqrt(a³/M) instead of sqrt(M·a³), and stellar mass and
     /// luminosity interpolate by subtype instead of rounding to 0 and 5 —
     /// which changes description figures (year, temperature) but no body.
+    /// Re-pinned again when names that don't suit their body ("Nebula" on a
+    /// planet, "Colony" on a star) and real star names were replaced in the
+    /// name tables: the tables kept their lengths, so every draw is the same
+    /// and only the names in the display and JSON moved.
     const GOLDEN_PINNED: &[(u64, u64, u64)] = &[
-        (0x549284a0277aabea, 0x6e52f546870f3063, 0x378c61a2b1fae1b7),
-        (0xb3ff30419755844d, 0x3d7d60ef290bed39, 0x0873f027a7fc2a37),
-        (0xe9bf4e59473c5ed0, 0x0814742a7702cf5f, 0xc70888ca601fe732),
+        (0x2d312d40ccb71662, 0x8b64fc34c8aa4c60, 0xf9c5c549bd7fbd64),
+        (0x064a9def041e5a22, 0x3d7d60ef290bed39, 0x0873f027a7fc2a37),
+        (0xc0eecf5e11aa3e59, 0x99fb440eb9f10126, 0x4e33d9a98b455db9),
         (0x2ac7ac01e9deb855, 0xc3b7e662c9fd4a2a, 0x8c03453fa569610a),
-        (0x835938276d66627d, 0xd648773bb015e7c4, 0xcf9a33915d85838f),
+        (0xb2906bb37e2fe108, 0x67b1de0dec5ac9e9, 0xbc2882afa619e07a),
         (0xdfb79b2d32a7e98c, 0xfe7770a8c1439526, 0x9109b3a18f88ae69),
         (0xa470d87a612956e9, 0x1a8408ec427408bc, 0x3bb00c3f797b017a),
-        (0x31e44892ffd570a8, 0x74cfc44d5277079b, 0x7d669b94d9a3870b),
+        (0x9de8e87cf5e986dc, 0x0f37bcc252e50f89, 0xc9682f3a400e8b26),
     ];
 
     /// No world is tide-locked by generation — only an override locks one —

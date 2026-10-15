@@ -132,6 +132,12 @@ impl Renderer for SvgRenderer {
         if let Some(dist) = meta.distance_mkm {
             let _ = write!(self.body, r#" data-distance-mkm="{dist:.1}""#);
         }
+        if let Some(class) = meta.class {
+            let _ = write!(self.body, r#" data-class="{class}""#);
+        }
+        for (name, value) in &meta.extra {
+            let _ = write!(self.body, r#" data-{name}="{}""#, escape_xml(value));
+        }
         self.body.push('>');
     }
 

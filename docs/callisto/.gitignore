@@ -1,0 +1,15 @@
+# build products
+*.aux
+*.log
+*.out
+*.toc
+*.lot
+body.md
+body.tex
+*.png
+# Optima is Apple's; copy it here for local builds but do not commit it
+fonts/Optima.ttc
+# the rendered booklet and the source bundle are build products / scratch
+*.pdf
+*.zip
+fonts/
