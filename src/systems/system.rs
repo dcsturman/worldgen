@@ -3485,16 +3485,18 @@ mod tests {
     /// Re-pinned again when names that don't suit their body ("Nebula" on a
     /// planet, "Colony" on a star) and real star names were replaced in the
     /// name tables: the tables kept their lengths, so every draw is the same
-    /// and only the names in the display and JSON moved.
+    /// and only the names in the display and JSON moved. Re-pinned once more
+    /// when Book 6's −2 population DM stopped applying to atmosphere 0, as
+    /// Book 6 prints it ("not atmosphere 0, 5, 6 or 8").
     const GOLDEN_PINNED: &[(u64, u64, u64)] = &[
-        (0x2d312d40ccb71662, 0x8b64fc34c8aa4c60, 0xf9c5c549bd7fbd64),
-        (0x064a9def041e5a22, 0x3d7d60ef290bed39, 0x0873f027a7fc2a37),
-        (0xc0eecf5e11aa3e59, 0x99fb440eb9f10126, 0x4e33d9a98b455db9),
-        (0x2ac7ac01e9deb855, 0xc3b7e662c9fd4a2a, 0x8c03453fa569610a),
-        (0xb2906bb37e2fe108, 0x67b1de0dec5ac9e9, 0xbc2882afa619e07a),
-        (0xdfb79b2d32a7e98c, 0xfe7770a8c1439526, 0x9109b3a18f88ae69),
+        (0xd872b1571a74e523, 0x7f5578dc914e44b8, 0xbabb93183f7d18c3),
+        (0xffdcc8862550ad33, 0xcd1f8d1e063ce084, 0x20a07ff85d2f7143),
+        (0x66114ff22c57c446, 0x4d73778d75246d6c, 0x5be26509bd2a21a0),
+        (0x8fa1f0da54865bfb, 0x4cd88573a1c35acb, 0xc16ba8a7ad2e2fe9),
+        (0x68a9bd6c32c88d2c, 0x2f25a56654c64361, 0x56f2aa202a1aad72),
+        (0x776581e010f28b07, 0xa862135a214a47bc, 0x1a3155e11ff7c82b),
         (0xa470d87a612956e9, 0x1a8408ec427408bc, 0x3bb00c3f797b017a),
-        (0x9de8e87cf5e986dc, 0x0f37bcc252e50f89, 0xc9682f3a400e8b26),
+        (0x07c39c272f2eebf9, 0x65e451d880b5fd2e, 0xf465e066d5261f04),
     ];
 
     /// No world is tide-locked by generation — only an override locks one —

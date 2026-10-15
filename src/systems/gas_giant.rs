@@ -376,7 +376,7 @@ impl HasSatellites for GasGiant {
                 } else {
                     0
                 }
-                + if ![5, 6, 8].contains(&atmosphere) {
+                + if ![0, 5, 6, 8].contains(&atmosphere) {
                     -2
                 } else {
                     0

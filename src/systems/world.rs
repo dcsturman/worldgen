@@ -92,6 +92,9 @@ pub enum Facility {
     Colony,
     Lab,
     Military,
+    /// A refuelling station on the system's nearest fuel source (Callisto
+    /// Table 38).
+    FuelDepot,
 }
 
 /// Container for world (or gas giant) satellites
@@ -173,7 +176,7 @@ impl World {
     }
 
     /// Sets the population digit. Callisto sets it from a source's partial
-    /// UWP; its own settlement rolls arrive in a later stage.
+    /// UWP, then from its settlement rolls (`callisto::settle`).
     pub(crate) fn set_population(&mut self, population: i32) {
         self.population = population;
     }
@@ -186,6 +189,11 @@ impl World {
     /// Whether this world was flagged as the main world for the system.
     pub fn is_mainworld(&self) -> bool {
         self.is_mainworld
+    }
+
+    /// Returns the government code of the world
+    pub fn get_government(&self) -> i32 {
+        self.government
     }
 
     /// Returns the law level of the world
@@ -552,6 +560,11 @@ impl World {
     }
 
     /// Returns a formatted string of all facilities on the world
+    /// The world's facilities.
+    pub fn facilities(&self) -> &[Facility] {
+        &self.facilities
+    }
+
     pub fn facilities_string(&self) -> String {
         self.facilities
             .iter()
@@ -726,7 +739,7 @@ impl World {
                 } else {
                     0
                 }
-                + if ![5, 6, 8].contains(&atmosphere) {
+                + if ![0, 5, 6, 8].contains(&atmosphere) {
                     -2
                 } else {
                     0
@@ -986,7 +999,7 @@ pub(crate) fn build_partial_satellite(
             } else {
                 0
             }
-            + if ![5, 6, 8].contains(&atmosphere) {
+            + if ![0, 5, 6, 8].contains(&atmosphere) {
                 -2
             } else {
                 0
@@ -1181,7 +1194,7 @@ impl HasSatellites for World {
                 } else {
                     0
                 }
-                + if ![5, 6, 8].contains(&atmosphere) {
+                + if ![0, 5, 6, 8].contains(&atmosphere) {
                     -2
                 } else {
                     0
@@ -1219,6 +1232,7 @@ impl Display for Facility {
             Facility::Mining => write!(f, "Mining"),
             Facility::Colony => write!(f, "Colony"),
             Facility::Lab => write!(f, "Lab"),
+            Facility::FuelDepot => write!(f, "Fuel depot"),
         }
     }
 }

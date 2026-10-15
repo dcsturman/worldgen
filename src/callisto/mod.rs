@@ -22,6 +22,7 @@ pub mod moons;
 pub mod orbits;
 pub mod populate;
 pub mod rotation;
+pub mod settle;
 pub mod star;
 pub mod stars;
 pub mod tables;

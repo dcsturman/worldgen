@@ -7,8 +7,9 @@
 //! yet; giants, belts and other worlds arrive with the later stages, so the
 //! PBG and world counts only size the orbit list for now.
 
-use crate::callisto::body::{BodyClass, Fit, GiantKind, IceAvailability, MoonInfo, Physics};
+use crate::callisto::body::{BodyClass, Fit, GiantKind, IceAvailability, MoonInfo, NearFuel, Physics};
 use crate::callisto::moons::{MoonBand, Parent, period_hours};
+use crate::callisto::settle::MainWorld;
 use crate::callisto::temperature::TempBand;
 use crate::systems::has_satellites::HasSatellites;
 use crate::callisto::fit::assess;
@@ -391,6 +392,9 @@ pub fn generate(
         oddities: Vec::new(),
         moon: None,
         spin: None,
+        stated: None,
+        fuel: Default::default(),
+        port_roll: None,
     }));
 
     // Step 15: moons and rings (Section 9), around every star's bodies.
@@ -573,6 +577,11 @@ pub fn generate(
         }
     }
 
+    // Step 16: settlement of the other worlds (Section 11), now that every
+    // body has its codes, temperature, moons and spin. Before the post pass,
+    // so a source's facilities and UWPs still have the last word.
+    settle_system(&mut system, roller);
+
     // Override facts aimed at a Book 6 orbit number now aim at wherever that
     // pinned body landed.
     let constraints = retarget_pins(constraints, &system);
@@ -587,7 +596,186 @@ pub fn generate(
     // was worked out (Traefar, "the next world out from Torpol"): read it
     // again from the codes it ended with.
     refresh_temperatures(&mut system);
+    name_the_settled(&mut system);
     Ok(system)
+}
+
+/// Settle every body but the main world (Section 11), wherever the main
+/// world is. Nothing to do unless it has people and spaceflight.
+fn settle_system(system: &mut System, roller: &mut impl Roller) {
+    let Some(mw) = find_main_world(system).map(MainWorld::of) else {
+        return;
+    };
+    if mw.settles() {
+        settle_bodies(system, &mw, roller);
+        place_fuel_depot(system, &mw, roller);
+    }
+}
+
+/// The system's one fuel depot (Table 38), on its most populous settled body
+/// at the nearest fuel source (the first, on a tie), if the roll allows.
+fn place_fuel_depot(system: &mut System, mw: &MainWorld, roller: &mut impl Roller) {
+    use crate::callisto::settle::{fuel_depot, with_fuel_depot};
+    let at_source = |w: &World| w.callisto.as_deref().is_some_and(|p| p.fuel == NearFuel::Source);
+    let mut top = 0;
+    for_each_world_mut(system, &mut |w| {
+        if at_source(w) {
+            top = top.max(w.get_population());
+        }
+    });
+    if top < 1 || !fuel_depot(mw, roller) {
+        return;
+    }
+    let mut placed = false;
+    for_each_world_mut(system, &mut |w| {
+        if placed || !at_source(w) || w.get_population() != top {
+            return;
+        }
+        placed = true;
+        let roll = w.callisto.as_deref().and_then(|p| p.port_roll);
+        let mut facilities = w.facilities().to_vec();
+        let mut port = w.port;
+        with_fuel_depot(&mut facilities, &mut port, roll);
+        w.port = port;
+        w.set_facilities(facilities);
+    });
+}
+
+/// Visit every world in a system, its moons and its companions', in order.
+fn for_each_world_mut(system: &mut System, f: &mut impl FnMut(&mut World)) {
+    for slot in system.orbit_slots.iter_mut().flatten() {
+        match slot {
+            OrbitContent::World(w) => {
+                f(w);
+                w.satellites.sats.iter_mut().for_each(&mut *f);
+            }
+            OrbitContent::GasGiant(g) => g.get_satellites_mut().sats.iter_mut().for_each(&mut *f),
+            _ => {}
+        }
+    }
+    for c in [system.secondary.as_deref_mut(), system.tertiary.as_deref_mut()]
+        .into_iter()
+        .flatten()
+    {
+        for_each_world_mut(c, f);
+    }
+}
+
+fn find_main_world(system: &System) -> Option<&World> {
+    let here = system.orbit_slots.iter().flatten().find_map(|c| {
+        let (w, moons): (Option<&World>, &[World]) = match c {
+            OrbitContent::World(w) => (Some(w), &w.satellites.sats),
+            OrbitContent::GasGiant(g) => (None, g.satellites()),
+            _ => return None,
+        };
+        w.into_iter().chain(moons).find(|w| w.is_mainworld())
+    });
+    here.or_else(|| {
+        [system.secondary.as_deref(), system.tertiary.as_deref()]
+            .into_iter()
+            .flatten()
+            .find_map(find_main_world)
+    })
+}
+
+fn settle_bodies(system: &mut System, mw: &MainWorld, roller: &mut impl Roller) {
+    for slot in system.orbit_slots.iter_mut().flatten() {
+        match slot {
+            OrbitContent::World(w) => {
+                settle_world(w, mw, false, roller);
+                for m in &mut w.satellites.sats {
+                    settle_world(m, mw, false, roller);
+                }
+            }
+            OrbitContent::GasGiant(g) => {
+                let gas = g.callisto.is_some_and(|k| k != GiantKind::IceGiant);
+                for m in &mut g.get_satellites_mut().sats {
+                    settle_world(m, mw, gas, roller);
+                }
+            }
+            _ => {}
+        }
+    }
+    for c in [system.secondary.as_deref_mut(), system.tertiary.as_deref_mut()]
+        .into_iter()
+        .flatten()
+    {
+        settle_bodies(c, mw, roller);
+    }
+}
+
+/// Settle one world, moon or belt. Moons under size 1 and rings have no one
+/// (Section 11), and a sub-Neptune has nowhere to land.
+fn settle_world(w: &mut World, mw: &MainWorld, gas_giant_moon: bool, roller: &mut impl Roller) {
+    use crate::callisto::body::Composition;
+    use crate::callisto::settle::{Body, settle};
+    if w.is_mainworld() {
+        return;
+    }
+    let Some(p) = w.callisto.as_deref() else { return };
+    let moon = p.moon.as_ref();
+    if (moon.is_some() && w.size < 1) || p.class == BodyClass::SubNeptune {
+        return;
+    }
+    let body = Body {
+        belt: moon.is_none() && p.class == BodyClass::Belt,
+        size: w.size,
+        atmosphere: w.atmosphere,
+        hydro: w.hydro,
+        band: p.temperature.map(|t| t.band),
+        gravity: p.gravity,
+        iron_rich: p.composition == Some(Composition::IronRich),
+        radiation: gas_giant_moon && moon.is_some_and(|m| m.band == Some(MoonBand::Close)),
+        fuel_source: p.fuel == NearFuel::Source,
+        moon_of_fuel_source: p.fuel == NearFuel::MoonOfSource,
+    };
+    let s = settle(&body, mw, p.stated.as_ref(), roller);
+    if let Some(p) = w.callisto.as_deref_mut() {
+        p.port_roll = s.port_roll;
+    }
+    w.set_population(s.population);
+    w.set_subordinate_stats(s.port, s.government, s.law, s.tech, s.facilities);
+    w.gen_trade_classes();
+}
+
+/// Settled bodies take names, as in Book 6: a planet with anyone living
+/// there, and a giant whose moons hold 100,000 or more (population 5). Only
+/// a generated numeral name is replaced, never one a source gave; belts keep
+/// theirs.
+fn name_the_settled(system: &mut System) {
+    let prefix = format!("{} ", system.name);
+    let numeral = |n: &str| {
+        n.strip_prefix(&prefix)
+            .is_some_and(|r| !r.is_empty() && r.chars().all(|c| matches!(c, 'I' | 'V' | 'X' | 'L' | 'C')))
+    };
+    let mut renamed: Vec<(String, String)> = Vec::new();
+    for slot in system.orbit_slots.iter_mut().flatten() {
+        let name = match slot {
+            OrbitContent::World(w) if !w.is_mainworld() && w.get_population() >= 1 => &mut w.name,
+            OrbitContent::GasGiant(g) if g.satellites().iter().any(|m| m.get_population() >= 5) => &mut g.name,
+            _ => continue,
+        };
+        if numeral(name) {
+            let new = crate::systems::name_tables::gen_planet_name();
+            renamed.push((std::mem::replace(name, new.clone()), new));
+        }
+    }
+    // The refuelling line names its source.
+    if let Some(src) = system
+        .callisto
+        .as_mut()
+        .and_then(|l| l.fuel.as_mut())
+        .and_then(|f| f.local_source.as_mut())
+        && let Some((_, new)) = renamed.iter().find(|(old, _)| old == src)
+    {
+        *src = new.clone();
+    }
+    for c in [system.secondary.as_deref_mut(), system.tertiary.as_deref_mut()]
+        .into_iter()
+        .flatten()
+    {
+        name_the_settled(c);
+    }
 }
 
 /// Every Callisto world's temperature, ice and two seasons, from the codes
@@ -1172,6 +1360,9 @@ fn build_system(
                     oddities,
                     moon: None,
                     spin: spin_of(slot, data.mass, distance, c.atmosphere, c.hydro, c.hydro_is_ice),
+                    stated: b.uwp.clone(),
+                    fuel: Default::default(),
+                    port_roll: None,
                 }));
                 let parent = match b.class {
                     BodyClass::SubNeptune => Parent::SubNeptune { size: c.size },
@@ -1188,7 +1379,13 @@ fn build_system(
         });
         system.orbit_slots.push(content);
     }
-    let fuel = fuel.map(|(ice, in_moons)| fuel_line(&slots, &names, ice, in_moons, &data, mw_slot));
+    let fuel = fuel.map(|(ice, in_moons)| {
+        let (fuel, source) = fuel_line(&slots, &names, ice, in_moons, &data, mw_slot);
+        if let Some(i) = source {
+            mark_fuel_source(&mut system.orbit_slots[i]);
+        }
+        fuel
+    });
     let orbits = slots
         .iter()
         .map(|s| OrbitInfo {
@@ -1228,6 +1425,31 @@ fn build_system(
         fuel,
     }));
     system
+}
+
+/// Mark the system's nearest fuel source for the settlement rolls (Tables
+/// 36 and 38): a world or belt and its moons, or a giant's moons, since a
+/// giant is skimmed from orbit and its moons are where people live.
+fn mark_fuel_source(slot: &mut Option<OrbitContent>) {
+    let mark = |w: &mut World, near: NearFuel| {
+        if let Some(p) = w.callisto.as_deref_mut() {
+            p.fuel = near;
+        }
+    };
+    match slot {
+        Some(OrbitContent::World(w)) => {
+            mark(w, NearFuel::Source);
+            for m in &mut w.satellites.sats {
+                mark(m, NearFuel::MoonOfSource);
+            }
+        }
+        Some(OrbitContent::GasGiant(g)) => {
+            for m in &mut g.get_satellites_mut().sats {
+                mark(m, NearFuel::Source);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// A planet's orbit and spin from its rolls (Section 10): the year from its
@@ -1310,6 +1532,9 @@ fn moon_worlds(slot: &Slot, parent: Parent, parent_slot: usize, ice: IceAvailabi
                     tidally_heated: heated,
                     volcanic: close_giant && size >= 3,
                 }),
+                stated: None,
+                fuel: Default::default(),
+                port_roll: None,
             }));
             w
         })
