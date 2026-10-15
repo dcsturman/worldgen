@@ -54,6 +54,19 @@ pub struct WorldDecorations {
     /// world every map was before this existed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tide_locked: Option<TideLock>,
+    /// The world's mean surface temperature, whole °C, from Callisto's
+    /// physics (its star, orbit, albedo and greenhouse). `None` leaves the
+    /// map's temperature to its UWP, as before Callisto.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mean_temp_c: Option<i16>,
+    /// Axial tilt, whole degrees: a high tilt evens out the year's warmth
+    /// between equator and poles, a low one sharpens it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tilt_deg: Option<u8>,
+    /// The oceans have boiled (Callisto's steam check): the hydrographics is
+    /// in the air, and the surface is dry.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub steam: bool,
 }
 
 /// A tidal lock to the world's primary.
@@ -89,8 +102,10 @@ pub struct LatLon {
 /// Why a decoration string or value was rejected.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum DecorationError {
-    #[error("unknown decoration {0:?}; expected \"tl\" or \"none\"")]
+    #[error("unknown decoration {0:?}; expected tl, t:°C, tilt:°, steam or none")]
     Unknown(String),
+    #[error("decoration {0:?} needs one whole-number argument")]
+    BadArgument(String),
     #[error("decoration {0:?} given more than once")]
     Duplicate(String),
     #[error("tide lock takes no arguments or exactly two (tl:LAT:LON); got {0:?}")]
@@ -121,6 +136,7 @@ impl WorldDecorations {
     pub fn tide_locked(lock: TideLock) -> Self {
         Self {
             tide_locked: Some(lock),
+            ..Self::default()
         }
     }
 
@@ -138,6 +154,15 @@ impl WorldDecorations {
                     fmt_centidegrees(p.lon_cdeg)
                 ),
             });
+        }
+        if let Some(t) = self.mean_temp_c {
+            tokens.push(format!("t:{t}"));
+        }
+        if let Some(t) = self.tilt_deg {
+            tokens.push(format!("tilt:{t}"));
+        }
+        if self.steam {
+            tokens.push("steam".to_string());
         }
         tokens.join(",")
     }
@@ -171,6 +196,24 @@ impl WorldDecorations {
                         _ => return Err(DecorationError::TideLockArity(token.to_string())),
                     };
                     out.tide_locked = Some(TideLock { substellar });
+                }
+                "t" => {
+                    if out.mean_temp_c.is_some() {
+                        return Err(DecorationError::Duplicate(token.to_string()));
+                    }
+                    out.mean_temp_c = Some(one_integer(token, &args)?);
+                }
+                "tilt" => {
+                    if out.tilt_deg.is_some() {
+                        return Err(DecorationError::Duplicate(token.to_string()));
+                    }
+                    out.tilt_deg = Some(one_integer(token, &args)?);
+                }
+                "steam" if args.is_empty() => {
+                    if out.steam {
+                        return Err(DecorationError::Duplicate(token.to_string()));
+                    }
+                    out.steam = true;
                 }
                 _ => return Err(DecorationError::Unknown(token.to_string())),
             }
@@ -264,6 +307,17 @@ impl TryFrom<[f64; 2]> for LatLon {
     }
 }
 
+/// A token's single whole-number argument: `t:-40`, `tilt:23`.
+fn one_integer<T: std::str::FromStr>(token: &str, args: &[&str]) -> Result<T, DecorationError> {
+    match args {
+        [n] => n
+            .trim()
+            .parse()
+            .map_err(|_| DecorationError::BadArgument(token.to_string())),
+        _ => Err(DecorationError::BadArgument(token.to_string())),
+    }
+}
+
 fn parse_degrees(s: &str) -> Result<f64, DecorationError> {
     s.trim()
         .parse::<f64>()
@@ -298,6 +352,20 @@ fn splitmix64(mut z: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn callisto_physics_round_trips() {
+        let d = WorldDecorations {
+            tide_locked: Some(TideLock::default()),
+            mean_temp_c: Some(-40),
+            tilt_deg: Some(23),
+            steam: true,
+        };
+        assert_eq!(d.to_query(), "tl,t:-40,tilt:23,steam");
+        assert_eq!(WorldDecorations::parse_query(&d.to_query()), Ok(d));
+        assert!(WorldDecorations::parse_query("t:hot").is_err());
+        assert!(WorldDecorations::parse_query("t:1,t:2").is_err());
+    }
 
     fn locked_at(lat: f64, lon: f64) -> WorldDecorations {
         WorldDecorations::tide_locked(TideLock {

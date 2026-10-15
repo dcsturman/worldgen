@@ -142,7 +142,13 @@ impl std::fmt::Display for Uwp {
 }
 
 pub struct WorldMap {
+    /// The UWP the map is drawn from. A steam world's hydrographics is zeroed
+    /// here, since its water is in the air; [`WorldMap::published_uwp`] keeps
+    /// the one to print.
     pub uwp: Uwp,
+    /// The UWP as published, when drawing needed a different one (a steam
+    /// world); the map's label shows this.
+    pub published_uwp: Option<String>,
     pub seed: u64,
     /// Optional display name for the world — rendered on the title
     /// hex card in the upper-left of the map. `None` falls back to no
@@ -191,6 +197,16 @@ pub fn generate_decorated(
     name: Option<&str>,
     decorations: &WorldDecorations,
 ) -> Result<WorldMap, MapError> {
+    // A world whose oceans boiled (Callisto's steam check) keeps its
+    // hydrographics in the air: its surface is drawn dry.
+    let published_uwp = decorations.steam.then(|| uwp.to_string());
+    let dried;
+    let uwp = if decorations.steam && uwp.len() > 3 {
+        dried = format!("{}0{}", &uwp[..3], &uwp[4..]);
+        dried.as_str()
+    } else {
+        uwp
+    };
     let uwp = Uwp::parse(uwp)?;
     // Pure arithmetic on the decorations and the bare seed: resolving a
     // lock must not draw from `rng` below, or every sub-seed would shift.
@@ -255,6 +271,7 @@ pub fn generate_decorated(
         rivers: Vec::new(),
         decorations: decorations.clone(),
         climate,
+        published_uwp,
     };
     // Rivers depend on finalized elevation, so compute last.
     map.rivers = rivers::compute_rivers(&map);

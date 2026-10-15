@@ -341,6 +341,12 @@ pub struct SystemConstraints {
     /// Which body counts are published (Callisto only; Book 6 always reads
     /// the constraints as the whole list). See [`PublishedCounts`].
     pub counts: PublishedCounts,
+    /// Follow the rulebook to the letter (Callisto only): no livable-world
+    /// placement or orbit for a populated main world (see
+    /// `callisto::orbits::is_livable_main_world`), just Table 10 and Table
+    /// 32. `false`, the default, is what every real system uses; the tests
+    /// that replay the rulebook's worked examples set it.
+    pub rulebook_strict: bool,
     /// Bodies a source places by their order among the orbits (Callisto
     /// only; see [`NthPin`]).
     pub nth_pins: Vec<NthPin>,
@@ -367,6 +373,7 @@ impl SystemConstraints {
             main_world_orbit: None,
             main_world_num_satellites: None,
             counts: Default::default(),
+            rulebook_strict: false,
             nth_pins: Vec::new(),
             main_world_nth: None,
             bodies: vec![Constraint::Planet {
@@ -629,6 +636,7 @@ mod tests {
             main_world_orbit: None,
             main_world_num_satellites: None,
             counts: Default::default(),
+            rulebook_strict: false,
             nth_pins: Vec::new(),
             main_world_nth: None,
         };
@@ -664,6 +672,7 @@ mod tests {
             main_world_orbit: None,
             main_world_num_satellites: None,
             counts: Default::default(),
+            rulebook_strict: false,
             nth_pins: Vec::new(),
             main_world_nth: None,
         };
@@ -692,6 +701,7 @@ mod tests {
             main_world_orbit: None,
             main_world_num_satellites: None,
             counts: Default::default(),
+            rulebook_strict: false,
             nth_pins: Vec::new(),
             main_world_nth: None,
         };

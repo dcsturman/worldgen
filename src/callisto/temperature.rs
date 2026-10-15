@@ -144,7 +144,11 @@ pub fn temperature(position_hd: f32, atmosphere: i32, hydro: i32, hydro_is_ice: 
             steam: false,
         };
     }
-    if hydro >= 1 && band == TempBand::Roasting {
+    // Fluid oceans (atmosphere A+, the Fl trade code) aren't water; the
+    // rulebook's boiling check is about water, and says nothing of them. A
+    // hellworld like Pourne keeps its seas.
+    let fluid_oceans = atmosphere >= 10;
+    if hydro >= 1 && band == TempBand::Roasting && !fluid_oceans {
         return Temperature {
             celsius: read(AlbedoClass::Cloudy),
             band: TempBand::Roasting,
@@ -227,6 +231,15 @@ mod tests {
         let cloudy = temperature(1.4, 8, 9, false);
         assert_eq!((cloudy.celsius.round(), cloudy.band), (-32.0, TempBand::Cold));
         assert_eq!(cloudy.albedo_class, AlbedoClass::Ice);
+    }
+
+    /// Pourne (A9B2887-A, Fl): roasting, but its oceans aren't water, so
+    /// they don't boil.
+    #[test]
+    fn fluid_oceans_do_not_boil() {
+        let t = temperature(0.52, 11, 2, false);
+        assert_eq!(t.band, TempBand::Roasting);
+        assert!(!t.steam);
     }
 
     /// Noricum's steam world (13.3): 0.52, atmosphere 7, hydrographics 6.

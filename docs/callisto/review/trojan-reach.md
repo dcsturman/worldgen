@@ -1,6 +1,6 @@
 # Callisto review: Trojan Reach
 
-Worlds whose published data strains the physics, from `cargo run --bin callisto-review --features backend -- "Trojan Reach"`. Replaced on every run. 327 systems, 2 strained world(s), 5 odd.
+Worlds whose published data strains the physics, from `cargo run --bin callisto-review --features backend -- "Trojan Reach"`. Replaced on every run. 327 systems, 1 strained world(s), 5 odd.
 
 **Strained** worlds are ones where a published fact forces something the physics can't support: the data to check first. **Oddities** have an easy story (rulebook Section 14.2), or are what the rules themselves leave odd.
 
@@ -10,11 +10,6 @@ Worlds whose published data strains the physics, from `cargo run --bin callisto-
 
 - **Published:** B865544-A around M9 III
 - **Physics and story:** A habitable world around the listed M9 III, which cannot support life, and no main-sequence companion to host it: physics says no habitable orbit here
-
-## 2425 Paal
-
-- **Published:** B564679-6 around F3 V
-- **Physics and story:** Breathable air and water, but its orbit makes it Roasting at 279 °C: people live where local conditions allow, in the polar regions
 
 # Oddities
 

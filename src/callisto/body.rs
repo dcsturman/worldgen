@@ -92,6 +92,31 @@ pub struct Physics {
     /// For a moon or ring: its orbit around its planet (Section 9).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub moon: Option<MoonInfo>,
+    /// Its orbit and spin (Section 10): eccentricity, rotation, tilt, year.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spin: Option<Spin>,
+}
+
+/// A planet's orbit and spin (Section 10).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Spin {
+    pub eccentricity: f32,
+    /// How it turns, as the record has it. For the main world this is only
+    /// locked when a source says so.
+    pub rotation: crate::callisto::rotation::Rotation,
+    /// What the physics says, before the main-world exception: "physics:
+    /// locked".
+    pub physics_rotation: crate::callisto::rotation::Rotation,
+    /// Its day, hours.
+    pub day_hours: f32,
+    /// Axial tilt, degrees. Meaningless on a locked world.
+    pub tilt_deg: f32,
+    /// Its year, Earth days.
+    pub year_days: f32,
+    /// The bands at the near and far ends of an eccentric year, when they
+    /// differ: a summer and winter felt everywhere at once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub two_season: Option<(crate::callisto::temperature::TempBand, crate::callisto::temperature::TempBand)>,
 }
 
 /// A moon's orbit around its planet (Section 9).

@@ -240,6 +240,10 @@ fn draw_overlay<R: Renderer + ?Sized>(r: &mut R, map: &WorldMap) {
 /// output. Three lines: UWP, seed, and a hex-scale value computed from
 /// the UWP's world-size digit so the user can translate hex distances to
 /// real km. Sized so it reads but doesn't crowd the polar caps.
+/// The widest the title card's seed line may run, in px: inside the hex's
+/// ~111 px flat-to-flat with a margin.
+const SEED_LINE_MAX_W: f64 = 96.0;
+
 fn draw_title_block<R: Renderer + ?Sized>(r: &mut R, map: &WorldMap) {
     let cx = 82.0;
     let cy = 64.0;
@@ -261,13 +265,19 @@ fn draw_title_block<R: Renderer + ?Sized>(r: &mut R, map: &WorldMap) {
         .collect();
     r.stroke_polyline(&outline, ink, 1.4);
 
-    let label_size = 9.0;
+    let label_size: f64 = 9.0;
     let name_size = 12.0;
     let value_size = 13.0;
-    let uwp_str = format!("{}", map.uwp);
+    let uwp_str = map
+        .published_uwp
+        .clone()
+        .unwrap_or_else(|| format!("{}", map.uwp));
     // Display seed in decimal — matches the input field, so users can copy
     // it back without converting hex.
+    // A 64-bit seed runs to 20 digits (hex would still be 16), wider than
+    // the card: shrink the line to fit rather than overflow the hex.
     let seed_str = format!("seed {}", map.seed);
+    let seed_size = label_size.min(SEED_LINE_MAX_W / (seed_str.chars().count() as f64 * 0.54));
     let hex_km = hex_size_km(map.uwp.size());
     let scale_str = format!("1 hex ≈ {} km", format_thousands(hex_km));
     // Rough text-centering: subtract ~0.27 × char_count × size.
@@ -299,9 +309,9 @@ fn draw_title_block<R: Renderer + ?Sized>(r: &mut R, map: &WorldMap) {
         ink,
     );
     r.fill_text(
-        center_x(&seed_str, label_size),
+        center_x(&seed_str, seed_size),
         seed_y,
-        label_size,
+        seed_size,
         &seed_str,
         ink,
     );

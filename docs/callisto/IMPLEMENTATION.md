@@ -158,7 +158,7 @@ Tables that are pure dice lookups (2, 3, 4, 7, 8, 9, 10, 11, 12, 13, 15–19, 21
 - The two invariants in Section 1 hold over a seeded run of 5,000 free systems.
 - Regenerating the Trojan Reach from Travellermap data produces no `DroppedConstraint`s for systems that had none before, and the review file lists every `Strained` world.
 - Existing stored worlds still deserialize and render unchanged.
-- Review files after the Table 10 / companion / host-star changes: Trojan Reach strained = Halka (garden world around an M9 III) and Paal (its own orbit override) only; Spinward Marches strained = none; no "sits where a companion leaves no stable orbit" oddities and no "airless world in the Inner/Hot zone" oddities in either sector; 291-540 (1016) generates.
+- Review files after the Table 10 / companion / host-star changes: Trojan Reach strained = Halka (garden world around an M9 III) only (Paal's orbit override was removed); Spinward Marches strained = none; no "sits where a companion leaves no stable orbit" oddities and no "airless world in the Inner/Hot zone" oddities in either sector; 291-540 (1016) generates.
 - Noricum (Trojan Reach 2018: G2 V M9 V M6 V, 4 giants, 0 belts, 14 bodies) generates with all 14 bodies inside 100 HD, none beyond a companion's gap, and no "could not be placed" message; rulebook Section 13.3 is the worked case.
 
 ---

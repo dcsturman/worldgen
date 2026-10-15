@@ -1588,6 +1588,17 @@ fn apply_post_level(
                     );
                     rebuilt.orbit = orbit;
                     rebuilt.compute_astro_data(&star);
+                    // A Callisto world keeps what the physics worked out
+                    // about its place and its moons; only its codes are the
+                    // source's. The generator refreshes its temperature for
+                    // them afterwards. (A Book 6 world has none of this, and
+                    // is rebuilt exactly as before.)
+                    if w.callisto.is_some() {
+                        rebuilt.callisto = w.callisto.take();
+                        rebuilt.orbit_distance_mkm = w.orbit_distance_mkm;
+                        rebuilt.position_in_system = w.position_in_system;
+                        rebuilt.satellites = std::mem::take(&mut w.satellites);
+                    }
                     *w = rebuilt;
                 } else if let Some(n) = &spec.name {
                     w.name = n.clone();

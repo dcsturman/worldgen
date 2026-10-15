@@ -73,6 +73,10 @@ pub const SATURN_CLASS: (u8, u8, u8) = (225, 205, 145);
 pub const JUPITER_CLASS: (u8, u8, u8) = (215, 160, 110);
 /// An ice belt's scatter, where a rock belt uses the belt tones.
 pub const ICE_BELT: (u8, u8, u8) = (170, 205, 235);
+/// The main world on a Callisto map: a colour no body kind uses, so it
+/// stands out in a busy system, on the map and in the legend.
+pub const MAIN_WORLD: (u8, u8, u8) = (255, 110, 200);
+
 /// The ring marking a body a ship can land on and melt for fuel.
 pub const ICE_SOURCE_MARK: (u8, u8, u8, u8) = (140, 220, 255, 170);
 

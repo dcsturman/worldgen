@@ -105,6 +105,55 @@ pub fn main_world_position(atmosphere: i32, hydro: i32, roller: &mut impl Roller
     sig2(lo + (hi - lo) * step)
 }
 
+/// Is this a main world the system should be built to keep livable: people
+/// live there, and its UWP gives it air (atmosphere 2 to 9) and water?
+///
+/// A Callisto addition, not the rulebook's. Table 10 already places a
+/// habitable world (atmosphere 4 to 9) somewhere in the Temperate band, but
+/// anywhere from 1 to 30 °C, and puts very thin air (2 or 3) near the inner
+/// edge where it often comes out Hot. For play a populated world should be
+/// somewhere people would choose to live.
+pub fn is_livable_main_world(atmosphere: i32, hydro: i32, population: i32) -> bool {
+    (2..=9).contains(&atmosphere) && hydro >= 1 && population >= 1
+}
+
+/// The coolest and warmest mean temperatures a livable main world is placed
+/// at, in °C: the comfortable middle of the Temperate band (1 to 30 °C).
+pub const LIVABLE_TEMPERATURE_C: (f32, f32) = (10.0, 22.0);
+
+/// A livable main world's position (see [`is_livable_main_world`]): where
+/// its mean temperature comes out at a target in [`LIVABLE_TEMPERATURE_C`].
+/// One 1D picks the target, 1 the warm end and 6 the cool end, as Table 10's
+/// 1D runs from the inner end of a band to the outer. That is the same single
+/// die Table 10 rolls for these rows, so the dice that follow are the same
+/// ones (though a different position can change what they're rolled for).
+/// Rounded to three figures, not the rulebook's two: above 1 HD two figures
+/// are 10% steps (1.0, 1.1…), enough to move a world 7 °C off its target.
+pub fn livable_main_world_position(atmosphere: i32, hydro: i32, roller: &mut impl Roller) -> f32 {
+    use crate::callisto::temperature::temperature;
+    let (cool, warm) = LIVABLE_TEMPERATURE_C;
+    let step = (roller.d1().clamp(1, 6) - 1) as f32 / 5.0;
+    let target = warm - (warm - cool) * step;
+    // Water away from the star is ice (Section 6.5), as the system will
+    // later read it; temperature falls with distance, so bisect.
+    let celsius = |pos: f32| {
+        let ice = matches!(Zone::at(pos), Zone::Cold | Zone::Outer) && hydro >= 1;
+        temperature(pos, atmosphere, hydro, ice).celsius
+    };
+    let (mut lo, mut hi) = (0.3f32, 3.0f32);
+    for _ in 0..40 {
+        let mid = 0.5 * (lo + hi);
+        if celsius(mid) > target {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    let pos = 0.5 * (lo + hi);
+    let scale = 10f32.powi(2 - pos.log10().floor() as i32);
+    (pos * scale).round() / scale
+}
+
 /// "0.88 to 1.04", with anything after it (a parenthesised note) ignored.
 fn parse_band(text: &str) -> Option<(f32, f32)> {
     let (lo, rest) = text.trim().split_once(" to ")?;
@@ -482,6 +531,47 @@ mod tests {
             printed,
             ["below 0.5", "0.5 to 0.95", "0.95 to 1.7", "1.7 to 2.7", "2.7 and beyond"]
         );
+    }
+
+    /// Populated with air (2 to 9) and water: kept livable. Anything else, or
+    /// nobody living there, is placed by Table 10 as before.
+    #[test]
+    fn which_main_worlds_are_kept_livable() {
+        assert!(is_livable_main_world(6, 7, 9)); // Earth-like
+        assert!(is_livable_main_world(2, 4, 3)); // very thin air, but water
+        assert!(is_livable_main_world(9, 10, 1)); // tainted, a world ocean
+        assert!(!is_livable_main_world(6, 7, 0)); // nobody there
+        assert!(!is_livable_main_world(6, 0, 9)); // a desert
+        assert!(!is_livable_main_world(1, 4, 9)); // no air to speak of
+        assert!(!is_livable_main_world(10, 5, 9)); // exotic air
+    }
+
+    /// Every livable class lands in the comfortable middle of the Temperate
+    /// band, warmest on a 1 and coolest on a 6. Very thin air included: Table
+    /// 10 puts it near the inner edge, where it often comes out Hot.
+    #[test]
+    fn livable_main_worlds_sit_in_the_comfortable_middle() {
+        use crate::callisto::temperature::{TempBand, temperature};
+        let (cool, warm) = LIVABLE_TEMPERATURE_C;
+        for atm in 2..=9 {
+            for hyd in 1..=10 {
+                let mut prev = f32::INFINITY;
+                for d in 1..=6 {
+                    let pos = livable_main_world_position(atm, hyd, &mut Scripted::new(&[(D1, d)]));
+                    let ice = matches!(Zone::at(pos), Zone::Cold | Zone::Outer);
+                    let t = temperature(pos, atm, hyd, ice);
+                    assert_eq!(t.band, TempBand::Temperate, "atm {atm} hyd {hyd} 1D {d}: {t:?} at {pos} HD");
+                    // Rounding the position to three figures moves it under a degree.
+                    assert!(
+                        (cool - 1.5..=warm + 1.5).contains(&t.celsius),
+                        "atm {atm} hyd {hyd} 1D {d}: {} °C at {pos} HD",
+                        t.celsius
+                    );
+                    assert!(t.celsius <= prev, "atm {atm} hyd {hyd}: 1D {d} is warmer than 1D {}", d - 1);
+                    prev = t.celsius;
+                }
+            }
+        }
     }
 
     #[test]

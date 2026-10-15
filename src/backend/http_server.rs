@@ -1031,7 +1031,55 @@ fn resolve_decorations(
     hex: &str,
     name: &str,
 ) -> Result<WorldDecorations, DecorationError> {
-    decorations_or_else(params, || overrides::decorations_for(sector, hex, name))
+    decorations_or_else(params, || {
+        callisto_decorations(params, sector, hex, name)
+            .or_else(|| overrides::decorations_for(sector, hex, name))
+    })
+}
+
+/// A body's map decorations from Callisto's physics, when the request carries
+/// its system: `stellar` (and `pbg`, `worlds`) as `/api/system` takes them,
+/// plus `mw`/`mwuwp`, the main world's name and UWP, for a body that isn't
+/// the main world (they default to the request's own `name` and `uwp`).
+/// `season=near|far` draws a two-season world at one end of its year.
+///
+/// `None` without system parameters, under `generator=book6`, or when the
+/// body isn't in the generated system: the map then falls back to what the
+/// overrides state, as it always has.
+fn callisto_decorations(
+    params: &HashMap<String, String>,
+    sector: &str,
+    hex: &str,
+    name: &str,
+) -> Option<WorldDecorations> {
+    let stellar = params.get("stellar")?;
+    let generator = params
+        .get("generator")
+        .and_then(|g| Generator::parse(g))
+        .unwrap_or_else(default_generator);
+    if generator != Generator::Callisto {
+        return None;
+    }
+    let uwp = params.get("uwp")?;
+    let upstream = crate::api::UpstreamSystem {
+        sector,
+        hex,
+        name: params.get("mw").map_or(name, |s| s.as_str()),
+        uwp: params.get("mwuwp").map_or(uwp.as_str(), |s| s.as_str()),
+        pbg: params.get("pbg").map_or("", |s| s.as_str()),
+        stellar,
+        worlds: params.get("worlds").and_then(|w| w.trim().parse().ok()),
+    };
+    let (seed, constraints) = crate::api::system_from_upstream(&upstream).ok()?;
+    let system = catch_render(|| Generator::Callisto.generate(seed, constraints))
+        .ok()?
+        .ok()?;
+    let orbit = params.get("orbit").and_then(|o| o.trim().parse().ok());
+    let season = params
+        .get("season")
+        .map_or(crate::callisto::map::Season::Mean, |s| crate::callisto::map::Season::parse(s));
+    let world = crate::callisto::map::find_world(&system, name, orbit)?;
+    crate::callisto::map::map_decorations(world, season)
 }
 
 /// [`resolve_decorations`] with the override lookup passed in, so tests can

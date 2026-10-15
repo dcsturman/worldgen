@@ -108,6 +108,7 @@ impl BodyMeta {
             self.extra.push(("temperature-c", format!("{:.0}", t.celsius)));
             self.extra.push(("temperature-band", t.band.name().to_string()));
         }
+        self.extra.push(("type", world_type(w).to_string()));
         if let Some(c) = p.composition {
             self.extra.push(("composition", c.name().to_string()));
         }
@@ -116,6 +117,27 @@ impl BodyMeta {
         }
         if p.fit.is_strained() {
             self.extra.push(("fit", "strained".to_string()));
+        }
+        if let Some(s) = &p.spin {
+            self.extra.push(("rotation", s.rotation.name().to_string()));
+            if s.physics_rotation != s.rotation {
+                self.extra.push(("physics-rotation", s.physics_rotation.name().to_string()));
+            }
+            self.extra.push(("day-hours", format!("{:.1}", s.day_hours)));
+            self.extra.push(("year-days", format!("{:.1}", s.year_days)));
+            self.extra.push(("tilt", format!("{:.0}", s.tilt_deg)));
+            self.extra.push(("eccentricity", format!("{:.2}", s.eccentricity)));
+            if let Some((near, far)) = s.two_season {
+                self.extra.push(("two-season", format!("{}/{}", near.name(), far.name())));
+            }
+        }
+        self
+    }
+
+    /// A Callisto giant's kind as data-type, for a hover.
+    fn giant_type(mut self, gg: &GasGiant) -> Self {
+        if let Some(k) = gg.callisto {
+            self.extra.push(("type", k.name().to_string()));
         }
         self
     }
@@ -615,7 +637,8 @@ fn draw_bodies<R: Renderer + ?Sized>(r: &mut R, rings: &Rings<'_>) {
                 r.begin_group(
                     &BodyMeta::new(BodyKind::GasGiant, gg.name.clone())
                         .orbit(orbit, mkm)
-                        .class(giant_class(gg)),
+                        .class(giant_class(gg))
+                        .giant_type(gg),
                 );
                 draw_gas_giant(r, gg, cx, cy);
                 r.end_group();
@@ -673,7 +696,14 @@ fn draw_world<R: Renderer + ?Sized>(r: &mut R, w: &World, cx: f32, cy: f32) {
         r.stroke_ellipse(cx, cy, radius + 2.5, radius + 2.5, ICE_SOURCE_MARK, 1.0);
     }
     draw_moons(r, &w.satellites.sats, cx, cy, radius);
-    draw_label(r, cx + radius + 4.0, cy + 4.0, &w.name);
+    // A Callisto map's main world is labelled in its own colour. No ring
+    // around it: the name is marker enough, and a ring there crosses the
+    // moons drawn around the planet.
+    if w.is_mainworld() && w.callisto.is_some() {
+        draw_label_colored(r, cx + radius + 4.0, cy + 4.0, &w.name, MAIN_WORLD);
+    } else {
+        draw_label(r, cx + radius + 4.0, cy + 4.0, &w.name);
+    }
 }
 
 /// A world's disc colour: by what Callisto says it is, or Book 6's one tone.
@@ -735,6 +765,26 @@ fn world_kind(w: &World) -> String {
         (class, _) => class.name(),
     };
     kind.to_string()
+}
+
+/// What a Callisto body is, in words, for a hover: "Rocky world", "Ice
+/// belt", "Sub-Neptune", "Moon".
+fn world_type(w: &World) -> &'static str {
+    let Some(p) = w.callisto.as_deref() else {
+        return "World";
+    };
+    if let Some(m) = &p.moon {
+        return if m.ring.is_some() { "Ring" } else { "Moon" };
+    }
+    match (p.class, p.composition) {
+        (BodyClass::World, Some(Composition::IronRich)) => "Iron-rich world",
+        (BodyClass::World, Some(Composition::IceRock)) => "Ice-rock world",
+        (BodyClass::World, _) => "Rocky world",
+        (BodyClass::Belt, _) if p.ice_source => "Ice belt",
+        (BodyClass::Belt, _) => "Planetoid belt",
+        (BodyClass::SubNeptune, _) => "Sub-Neptune",
+        (BodyClass::IcyDwarf, _) => "Icy dwarf",
+    }
 }
 
 /// The legend's word for a giant.
@@ -1053,7 +1103,7 @@ fn draw_moons<R: Renderer + ?Sized>(
         let my = parent_cy + orbit_r * theta.sin() * TILT_RATIO;
         let mr = moon_radius_px(m.size);
         let (cr, cg, cb) = MOON_DISC;
-        r.begin_group(&BodyMeta::new(BodyKind::Moon, m.name.clone()).uwp(m.to_uwp()));
+        r.begin_group(&BodyMeta::new(BodyKind::Moon, m.name.clone()).uwp(m.to_uwp()).physics(m));
         r.fill_circle(mx, my, mr, (cr, cg, cb, 255));
         r.end_group();
     }
@@ -1372,8 +1422,14 @@ fn legend_rows(rings: &Rings<'_>) -> Vec<LegendRow> {
     let travel_to = |radius: f32| -> Option<f32> {
         Some(origin.as_ref().map_or(radius, |o| typical_separation_mkm(radius, o.radius_mkm)))
     };
+    // On a Callisto map the star is "Primary": the system's name is also
+    // its main world's, and two rows reading "Torpol" confused the table.
     let mut rows = vec![LegendRow {
-        name: system.name.clone(),
+        name: if system.callisto.is_some() {
+            "Primary".to_string()
+        } else {
+            system.name.clone()
+        },
         kind: None,
         color: LABEL,
         dist: "0.0".to_string(),
@@ -1472,6 +1528,7 @@ fn legend_rows(rings: &Rings<'_>) -> Vec<LegendRow> {
         // Tint the legend name to match the on-map label so the panel and
         // the map agree at a glance: amber gas giants, tan belts, white rest.
         let color = match (content, &*kind) {
+            (OrbitContent::World(w), _) if w.is_mainworld() && w.callisto.is_some() => MAIN_WORLD,
             // A Callisto body's name takes its disc's colour.
             (OrbitContent::World(w), _) if w.callisto.is_some() => world_color(w),
             (OrbitContent::GasGiant(g), _) if g.callisto.is_some() => giant_color(g),
@@ -1481,11 +1538,35 @@ fn legend_rows(rings: &Rings<'_>) -> Vec<LegendRow> {
         };
         rows.push(LegendRow {
             name: name.to_string(),
-            kind: (!kind.is_empty()).then_some(kind),
+            // A Callisto map's colours say what a body is (and its type is
+            // in the SVG's data-type), so the legend keeps its width for
+            // names; stars keep their label.
+            kind: (!kind.is_empty()
+                && !(system.callisto.is_some()
+                    && matches!(content, OrbitContent::World(_) | OrbitContent::GasGiant(_))))
+            .then_some(kind),
             temp: match content {
                 OrbitContent::World(w) => w.callisto.as_deref().and_then(|p| {
                     let t = p.temperature?;
-                    (p.class != BodyClass::SubNeptune).then(|| format!("{:.0}", t.celsius))
+                    if p.class == BodyClass::SubNeptune {
+                        return None;
+                    }
+                    // A two-season world: the near and far ends of its year.
+                    Some(match p.spin.as_ref().filter(|s| s.two_season.is_some()) {
+                        Some(s) => {
+                            let at = |f: f32| {
+                                crate::callisto::temperature::temperature(
+                                    p.position_hd * f,
+                                    w.atmosphere,
+                                    w.hydro,
+                                    p.hydro_is_ice,
+                                )
+                                .celsius
+                            };
+                            format!("{:.0}/{:.0}", at(1.0 - s.eccentricity), at(1.0 + s.eccentricity))
+                        }
+                        None => format!("{:.0}", t.celsius),
+                    })
                 }),
                 _ => None,
             },
@@ -1587,7 +1668,7 @@ fn fit_row_label(name: &str, kind: Option<&str>, max_w: f32) -> String {
 
 /// Width of a Callisto legend's °C column, taken from the left of the table
 /// so the names keep the room they have on a Book 6 map.
-const TEMP_COL_W: f32 = 40.0;
+const TEMP_COL_W: f32 = 56.0;
 
 /// Right edge of the °C column: where a Book 6 legend's names end.
 fn temp_col_right() -> f32 {
@@ -1725,6 +1806,50 @@ mod tests {
     fn regina() -> System {
         let mw = World::from_uwp("Regina", "A788899-A", false, true).unwrap();
         System::generate_system_seeded(0, mw)
+    }
+
+    /// Records what a world's drawing strokes and writes: each ellipse's
+    /// colour, and each label's text and colour.
+    #[derive(Default)]
+    struct Recorder {
+        ellipses: Vec<(u8, u8, u8)>,
+        labels: Vec<(String, (u8, u8, u8))>,
+    }
+
+    impl Renderer for Recorder {
+        fn fill_circle(&mut self, _: f32, _: f32, _: f32, _: (u8, u8, u8, u8)) {}
+        fn stroke_ellipse(&mut self, _: f32, _: f32, _: f32, _: f32, c: (u8, u8, u8, u8), _: f32) {
+            self.ellipses.push((c.0, c.1, c.2));
+        }
+        fn fill_text(&mut self, _: f32, _: f32, _: f32, text: &str, rgb: (u8, u8, u8)) {
+            self.labels.push((text.to_string(), rgb));
+        }
+    }
+
+    /// A Callisto main world is marked by its name in the main-world colour,
+    /// not by a ring: a ring around the planet crossed the moons drawn there.
+    #[test]
+    fn the_main_world_is_marked_by_its_name_not_a_ring() {
+        use crate::callisto::generate::generate_from_constraints_seeded;
+        use crate::systems::constraint::{PublishedCounts, SystemConstraints};
+        let mut with_moons = 0;
+        for seed in 0..50u64 {
+            let mut cs = SystemConstraints::from_main_world("Regina", "A788899-C").unwrap();
+            cs.counts = PublishedCounts::None;
+            let Ok(sys) = generate_from_constraints_seeded(seed, cs) else { continue };
+            let Some(mw) = sys.orbit_slots.iter().flatten().find_map(|c| match c {
+                OrbitContent::World(w) if w.is_mainworld() => Some(w),
+                _ => None,
+            }) else {
+                continue;
+            };
+            let mut r = Recorder::default();
+            draw_world(&mut r, mw, 100.0, 100.0);
+            assert!(!r.ellipses.contains(&MAIN_WORLD), "seed {seed}: the main world is ringed");
+            assert!(r.labels.contains(&("Regina".to_string(), MAIN_WORLD)), "seed {seed}: {:?}", r.labels);
+            with_moons += usize::from(!mw.satellites.sats.is_empty());
+        }
+        assert!(with_moons >= 5, "only {with_moons} main worlds with moons");
     }
 
     #[test]

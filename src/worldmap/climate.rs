@@ -344,6 +344,40 @@ pub enum ClimateModel {
     /// One face permanently toward the star: climate is a function of the
     /// angle from the substellar point, not latitude.
     TideLocked(TideLockedClimate),
+    /// Latitude-banded like `Rotating`, but warmed by Callisto's physics
+    /// (the world's mean temperature and tilt) instead of the UWP's guess.
+    Warmed(WarmedClimate),
+}
+
+/// A rotating world's temperature from its physics: a bias that sets its
+/// mean, and a tilt-driven stretch of the equator-to-pole gradient about that
+/// mean.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WarmedClimate {
+    pub bias: f64,
+    pub gradient: f64,
+}
+
+impl WarmedClimate {
+    fn apply(&self, raw: f64) -> f64 {
+        (ROTATING_MEAN_TEMP + (raw - ROTATING_MEAN_TEMP) * self.gradient + self.bias).clamp(0.0, 1.0)
+    }
+}
+
+/// The map-temperature bias for a mean surface temperature in °C. The map
+/// works on a 0–1 scale whose rotating mean is [`ROTATING_MEAN_TEMP`];
+/// calibrated so a 15 °C world gets the bias an Earth-like UWP always had
+/// (−0.02), each degree adding a hundredth: the scale spans roughly the 100
+/// degrees between a pole and an equator.
+pub fn bias_for_mean_temp(celsius: f64) -> f64 {
+    (-0.02 + (celsius - 15.0) * 0.01).clamp(-0.9, 0.9)
+}
+
+/// How a world's tilt stretches its equator-to-pole gradient: Earth's 23°
+/// is about 1; no tilt keeps the poles colder (1.2), and a large tilt spreads
+/// the year's warmth toward them until at 90° the gradient is nearly flat.
+pub fn gradient_for_tilt(tilt_deg: f64) -> f64 {
+    (1.2 - tilt_deg / 100.0).clamp(0.3, 1.2)
 }
 
 /// Parameters of a locked world's climate. Built without touching the map's
@@ -528,11 +562,21 @@ impl ClimateModel {
     /// (not mixed with the UWP) — it resolves a lock with no stated
     /// substellar point. Draws nothing from any RNG.
     pub fn from_decorations(decorations: &WorldDecorations, uwp: &Uwp, seed: u64) -> Self {
+        // Callisto's mean temperature, where given, replaces the UWP's guess.
+        let bias = decorations
+            .mean_temp_c
+            .map_or_else(|| temperature_bias(uwp), |c| bias_for_mean_temp(f64::from(c)));
         let Some(lock) = &decorations.tide_locked else {
-            return Self::Rotating;
+            if decorations.mean_temp_c.is_none() && decorations.tilt_deg.is_none() {
+                return Self::Rotating;
+            }
+            return Self::Warmed(WarmedClimate {
+                bias,
+                gradient: decorations.tilt_deg.map_or(1.0, |t| gradient_for_tilt(f64::from(t))),
+            });
         };
         let spread = locked_spread(uwp.atmosphere());
-        let mean = ROTATING_MEAN_TEMP + temperature_bias(uwp);
+        let mean = ROTATING_MEAN_TEMP + bias;
         let t_night = mean - spread * LOCKED_CURVE_MEAN;
         Self::TideLocked(TideLockedClimate {
             substellar: lock.resolve(seed).to_unit_vector(),
@@ -551,7 +595,7 @@ impl ClimateModel {
     /// Unit vector to the substellar point, if the world is locked.
     pub fn substellar(&self) -> Option<[f64; 3]> {
         match self {
-            Self::Rotating => None,
+            Self::Rotating | Self::Warmed(_) => None,
             Self::TideLocked(tl) => Some(tl.substellar),
         }
     }
@@ -560,7 +604,7 @@ impl ClimateModel {
     /// rotating world, which has no such point.
     pub fn theta(&self, p: &[f64; 3]) -> Option<f64> {
         match self {
-            Self::Rotating => None,
+            Self::Rotating | Self::Warmed(_) => None,
             Self::TideLocked(tl) => Some(tl.theta(p)),
         }
     }
@@ -571,6 +615,7 @@ impl ClimateModel {
     pub fn base_temperature(&self, p: &[f64; 3], uwp: &Uwp) -> f64 {
         match self {
             Self::Rotating => adjust_temperature(temperature_at(p, TEMP_AMPLITUDE), uwp),
+            Self::Warmed(w) => w.apply(temperature_at(p, TEMP_AMPLITUDE)),
             Self::TideLocked(tl) => tl.curve(tl.theta(p)).clamp(0.0, 1.0),
         }
     }
@@ -581,6 +626,7 @@ impl ClimateModel {
     pub fn surface_temperature(&self, p: &[f64; 3], tf: &TempField, uwp: &Uwp) -> f64 {
         match self {
             Self::Rotating => adjust_temperature(temperature_at_wobbled(p, tf), uwp),
+            Self::Warmed(w) => w.apply(temperature_at_wobbled(p, tf)),
             Self::TideLocked(tl) => tl.surface_temperature(p, tf),
         }
     }
@@ -589,7 +635,7 @@ impl ClimateModel {
     /// substellar point; a rotating world's is the field as sampled.
     pub fn humidity(&self, p: &[f64; 3], field: &HumidityField, uwp: &Uwp) -> f64 {
         match self {
-            Self::Rotating => field.sample(p, uwp),
+            Self::Rotating | Self::Warmed(_) => field.sample(p, uwp),
             Self::TideLocked(tl) => tl.humidity(p, field.sample(p, uwp)),
         }
     }
@@ -599,7 +645,7 @@ impl ClimateModel {
     /// first. A point is liquid water iff this is below `sea_level`.
     pub fn water_potential(&self, e: f64, p: &[f64; 3]) -> f64 {
         match self {
-            Self::Rotating => e,
+            Self::Rotating | Self::Warmed(_) => e,
             Self::TideLocked(tl) => tl.water_potential(e, p),
         }
     }
@@ -608,7 +654,7 @@ impl ClimateModel {
     /// false on a rotating world, whose ice is purely a matter of temperature.
     pub fn under_ice_sheet(&self, p: &[f64; 3], tf: &TempField) -> bool {
         match self {
-            Self::Rotating => false,
+            Self::Rotating | Self::Warmed(_) => false,
             Self::TideLocked(tl) => tl.under_sheet(tl.theta(p), tf.polar_roughness(p)),
         }
     }
@@ -619,7 +665,7 @@ impl ClimateModel {
     /// locates a locked world's ice sheet, which buries the relief under it.
     pub fn above_sea(&self, e: f64, p: &[f64; 3], sea_level: f64, hyd: u8, tf: &TempField) -> f64 {
         match self {
-            Self::Rotating => amplify_elevation(e - sea_level, hyd),
+            Self::Rotating | Self::Warmed(_) => amplify_elevation(e - sea_level, hyd),
             Self::TideLocked(tl) => {
                 let theta = tl.theta(p);
                 let above = amplify_elevation(tl.potential_at(e, theta) - sea_level, tl.relief_hyd);

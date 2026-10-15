@@ -31,6 +31,18 @@ pub struct Slot {
     pub published_moons: Vec<(Option<String>, Option<PartialUwp>)>,
     /// Its moons and ring, once rolled (Section 9).
     pub moons: Vec<Moon>,
+    /// Its eccentricity, rotation and tilt, once rolled (Section 10).
+    pub spin: Option<SpinRolls>,
+}
+
+/// Section 10's rolls for one planet; the year and seasons are worked out
+/// when the world is built.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SpinRolls {
+    pub eccentricity: f32,
+    pub rotation: crate::callisto::rotation::Rotation,
+    pub physics_rotation: crate::callisto::rotation::Rotation,
+    pub tilt_deg: f32,
 }
 
 /// What an orbit holds.
@@ -550,6 +562,53 @@ pub fn roll_all_moons(
         let named_here = s.published_moons.len() + name.as_deref().map_or(0, named);
         let count = total.map(|t| t.saturating_sub(named_here));
         s.moons = roll_moons(parent, s.zone(), s.position, star.moon_limit, count, roller);
+    }
+}
+
+/// The most eccentric orbit a livable main world keeps: Table 32's last value
+/// below 0.20, where two seasons begin (Section 10.1).
+pub const LIVABLE_MAX_ECCENTRICITY: f32 = 0.15;
+
+/// Roll every planet's eccentricity, rotation and tilt (Section 10), in
+/// order from the star: worlds, sub-Neptunes, icy dwarfs and the main world;
+/// belts and giants have no day or seasons in these rules. The main world is
+/// never locked by the rules (10.2): its physics is recorded, and it rolls a
+/// free day for the record.
+///
+/// A livable main world (see [`crate::callisto::orbits::is_livable_main_world`])
+/// keeps an eccentricity below 0.20, so its year never swings between two
+/// temperature bands (Section 10.1). Its die is still rolled, so every other
+/// body rolls exactly as before.
+pub fn roll_all_spins(
+    slots: &mut [Slot],
+    star: &StarData,
+    close_companion: bool,
+    main_livable: bool,
+    roller: &mut impl Roller,
+) {
+    use crate::callisto::rotation::{Rotation, eccentricity, free_day, rotation, tilt};
+    for s in slots.iter_mut() {
+        let main = matches!(s.fill, Fill::MainWorld);
+        let planet = main || matches!(&s.fill, Fill::Body(b) if b.class != BodyClass::Belt);
+        if !planet {
+            continue;
+        }
+        let inside = s.position <= star.lock_limit_hd;
+        let large_moon = s.moons.iter().any(|m| m.large);
+        let rolled = eccentricity(inside, close_companion, roller);
+        let e = if main && main_livable { rolled.min(LIVABLE_MAX_ECCENTRICITY) } else { rolled };
+        let physics = rotation(inside, e, large_moon, roller);
+        let rotation = if main && !matches!(physics, Rotation::Free { .. }) {
+            free_day(large_moon, roller)
+        } else {
+            physics
+        };
+        s.spin = Some(SpinRolls {
+            eccentricity: e,
+            rotation,
+            physics_rotation: physics,
+            tilt_deg: tilt(large_moon, inside, roller),
+        });
     }
 }
 

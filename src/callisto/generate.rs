@@ -20,11 +20,12 @@ use crate::callisto::fill::{
 use crate::callisto::populate::{
     Body, Fill, Pin, Slot, close_out, fill_open, fuel_line, is_ice_source, place_giants,
     place_ice_belt, place_ice_on_world, place_pins, place_published_belts, place_published_worlds,
-    roll_all_moons, roll_codes,
+    roll_all_moons, roll_all_spins, roll_codes,
 };
 use crate::callisto::layout::{Layout, OrbitInfo, Separation, book6_orbit_mkm};
 use crate::callisto::orbits::{
-    Gap, MAX_POSITION_HD, OrbitPlan, Zone, lay_out, main_world_position, number_of_orbits,
+    Gap, MAX_POSITION_HD, OrbitPlan, Zone, is_livable_main_world, lay_out, livable_main_world_position,
+    main_world_position, number_of_orbits,
 };
 use crate::callisto::stars::{
     CStar, Move, SeparationRow, ThirdStar, clear_main_world, companion_from_mass,
@@ -100,6 +101,9 @@ pub fn generate(
     }
     let mut main_world = main_world(&constraints)?;
     let habitable = (4..=9).contains(&main_world.atmosphere) && main_world.hydro >= 1;
+    // Populated with air and water: placed and orbited to stay comfortable.
+    let livable = !constraints.rulebook_strict
+        && is_livable_main_world(main_world.atmosphere, main_world.hydro, main_world.get_population());
 
     // Steps 1 and 2: the stars, as listed or rolled.
     let listed: Vec<StarSpec> = constraints
@@ -165,6 +169,7 @@ pub fn generate(
     let stated_mkm = stated_main_world_mkm(&constraints, &main_world.name);
     let mw_position = match stated_mkm {
         Some(mkm) => mkm / host_data.hd_mkm,
+        None if livable => livable_main_world_position(main_world.atmosphere, main_world.hydro, roller),
         None => main_world_position(main_world.atmosphere, main_world.hydro, roller),
     };
 
@@ -385,6 +390,7 @@ pub fn generate(
         fit: Fit::Tuned,
         oddities: Vec::new(),
         moon: None,
+        spin: None,
     }));
 
     // Step 15: moons and rings (Section 9), around every star's bodies.
@@ -416,6 +422,14 @@ pub fn generate(
             &named_moons,
             roller,
         );
+    }
+
+    // Steps 17 and 18: eccentricity, rotation and tilt (Section 10). A
+    // companion inside 20 HD stirs up the orbits (+1 on eccentricity).
+    let close_companion = companions.iter().any(|c| c.separation_hd < 20.0);
+    roll_all_spins(&mut primary_slots, &pdata, close_companion, livable, roller);
+    for (c, slots) in companions.iter().zip(companion_slots.iter_mut()) {
+        roll_all_spins(slots, &c.star.data(), close_companion, livable, roller);
     }
 
     // What the main world's placement had to do or couldn't (Section 14.2),
@@ -566,7 +580,61 @@ pub fn generate(
         let unresolved = crate::systems::overrides::apply_post(&mut system, &constraints.post);
         system.dropped.extend(unresolved);
     }
+    // A lock a source states (the only way a main world is locked, Section
+    // 10.2) is the record's rotation, whatever was rolled.
+    lock_where_stated(&mut system);
+    // The post pass can give a world a source's UWP after its temperature
+    // was worked out (Traefar, "the next world out from Torpol"): read it
+    // again from the codes it ended with.
+    refresh_temperatures(&mut system);
     Ok(system)
+}
+
+/// Every Callisto world's temperature, ice and two seasons, from the codes
+/// it has now (Section 8.5).
+fn refresh_temperatures(system: &mut System) {
+    use crate::callisto::rotation::two_season;
+    for slot in system.orbit_slots.iter_mut().flatten() {
+        let OrbitContent::World(w) = slot else { continue };
+        let (atm, hyd) = (w.atmosphere, w.hydro);
+        let Some(p) = w.callisto.as_deref_mut() else { continue };
+        if p.class == BodyClass::Belt || p.moon.is_some() {
+            continue;
+        }
+        p.hydro_is_ice = matches!(p.zone, Zone::Cold | Zone::Outer) && hyd >= 1;
+        let ice = p.hydro_is_ice;
+        p.temperature = Some(temperature(p.position_hd, atm, hyd, ice));
+        let pos = p.position_hd;
+        if let Some(spin) = p.spin.as_mut() {
+            spin.two_season = two_season(spin.eccentricity, |x| temperature(x, atm, hyd, ice).band, pos);
+        }
+    }
+    for c in [system.secondary.as_deref_mut(), system.tertiary.as_deref_mut()]
+        .into_iter()
+        .flatten()
+    {
+        refresh_temperatures(c);
+    }
+}
+
+/// Every world whose decorations state a tidal lock turns as locked.
+fn lock_where_stated(system: &mut System) {
+    use crate::callisto::rotation::Rotation;
+    for slot in system.orbit_slots.iter_mut().flatten() {
+        if let OrbitContent::World(w) = slot
+            && w.decorations().tide_locked.is_some()
+            && let Some(spin) = w.callisto.as_deref_mut().and_then(|p| p.spin.as_mut())
+        {
+            spin.rotation = Rotation::StarLocked;
+            spin.day_hours = spin.year_days * 24.0;
+        }
+    }
+    for c in [system.secondary.as_deref_mut(), system.tertiary.as_deref_mut()]
+        .into_iter()
+        .flatten()
+    {
+        lock_where_stated(c);
+    }
 }
 
 /// The main world, which must be fully specified (as for Book 6).
@@ -1014,6 +1082,7 @@ fn build_system(
                     p.temperature = Some(t);
                     p.fit = assess(strains, adjustments);
                     p.oddities = oddities;
+                    p.spin = spin_of(slot, data.mass, distance, atm, hyd, p.hydro_is_ice);
                 }
                 let gravity = w.callisto.as_deref().and_then(|p| p.gravity).unwrap_or(1.0);
                 let parent = Parent::World { size: w.size, gravity };
@@ -1102,6 +1171,7 @@ fn build_system(
                     fit: assess(Vec::new(), adjustments),
                     oddities,
                     moon: None,
+                    spin: spin_of(slot, data.mass, distance, c.atmosphere, c.hydro, c.hydro_is_ice),
                 }));
                 let parent = match b.class {
                     BodyClass::SubNeptune => Parent::SubNeptune { size: c.size },
@@ -1160,6 +1230,35 @@ fn build_system(
     system
 }
 
+/// A planet's orbit and spin from its rolls (Section 10): the year from its
+/// distance and its star's mass, its day, and two seasons if its eccentric
+/// year spans two temperature bands.
+fn spin_of(
+    slot: &Slot,
+    star_mass: f32,
+    distance_mkm: f32,
+    atmosphere: i32,
+    hydro: i32,
+    hydro_is_ice: bool,
+) -> Option<crate::callisto::body::Spin> {
+    use crate::callisto::rotation::{two_season, year_days};
+    let r = slot.spin?;
+    let year = year_days(distance_mkm, star_mass);
+    Some(crate::callisto::body::Spin {
+        eccentricity: r.eccentricity,
+        rotation: r.rotation,
+        physics_rotation: r.physics_rotation,
+        day_hours: r.rotation.day_hours(year),
+        tilt_deg: r.tilt_deg,
+        year_days: year,
+        two_season: two_season(
+            r.eccentricity,
+            |p| temperature(p, atmosphere, hydro, hydro_is_ice).band,
+            slot.position,
+        ),
+    })
+}
+
 /// The satellite `World`s for a slot's moons and rings, and any moons a
 /// source placed there by orbit: each at its planet's position, with its
 /// temperature (and a giant's tidal heating, Section 9.5).
@@ -1201,6 +1300,7 @@ fn moon_worlds(slot: &Slot, parent: Parent, parent_slot: usize, ice: IceAvailabi
                 temperature: (!m.is_ring()).then_some(t),
                 fit: Fit::Tuned,
                 oddities: Vec::new(),
+                spin: None,
                 moon: Some(MoonInfo {
                     radii: m.radii,
                     band: m.band,
@@ -1412,7 +1512,11 @@ mod tests {
             // example gives only the main world's (tested in moons.rs), so
             // these come from the seeded RNG.
         ]);
-        let system = generate(noricum_constraints(), &mut r).unwrap();
+        // The rulebook's own procedure: Noricum is populated with air and
+        // water, so without this it would be placed for comfort instead.
+        let mut cs = noricum_constraints();
+        cs.rulebook_strict = true;
+        let system = generate(cs, &mut r).unwrap();
         assert_eq!(r.remaining(), 0);
         let layout = system.callisto.as_deref().unwrap();
         let positions: Vec<f32> = layout.orbits.iter().map(|o| o.position_hd).collect();
@@ -1638,6 +1742,57 @@ mod tests {
         assert_eq!(temperate, habitable, "{:.1}% of habitable main worlds came out Temperate", t * 100.0);
     }
 
+    /// A populated main world with air (2 to 9) and water, generated freely:
+    /// it lands in the comfortable middle of the Temperate band, and its year
+    /// never swings between two bands. Very thin air included, which Table 10
+    /// alone often leaves Hot.
+    #[test]
+    fn livable_main_worlds_are_comfortable_all_year() {
+        use crate::callisto::orbits::LIVABLE_TEMPERATURE_C;
+        let (cool, warm) = LIVABLE_TEMPERATURE_C;
+        let mut checked = 0u32;
+        for seed in 0..2_000u64 {
+            let _g = crate::util::RngScope::new(seed ^ 0x11fe);
+            let atm = 2 + (crate::util::roll_2d6() - 2) * 7 / 10; // 2 to 9
+            let hyd = (crate::util::roll_2d6() - 2).clamp(1, 10);
+            drop(_g);
+            let uwp = format!(
+                "C7{}{}777-9",
+                crate::util::value_to_ehex(atm as u32),
+                crate::util::value_to_ehex(hyd as u32)
+            );
+            let mut cs = SystemConstraints::from_main_world("Test", &uwp).unwrap();
+            cs.counts = PublishedCounts::None;
+            let Ok(s) = generate_from_constraints_seeded(seed, cs) else { continue };
+            let mw = std::iter::once(&s)
+                .chain(s.secondary.as_deref())
+                .chain(s.tertiary.as_deref())
+                .flat_map(|x| x.orbit_slots.iter().flatten())
+                .find_map(|c| match c {
+                    OrbitContent::World(w) if w.is_mainworld() => Some(w),
+                    _ => None,
+                })
+                .unwrap();
+            let p = mw.callisto.as_deref().unwrap();
+            // A main world around a star that can't host one is strained
+            // wherever it goes (Section 14.2); this is about placement.
+            if matches!(p.fit, crate::callisto::body::Fit::Strained { .. }) {
+                continue;
+            }
+            checked += 1;
+            let t = p.temperature.unwrap();
+            assert!(
+                (cool - 1.5..=warm + 1.5).contains(&t.celsius),
+                "seed {seed} {uwp}: {} °C",
+                t.celsius
+            );
+            let spin = p.spin.as_ref().unwrap();
+            assert!(spin.eccentricity < 0.2, "seed {seed} {uwp}: eccentricity {}", spin.eccentricity);
+            assert!(spin.two_season.is_none(), "seed {seed} {uwp}: two seasons {:?}", spin.two_season);
+        }
+        assert!(checked > 1_500, "only {checked} systems checked");
+    }
+
     /// Section 9 over 1,000 free systems: no moon beyond its planet's
     /// stability limit (Table 30), and about one moon of a world in six is a
     /// large one.
@@ -1687,6 +1842,45 @@ mod tests {
         assert!((0.1..=0.25).contains(&rate), "large moons: {:.1}% of {world_moons}", rate * 100.0);
     }
 
+    /// Section 10 over 1,000 free systems: the main world is never locked by
+    /// the rules (its physics is recorded), other planets inside the lock
+    /// limit are locked or in resonance, and every planet has a year and a
+    /// day.
+    #[test]
+    fn rotation_follows_the_lock_limit() {
+        use crate::callisto::rotation::Rotation;
+        let (mut mw_physics_locked, mut others_inside) = (0u32, 0u32);
+        for seed in 0..1_000 {
+            let mut cs = SystemConstraints::from_main_world("Test", "A867977-C").unwrap();
+            cs.counts = PublishedCounts::None;
+            let s = generate_from_constraints_seeded(seed, cs).unwrap();
+            for sys in std::iter::once(&s).chain(s.secondary.as_deref()).chain(s.tertiary.as_deref()) {
+                let lock = sys.callisto.as_ref().unwrap().star.lock_limit_hd;
+                for slot in sys.orbit_slots.iter().flatten() {
+                    let OrbitContent::World(w) = slot else { continue };
+                    let Some(p) = w.callisto.as_deref() else { continue };
+                    let Some(spin) = &p.spin else { continue };
+                    assert!(spin.year_days > 0.0 && spin.day_hours > 0.0, "seed {seed}");
+                    if w.is_mainworld() {
+                        assert!(matches!(spin.rotation, Rotation::Free { .. }), "seed {seed}: main world locked");
+                        if spin.physics_rotation != spin.rotation {
+                            mw_physics_locked += 1;
+                        }
+                    } else if p.position_hd <= lock {
+                        others_inside += 1;
+                        assert!(
+                            matches!(spin.rotation, Rotation::StarLocked | Rotation::Resonance32),
+                            "seed {seed}: {} inside the lock limit turns freely",
+                            w.name
+                        );
+                    }
+                }
+            }
+        }
+        assert!(others_inside > 100, "only {others_inside} planets inside a lock limit");
+        assert!(mw_physics_locked > 0, "no main world's physics said locked");
+    }
+
     #[test]
     fn free_systems_are_deterministic_and_well_formed() {
         for seed in 0..300 {
@@ -1734,6 +1928,7 @@ mod dump {
             ("Trojan Reach", "2424", "Hilfer", "BA5077A-6", "400", "M6 V", Some(3)),
             ("Spinward Marches", "1717", "Mora", "AA99AC7-F", "503", "F0 V", Some(9)),
             ("Trojan Reach", "1919", "Thebus", "B534320-7", "823", "M3 V", Some(15)),
+            ("Trojan Reach", "2221", "Torpol", "B55A77A-8", "624", "F4 V", Some(16)),
         ];
         for (sector, hex, name, uwp, pbg, stellar, worlds) in systems {
             let (seed, cs) = system_from_upstream(&UpstreamSystem {
