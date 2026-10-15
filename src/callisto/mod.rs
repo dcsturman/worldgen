@@ -19,6 +19,7 @@ pub mod generate;
 pub mod layout;
 pub mod map;
 pub mod moons;
+pub mod names;
 pub mod orbits;
 pub mod populate;
 pub mod rotation;

@@ -604,6 +604,11 @@ impl ClimateModel {
         })
     }
 
+    /// Whether the world's seas are fluid (non-water) oceans.
+    pub fn is_fluid(&self) -> bool {
+        matches!(self, Self::Warmed(w) if w.fluid)
+    }
+
     pub fn is_tide_locked(&self) -> bool {
         matches!(self, Self::TideLocked(_))
     }

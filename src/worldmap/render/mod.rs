@@ -75,8 +75,8 @@ const PNG_RASTER_SCALE: f64 = 1.0;
 pub const LEGEND_HEIGHT: f64 = 135.0;
 
 pub fn render_svg(map: &WorldMap) -> String {
-    let raster = raster::render_terrain(map, SVG_RASTER_W, SVG_RASTER_H);
-    assemble_svg(map, &raster)
+    let (raster, colors) = raster::render_terrain_counted(map, SVG_RASTER_W, SVG_RASTER_H);
+    assemble_svg(map, &raster, &Legend::for_map(map, &colors))
 }
 
 /// Wrap a precomputed RGBA8 raster (already at SVG_RASTER_W × SVG_RASTER_H)
@@ -85,7 +85,7 @@ pub fn render_svg(map: &WorldMap) -> String {
 /// legend strip. Split out from `render_svg` so callers chunking the
 /// per-pixel raster across event-loop turns can run the heavy raster
 /// passes separately and call this last to assemble the final string.
-pub fn assemble_svg(map: &WorldMap, raster: &[u8]) -> String {
+pub fn assemble_svg(map: &WorldMap, raster: &[u8], legend: &Legend) -> String {
     let total_h = SHEET_HEIGHT + LEGEND_HEIGHT;
     let mut r = svg::SvgRenderer::new(SHEET_WIDTH, total_h);
     match raster_to_png(raster, SVG_RASTER_W, SVG_RASTER_H) {
@@ -97,7 +97,7 @@ pub fn assemble_svg(map: &WorldMap, raster: &[u8]) -> String {
         }
     }
     draw_overlay(&mut r, map);
-    draw_legend(&mut r, 0.0, SHEET_HEIGHT, SHEET_WIDTH, LEGEND_HEIGHT);
+    draw_legend(&mut r, legend, 0.0, SHEET_HEIGHT, SHEET_WIDTH, LEGEND_HEIGHT);
     r.into_string()
 }
 
@@ -129,7 +129,8 @@ pub fn render_png_scaled(map: &WorldMap, scale: f32) -> Result<Vec<u8>, String> 
     // solid fill so we don't waste compute rasterizing a large empty band.
     let map_pixel_w = (SHEET_WIDTH * effective_scale).ceil() as u32;
     let map_pixel_h = (SHEET_HEIGHT * effective_scale).ceil() as u32;
-    let raster = raster::render_terrain(map, map_pixel_w, map_pixel_h);
+    let (raster, colors) = raster::render_terrain_counted(map, map_pixel_w, map_pixel_h);
+    let legend = &Legend::for_map(map, &colors);
     let total_pixel_h = (total_h * effective_scale).ceil() as u32;
     let mut r = png::PngRenderer::from_raster_with_extra_height(
         &raster,
@@ -140,7 +141,7 @@ pub fn render_png_scaled(map: &WorldMap, scale: f32) -> Result<Vec<u8>, String> 
         total_h,
     )?;
     draw_overlay(&mut r, map);
-    draw_legend(&mut r, 0.0, SHEET_HEIGHT, SHEET_WIDTH, LEGEND_HEIGHT);
+    draw_legend(&mut r, legend, 0.0, SHEET_HEIGHT, SHEET_WIDTH, LEGEND_HEIGHT);
     r.encode()
 }
 
@@ -496,6 +497,61 @@ const LEGEND_TERRAINS: &[(Color, &str)] = &[
     (Color::from_palette(C_SNOW), "Snow / glacier"),
 ];
 
+/// A terrain painted on less than this share of the planet is left out of
+/// the legend: a speck nobody would look for.
+const LEGEND_MIN_SHARE: f64 = 0.001;
+
+/// The terrain half of a map's legend: only the terrains it paints, in
+/// [`LEGEND_TERRAINS`] order, labelled for its world. Most worlds use far
+/// fewer than all seventeen, and several swatches are close in color, so
+/// listing only what's there makes the key readable.
+#[derive(Debug, Clone)]
+pub struct Legend {
+    terrains: Vec<(Color, &'static str)>,
+}
+
+impl Legend {
+    /// From the raster's base-color counts ([`raster::RasterJob::base_colors`]).
+    /// A blended color counts toward its nearest swatch, as the eye reads it.
+    pub fn for_map(map: &WorldMap, colors: &raster::BaseColors) -> Legend {
+        let dist = |a: (u8, u8, u8), b: Color| {
+            let d = |x: u8, y: u8| (i32::from(x) - i32::from(y)).pow(2);
+            d(a.0, b.0) + d(a.1, b.1) + d(a.2, b.2)
+        };
+        let mut painted = vec![0u64; LEGEND_TERRAINS.len()];
+        for (&c, &n) in colors {
+            if let Some(i) = (0..LEGEND_TERRAINS.len()).min_by_key(|&i| dist(c, LEGEND_TERRAINS[i].0)) {
+                painted[i] += u64::from(n);
+            }
+        }
+        let total: u64 = painted.iter().sum();
+        let fluid = map.climate.is_fluid();
+        let terrains = LEGEND_TERRAINS
+            .iter()
+            .zip(&painted)
+            .filter(|(_, n)| total > 0 && **n as f64 >= LEGEND_MIN_SHARE * total as f64)
+            .map(|(&(color, label), _)| (color, if fluid { fluid_label(label) } else { label }))
+            .collect();
+        Legend { terrains }
+    }
+}
+
+/// A fluid-ocean world's names for the swatches its map uses: the seas are
+/// ammonia-water, and nothing grows on the land, so the vegetation names
+/// for its dry colors would mislead.
+fn fluid_label(label: &'static str) -> &'static str {
+    match label {
+        "Deep ocean" => "Ammonia sea",
+        "Coastal shelf" => "Shallow sea",
+        "Sea ice" => "Ammonia ice",
+        "Tundra" => "Bare rock",
+        "Steppe" => "Gravel plains",
+        "Desert" => "Regolith plains",
+        "Snow / glacier" => "Frost",
+        other => other,
+    }
+}
+
 /// Settlement entries for the legend (tier, starport flag, label). The
 /// `starport` boolean is true for the last row so the glyph renders in
 /// red — matches the live map's starport ink.
@@ -508,9 +564,9 @@ const LEGEND_SETTLEMENTS: &[(CityTier, bool, &str)] = &[
 ];
 
 /// Draw the legend strip into the rect (`x`, `y`, `w`, `h`) on the given
-/// renderer. Layout is a 5-column × 4-row grid: 15 terrain swatches in the
-/// first 3 rows, 5 settlement glyphs in the bottom row.
-fn draw_legend<R: Renderer + ?Sized>(r: &mut R, x: f64, y: f64, w: f64, h: f64) {
+/// renderer. Layout is a 5-column grid: up to four rows of the terrains the
+/// map uses ([`Legend`]), then a row of the 5 settlement glyphs.
+fn draw_legend<R: Renderer + ?Sized>(r: &mut R, legend: &Legend, x: f64, y: f64, w: f64, h: f64) {
     // Match the page color so the legend reads as part of the same printed
     // surface, not a separate cream card glued to the bottom.
     let bg = Color::rgba(
@@ -569,7 +625,7 @@ fn draw_legend<R: Renderer + ?Sized>(r: &mut R, x: f64, y: f64, w: f64, h: f64) 
         0.6,
     );
 
-    for (i, (color, label)) in LEGEND_TERRAINS.iter().enumerate() {
+    for (i, (color, label)) in legend.terrains.iter().enumerate() {
         let col = i % cols;
         let row = i / cols;
         let cx0 = x + pad_x + col as f64 * cell_w;
