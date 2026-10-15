@@ -95,6 +95,29 @@ pub struct Physics {
     /// Its orbit and spin (Section 10): eccentricity, rotation, tilt, year.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spin: Option<Spin>,
+    /// What a source says of this body's settlement columns, which the
+    /// settlement rolls (Section 11) keep. Generation only.
+    #[serde(skip)]
+    pub stated: Option<crate::systems::constraint::PartialUwp>,
+    /// Where it stands to the system's nearest fuel source (Section 6.6),
+    /// which Table 36 and Table 38 read. Generation only.
+    #[serde(skip)]
+    pub fuel: NearFuel,
+    /// Its settlement's spaceport roll (Table 39), for a fuel depot placed
+    /// after every body is settled. Generation only.
+    #[serde(skip)]
+    pub port_roll: Option<i32>,
+}
+
+/// A body's relation to the system's nearest fuel source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NearFuel {
+    #[default]
+    No,
+    /// The source itself, or a moon of a giant that is.
+    Source,
+    /// A moon of a world or belt that is.
+    MoonOfSource,
 }
 
 /// A planet's orbit and spin (Section 10).

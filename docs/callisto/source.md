@@ -846,15 +846,15 @@ Roll 2D − 2 with the DMs in Table 36. A result below 0 is 0. The result is nev
 | Belt | −4 |
 | **Rows for every body** |  |
 | The system's nearest fuel source, or a moon of it | +1 |
-| Main world tech level 12 or more | +2 |
-| Main world tech level 7 or 8 | +1 |
-| Main world tech level 7 or less | −2 |
+| Main world tech level 12 or more (settling other worlds is routine) | +2 |
+| Main world tech level 10 or 11 | +1 |
+| Main world tech level 7 or 8 (no easy spaceflight) | −2 |
 | Main world industrial (In) or rich (Ri) | +1 |
 | Main world population 8 or more | +1 |
 | Main world population 3 or less | −2 |
-| Main world population 0, or main world tech level 6 or less (no spaceflight) | population 0, no roll |
+| Main world population 0, or main world tech level 6 or less (no way to support another world) | population 0, no roll |
 
-So a belt in a system whose main world is tech level 9 or better and reasonably populated is settled more often than not, by a community in the hundreds to hundreds of thousands: belters are ordinary in Charted Space, and the rules should produce them. At tech level 7 or 8 they are rare, and at tech level 6 or less no one has left the main world at all. A moon of a giant planet with population is usually a fuel depot or a mining camp; an airless rock near the star is an outpost of a few dozen; a Temperate world with air and water and a good roll is a second inhabited world, and the referee should give it a name.
+So a belt in a system whose main world is tech level 9 or better and reasonably populated is settled more often than not, by a community in the hundreds to hundreds of thousands: belters are ordinary in Charted Space, and the rules should produce them. At tech level 7 or 8 they are rare, and at tech level 6 or less there is no way to support such a world: no one lives off the main world at all. A moon of a giant planet with population is usually a fuel depot or a mining camp; an airless rock near the star is an outpost of a few dozen; a Temperate world with air and water and a good roll is a second inhabited world, and the referee should give it a name.
 
 ### 11.2 Government
 
@@ -884,9 +884,9 @@ Check each line of Table 38 in order; a world may qualify for more than one. Fac
 | --- | --- |
 | Farming | Temperature band Temperate, atmosphere 4 to 9, hydrographics 4 to 8, population 2 or more |
 | Mining | Population 2 or more, and either the world is a belt, or its composition is iron-rich, or the main world is industrial (trade code In) |
-| Fuel depot | The world is the system's nearest fuel source (a giant planet's moon, or a charted ice body) and has population 1 or more |
+| Fuel depot | One per system, on the system's nearest fuel source (a charted ice body, or a giant planet's moon: the most populous, if several are settled), with population 1 or more. Not possible if the main world's tech level is 8 or less; otherwise roll 2D for 8 or more, DM +2 if the main world's tech level is 12 or more |
 | Colony | Government 6 and population 5 or more |
-| Research station | Roll 2D for 11 or more. DM +2 if the main world's tech level is 10 or more; DM +1 if the world is remarkable (two-season, volcanic, tidally locked, a corrosive or insidious atmosphere, or an ocean world). Not possible if the main world's tech level is 8 or less, or the world's population is 0 |
+| Research station | Roll 2D for 11 or more. DM +2 if the main world's tech level is 12 or more. Not possible if the main world's tech level is 8 or less, or the world's population is 0 |
 | Military base | Roll 2D for 12 or more. DM +1 if the main world's population is 8 or more; DM +2 if the world's atmosphere equals the main world's. Not possible if the world's population is 0 or the main world is poor (trade code Po) |
 
 ### 11.5 Tech level

@@ -627,7 +627,7 @@ pub fn is_ice_source(slot: &Slot, ice: IceAvailability) -> bool {
 }
 
 /// The refuelling line (Section 6.6), with `names[i]` the name slot `i` ends
-/// up with.
+/// up with, and the slot of the nearest source.
 pub fn fuel_line(
     slots: &[Slot],
     names: &[String],
@@ -635,7 +635,7 @@ pub fn fuel_line(
     ice_in_giant_moons: bool,
     star: &StarData,
     main_world: Option<usize>,
-) -> Fuel {
+) -> (Fuel, Option<usize>) {
     let giant = |s: &Slot| matches!(s.fill, Fill::Giant { .. });
     let sources: Vec<usize> = slots
         .iter()
@@ -663,12 +663,13 @@ pub fn fuel_line(
             .min_by(|a, b| a.1.total_cmp(&b.1))
             .map(|(i, pos)| (i, days_at_thrust_1(pos * star.hd_mkm)))
     });
-    Fuel {
+    let fuel = Fuel {
         ice,
         transit,
         local_days: local.map(|(_, d)| d),
         local_source: local.map(|(i, _)| names[i].clone()),
-    }
+    };
+    (fuel, local.map(|(i, _)| i))
 }
 
 #[cfg(test)]

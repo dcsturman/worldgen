@@ -118,6 +118,11 @@ impl BodyMeta {
         if p.fit.is_strained() {
             self.extra.push(("fit", "strained".to_string()));
         }
+        // Why anyone lives there (Section 11.4).
+        let facilities = w.facilities_string();
+        if !facilities.is_empty() {
+            self.extra.push(("facilities", facilities));
+        }
         if let Some(s) = &p.spin {
             self.extra.push(("rotation", s.rotation.name().to_string()));
             if s.physics_rotation != s.rotation {

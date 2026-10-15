@@ -684,9 +684,10 @@ impl BodySpec {
                 "colony" => Ok(Facility::Colony),
                 "lab" | "research" => Ok(Facility::Lab),
                 "military" => Ok(Facility::Military),
+                "fuel" | "fuel depot" | "fuel_depot" => Ok(Facility::FuelDepot),
                 other => Err(format!(
                     "unknown facility \"{other}\"; expected naval, scout, farming, mining, \
-                     colony, lab or military"
+                     colony, lab, military or fuel depot"
                 )),
             })
             .collect()

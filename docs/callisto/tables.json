@@ -3222,15 +3222,15 @@
     "+1"
    ],
    [
-    "Main world tech level 12 or more",
+    "Main world tech level 12 or more (settling other worlds is routine)",
     "+2"
    ],
    [
-    "Main world tech level 7 or 8",
+    "Main world tech level 10 or 11",
     "+1"
    ],
    [
-    "Main world tech level 7 or less",
+    "Main world tech level 7 or 8 (no easy spaceflight)",
     "−2"
    ],
    [
@@ -3246,7 +3246,7 @@
     "−2"
    ],
    [
-    "Main world population 0, or main world tech level 6 or less (no spaceflight)",
+    "Main world population 0, or main world tech level 6 or less (no way to support another world)",
     "population 0, no roll"
    ]
   ]
@@ -3307,7 +3307,7 @@
    ],
    [
     "Fuel depot",
-    "The world is the system's nearest fuel source (a giant planet's moon, or a charted ice body) and has population 1 or more"
+    "One per system, on the system's nearest fuel source (a charted ice body, or a giant planet's moon: the most populous, if several are settled), with population 1 or more. Not possible if the main world's tech level is 8 or less; otherwise roll 2D for 8 or more, DM +2 if the main world's tech level is 12 or more"
    ],
    [
     "Colony",
@@ -3315,7 +3315,7 @@
    ],
    [
     "Research station",
-    "Roll 2D for 11 or more. DM +2 if the main world's tech level is 10 or more; DM +1 if the world is remarkable (two-season, volcanic, tidally locked, a corrosive or insidious atmosphere, or an ocean world). Not possible if the main world's tech level is 8 or less, or the world's population is 0"
+    "Roll 2D for 11 or more. DM +2 if the main world's tech level is 12 or more. Not possible if the main world's tech level is 8 or less, or the world's population is 0"
    ],
    [
     "Military base",
