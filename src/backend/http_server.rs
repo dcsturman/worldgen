@@ -80,11 +80,15 @@ const PLANET_CANONICAL_SCALE: f32 = 2.0;
 /// band, and the plate-bias fix that removed the straight channels along
 /// continental plate boundaries. Old `world/v1/` objects are orphaned rather
 /// than deleted, so this is reversible by putting the prefix back.
-const PLANET_CACHE_PREFIX: &str = "world/v2";
+///
+/// Bumped to `v3` for the switch to Callisto system generation: a world's
+/// map now comes from its system's physics (temperature, tilt, steam, a
+/// lock), and the main-world placement moved, so every map can change.
+const PLANET_CACHE_PREFIX: &str = "world/v3";
 
 /// Extra object-path segment for renders of a *decorated* world (e.g. a
-/// tidal lock), placed after the variant: `world/v2/deco-v2/…`,
-/// `world/v2/globe/deco-v2/…`. Undecorated worlds keep their old paths.
+/// tidal lock), placed after the variant: `world/v3/deco-v2/…`,
+/// `world/v3/globe/deco-v2/…`. Undecorated worlds keep their old paths.
 ///
 /// The decorations are already in the cache key, so this isn't needed to
 /// keep decorated and undecorated renders apart. It exists so that locked
@@ -703,7 +707,7 @@ async fn handle_world(
 /// Renders the planet as an orthographic globe — either a static PNG
 /// (`format=png`/`static`) or a spinning animated PNG (default, or
 /// `format=apng`). Both are cached in GCS under a projection-specific path
-/// (`world/v2/globe[-anim]/…`) so they never collide with the flat map's
+/// (`world/v3/globe[-anim]/…`) so they never collide with the flat map's
 /// cache. The render size and frame count are fixed server-side
 /// ([`GLOBE_PNG_SIZE`] etc.) so the cache key stays `(seed, uwp, name, deco)`
 /// per variant.
@@ -802,7 +806,7 @@ async fn handle_world_globe(
 /// in one bad request becomes a clean 500 instead of aborting the process.
 /// Globe texture sub-handler for `…&projection=globe&format=texture`. Serves
 /// the equirectangular surface texture (RGB surface + alpha emissive) for
-/// client-side rendering, cached under `world/v2/globe-tex/`, with the
+/// client-side rendering, cached under `world/v3/globe-tex/`, with the
 /// starport's `(lon, lat)` echoed back in an `X-Starport` header (read from the
 /// PNG's `Starport` tEXt chunk so it survives a cache hit).
 #[allow(clippy::too_many_arguments)]
@@ -1465,7 +1469,7 @@ const WORLD_CACHE_CONTROL: &str = "Cache-Control: public, max-age=1800, must-rev
 /// for the flat map, the requested scale.
 ///
 /// The cache path already holds everything that decides the image — the
-/// variant, the `world/v2` generator version, the decoration namespace, and
+/// variant, the `world/v3` generator version, the decoration namespace, and
 /// the hash of seed, UWP, name and resolved decorations — so a lock edited in
 /// the override file and a generator version bump both change it. The flat
 /// map is resized after it leaves the cache, so its scale is added; the
@@ -1661,11 +1665,11 @@ mod tests {
         assert_eq!(key, 0x44c4_61aa_baca_9b93);
 
         let none = WorldDecorations::default();
-        assert_eq!(planet_cache_object(None, key, &none), "world/v2/44c461aabaca9b93.png");
+        assert_eq!(planet_cache_object(None, key, &none), "world/v3/44c461aabaca9b93.png");
         for variant in ["globe", "globe-anim", "globe-tex", "globe-tex-clear"] {
             assert_eq!(
                 planet_cache_object(Some(variant), key, &none),
-                format!("world/v2/{variant}/44c461aabaca9b93.png"),
+                format!("world/v3/{variant}/44c461aabaca9b93.png"),
             );
         }
     }
@@ -1687,10 +1691,10 @@ mod tests {
     #[test]
     fn decorated_paths_sit_under_the_deco_namespace() {
         let d = locked(None);
-        assert_eq!(planet_cache_object(None, 0xab, &d), "world/v2/deco-v2/00000000000000ab.png");
+        assert_eq!(planet_cache_object(None, 0xab, &d), "world/v3/deco-v2/00000000000000ab.png");
         assert_eq!(
             planet_cache_object(Some("globe-tex"), 0xab, &d),
-            "world/v2/globe-tex/deco-v2/00000000000000ab.png",
+            "world/v3/globe-tex/deco-v2/00000000000000ab.png",
         );
     }
 
