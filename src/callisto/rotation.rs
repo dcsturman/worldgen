@@ -148,7 +148,7 @@ mod tests {
         }
     }
 
-    /// Noricum (13.3): day 2D = 4 + 2 for its large moon, 14 hours; tilt
+    /// Noricum (13.2): day 2D = 4 + 2 for its large moon, 14 hours; tilt
     /// 2D = 6 − 2, 6°; eccentricity 2D = 8, 0.10; year 604 days at 209 Mkm.
     #[test]
     fn noricum_in_full() {

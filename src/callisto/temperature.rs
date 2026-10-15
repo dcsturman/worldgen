@@ -242,7 +242,7 @@ mod tests {
         assert!(!t.steam);
     }
 
-    /// Noricum's steam world (13.3): 0.52, atmosphere 7, hydrographics 6.
+    /// Noricum's steam world (13.2): 0.52, atmosphere 7, hydrographics 6.
     #[test]
     fn a_roasting_world_boils_its_oceans() {
         let t = temperature(0.52, 7, 6, false);

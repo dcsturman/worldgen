@@ -317,7 +317,7 @@ mod tests {
         assert_eq!(rows, expect);
     }
 
-    /// Noricum (13.3): 1D = 4, one moon; no ring; size 1D = 6, a large moon
+    /// Noricum (13.2): 1D = 4, one moon; no ring; size 1D = 6, a large moon
     /// of size 2; Close, 2D = 3, 4 radii; the limit at 1.4 HD (117 × 1.4)
     /// keeps it. As a size 2 world it then rolls composition, atmosphere and
     /// hydrographics: airless and dry.

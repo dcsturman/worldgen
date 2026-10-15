@@ -1,0 +1,504 @@
+{
+  "note": "Serialized by worldgen at b7cf0da, the commit before Callisto stage 0 (PR #62). Do not regenerate: this is what was stored before Callisto.",
+  "shown": [
+    {
+      "facilities": "",
+      "name": "Regina",
+      "trade_classes": "Ht, Ri",
+      "uwp": "A788899-C"
+    },
+    {
+      "facilities": "",
+      "name": "Pourne",
+      "trade_classes": "Fl",
+      "uwp": "A9B2887-A"
+    },
+    {
+      "facilities": "",
+      "name": "Asteroid",
+      "trade_classes": "As, Ni, Va",
+      "uwp": "B000452-B"
+    },
+    {
+      "facilities": "Lab",
+      "name": "Io",
+      "trade_classes": "Ni, Va",
+      "uwp": "H50021A-C"
+    },
+    {
+      "facilities": "",
+      "name": "Eukelade",
+      "trade_classes": "Ni",
+      "uwp": "G51012A-B"
+    },
+    {
+      "facilities": "Lab",
+      "name": "Troilus",
+      "trade_classes": "Ba",
+      "uwp": "H200000-0"
+    },
+    {
+      "facilities": "",
+      "name": "Planetoid Belt",
+      "trade_classes": "Ni, Va",
+      "uwp": "Y000427-B"
+    },
+    {
+      "facilities": "Lab",
+      "name": "Planetoid Belt",
+      "trade_classes": "Ni",
+      "uwp": "G000168-C"
+    },
+    {
+      "facilities": "",
+      "name": "Solaron",
+      "trade_classes": "Ni",
+      "uwp": "HS10169-B"
+    }
+  ],
+  "trade_state": {
+    "available_goods": {
+      "goods": []
+    },
+    "available_passengers": null,
+    "dest_coords": null,
+    "dest_uwp": "A9B2887-A",
+    "dest_world": {
+      "astro_data": {
+        "albedo": 0.0,
+        "gravity": 0.0,
+        "greenhouse": 0.0,
+        "ice_cap_percent": 0.10000000149011612,
+        "luminosity": 0.0,
+        "mass": 0.0,
+        "orbit_distance": 0.0,
+        "orbital_period": 0.0,
+        "temp": 0.0
+      },
+      "atmosphere": 11,
+      "coordinates": null,
+      "facilities": [],
+      "government": 8,
+      "hydro": 2,
+      "is_mainworld": true,
+      "is_satellite": false,
+      "law_level": 7,
+      "name": "Pourne",
+      "orbit": 0,
+      "population": 8,
+      "port": "A",
+      "position_in_system": 0,
+      "satellites": {
+        "sats": []
+      },
+      "size": 9,
+      "tech_level": 10,
+      "trade_classes": [
+        "FluidOceans"
+      ],
+      "travel_zone": "Green"
+    },
+    "dest_world_name": "Pourne",
+    "dest_zone": "Green",
+    "illegal_goods": false,
+    "origin_coords": null,
+    "origin_uwp": "A788899-C",
+    "origin_world": {
+      "astro_data": {
+        "albedo": 0.0,
+        "gravity": 0.0,
+        "greenhouse": 0.0,
+        "ice_cap_percent": 0.10000000149011612,
+        "luminosity": 0.0,
+        "mass": 0.0,
+        "orbit_distance": 0.0,
+        "orbital_period": 0.0,
+        "temp": 0.0
+      },
+      "atmosphere": 8,
+      "coordinates": null,
+      "facilities": [],
+      "government": 9,
+      "hydro": 8,
+      "is_mainworld": true,
+      "is_satellite": false,
+      "law_level": 9,
+      "name": "Regina",
+      "orbit": 0,
+      "population": 8,
+      "port": "A",
+      "position_in_system": 0,
+      "satellites": {
+        "sats": []
+      },
+      "size": 7,
+      "tech_level": 12,
+      "trade_classes": [
+        "HighTech",
+        "Rich"
+      ],
+      "travel_zone": "Green"
+    },
+    "origin_world_name": "Regina",
+    "origin_zone": "Green",
+    "ship": {
+      "broker_skill": 0,
+      "captain_name": "",
+      "cargo_capacity": 0,
+      "crew_size": 0,
+      "crew_staterooms": 0,
+      "jump_rating": 0,
+      "leadership_skill": 0,
+      "low_berths": 0,
+      "maintenance_per_period": 0,
+      "mortgage_per_period": 0,
+      "name": "",
+      "passenger_staterooms": 0,
+      "salary_per_period": 0,
+      "steward_skill": 0,
+      "thrust": 0,
+      "weapons": 0
+    },
+    "ship_manifest": {
+      "basic_passengers": 0,
+      "freight_lot_indices": [],
+      "high_passengers": 0,
+      "low_passengers": 0,
+      "medium_passengers": 0,
+      "profit": 0,
+      "trade_goods": {
+        "goods": []
+      }
+    },
+    "system_broker_skill": 0,
+    "version": 0
+  },
+  "worlds": [
+    {
+      "astro_data": {
+        "albedo": 0.0,
+        "gravity": 0.0,
+        "greenhouse": 0.0,
+        "ice_cap_percent": 0.10000000149011612,
+        "luminosity": 0.0,
+        "mass": 0.0,
+        "orbit_distance": 0.0,
+        "orbital_period": 0.0,
+        "temp": 0.0
+      },
+      "atmosphere": 8,
+      "coordinates": null,
+      "facilities": [],
+      "government": 9,
+      "hydro": 8,
+      "is_mainworld": true,
+      "is_satellite": false,
+      "law_level": 9,
+      "name": "Regina",
+      "orbit": 0,
+      "population": 8,
+      "port": "A",
+      "position_in_system": 0,
+      "satellites": {
+        "sats": []
+      },
+      "size": 7,
+      "tech_level": 12,
+      "trade_classes": [
+        "HighTech",
+        "Rich"
+      ],
+      "travel_zone": "Green"
+    },
+    {
+      "astro_data": {
+        "albedo": 0.0,
+        "gravity": 0.0,
+        "greenhouse": 0.0,
+        "ice_cap_percent": 0.10000000149011612,
+        "luminosity": 0.0,
+        "mass": 0.0,
+        "orbit_distance": 0.0,
+        "orbital_period": 0.0,
+        "temp": 0.0
+      },
+      "atmosphere": 11,
+      "coordinates": null,
+      "facilities": [],
+      "government": 8,
+      "hydro": 2,
+      "is_mainworld": true,
+      "is_satellite": false,
+      "law_level": 7,
+      "name": "Pourne",
+      "orbit": 0,
+      "population": 8,
+      "port": "A",
+      "position_in_system": 0,
+      "satellites": {
+        "sats": []
+      },
+      "size": 9,
+      "tech_level": 10,
+      "trade_classes": [
+        "FluidOceans"
+      ],
+      "travel_zone": "Green"
+    },
+    {
+      "astro_data": {
+        "albedo": 0.0,
+        "gravity": 0.0,
+        "greenhouse": 0.0,
+        "ice_cap_percent": 0.10000000149011612,
+        "luminosity": 0.0,
+        "mass": 0.0,
+        "orbit_distance": 0.0,
+        "orbital_period": 0.0,
+        "temp": 0.0
+      },
+      "atmosphere": 0,
+      "coordinates": null,
+      "facilities": [],
+      "government": 5,
+      "hydro": 0,
+      "is_mainworld": true,
+      "is_satellite": false,
+      "law_level": 2,
+      "name": "Asteroid",
+      "orbit": 0,
+      "population": 4,
+      "port": "B",
+      "position_in_system": 0,
+      "satellites": {
+        "sats": []
+      },
+      "size": 0,
+      "tech_level": 11,
+      "trade_classes": [
+        "Asteroid",
+        "NonIndustrial",
+        "Vacuum"
+      ],
+      "travel_zone": "Green"
+    },
+    {
+      "astro_data": {
+        "albedo": 0.0,
+        "gravity": 0.625,
+        "greenhouse": 1.0,
+        "ice_cap_percent": -0.0,
+        "luminosity": 0.6700000166893005,
+        "mass": 0.244140625,
+        "orbit_distance": 0.19986629486083984,
+        "orbital_period": 0.09216062724590302,
+        "temp": 756.9091796875
+      },
+      "atmosphere": 0,
+      "coordinates": null,
+      "facilities": [
+        "Lab"
+      ],
+      "government": 1,
+      "hydro": 0,
+      "is_mainworld": false,
+      "is_satellite": true,
+      "law_level": 10,
+      "name": "Io",
+      "orbit": 14,
+      "population": 2,
+      "port": "H",
+      "position_in_system": 0,
+      "satellites": {
+        "sats": []
+      },
+      "size": 5,
+      "tech_level": 12,
+      "trade_classes": [
+        "NonIndustrial",
+        "Vacuum"
+      ],
+      "travel_zone": "Green"
+    },
+    {
+      "astro_data": {
+        "albedo": 0.0,
+        "gravity": 0.625,
+        "greenhouse": 1.0,
+        "ice_cap_percent": -0.0,
+        "luminosity": 0.6700000166893005,
+        "mass": 0.244140625,
+        "orbit_distance": 0.3997325897216797,
+        "orbital_period": 0.26066961884498596,
+        "temp": 535.215576171875
+      },
+      "atmosphere": 1,
+      "coordinates": null,
+      "facilities": [],
+      "government": 2,
+      "hydro": 0,
+      "is_mainworld": false,
+      "is_satellite": true,
+      "law_level": 10,
+      "name": "Eukelade",
+      "orbit": 13,
+      "population": 1,
+      "port": "G",
+      "position_in_system": 1,
+      "satellites": {
+        "sats": []
+      },
+      "size": 5,
+      "tech_level": 11,
+      "trade_classes": [
+        "NonIndustrial"
+      ],
+      "travel_zone": "Green"
+    },
+    {
+      "astro_data": {
+        "albedo": 0.0,
+        "gravity": 0.25,
+        "greenhouse": 1.0,
+        "ice_cap_percent": -0.0,
+        "luminosity": 4.895925521850586,
+        "mass": 0.015625,
+        "orbit_distance": 0.19986629486083984,
+        "orbital_period": 0.0742739588022232,
+        "temp": 1244.468017578125
+      },
+      "atmosphere": 0,
+      "coordinates": null,
+      "facilities": [
+        "Lab"
+      ],
+      "government": 0,
+      "hydro": 0,
+      "is_mainworld": false,
+      "is_satellite": true,
+      "law_level": 0,
+      "name": "Troilus",
+      "orbit": 9,
+      "population": 0,
+      "port": "H",
+      "position_in_system": 0,
+      "satellites": {
+        "sats": []
+      },
+      "size": 2,
+      "tech_level": 0,
+      "trade_classes": [
+        "Barren"
+      ],
+      "travel_zone": "Green"
+    },
+    {
+      "astro_data": {
+        "albedo": 0.0,
+        "gravity": 0.0,
+        "greenhouse": 1.0,
+        "ice_cap_percent": 0.0,
+        "luminosity": 4.895925521850586,
+        "mass": 0.0,
+        "orbit_distance": 9.9993314743042,
+        "orbital_period": 26.28352928161621,
+        "temp": 175.94139099121094
+      },
+      "atmosphere": 0,
+      "coordinates": null,
+      "facilities": [],
+      "government": 2,
+      "hydro": 0,
+      "is_mainworld": false,
+      "is_satellite": false,
+      "law_level": 7,
+      "name": "Planetoid Belt",
+      "orbit": 7,
+      "population": 4,
+      "port": "Y",
+      "position_in_system": 7,
+      "satellites": {
+        "sats": []
+      },
+      "size": 0,
+      "tech_level": 11,
+      "trade_classes": [
+        "NonIndustrial",
+        "Vacuum"
+      ],
+      "travel_zone": "Green"
+    },
+    {
+      "astro_data": {
+        "albedo": 0.0,
+        "gravity": 0.0,
+        "greenhouse": 1.0,
+        "ice_cap_percent": 0.0,
+        "luminosity": 0.5558333396911621,
+        "mass": 0.0,
+        "orbit_distance": 2.800133466720581,
+        "orbital_period": 4.960654258728027,
+        "temp": 192.99301147460938
+      },
+      "atmosphere": 0,
+      "coordinates": null,
+      "facilities": [
+        "Lab"
+      ],
+      "government": 6,
+      "hydro": 0,
+      "is_mainworld": false,
+      "is_satellite": false,
+      "law_level": 8,
+      "name": "Planetoid Belt",
+      "orbit": 5,
+      "population": 1,
+      "port": "G",
+      "position_in_system": 5,
+      "satellites": {
+        "sats": []
+      },
+      "size": 0,
+      "tech_level": 12,
+      "trade_classes": [
+        "NonIndustrial"
+      ],
+      "travel_zone": "Green"
+    },
+    {
+      "astro_data": {
+        "albedo": 0.0,
+        "gravity": 0.0,
+        "greenhouse": 1.0,
+        "ice_cap_percent": -0.0,
+        "luminosity": 5.790529251098633,
+        "mass": 0.0,
+        "orbit_distance": 1.5995988845825195,
+        "orbital_period": 1.6371681690216064,
+        "temp": 458.7423095703125
+      },
+      "atmosphere": 1,
+      "coordinates": null,
+      "facilities": [],
+      "government": 6,
+      "hydro": 0,
+      "is_mainworld": false,
+      "is_satellite": false,
+      "law_level": 9,
+      "name": "Solaron",
+      "orbit": 4,
+      "population": 1,
+      "port": "H",
+      "position_in_system": 4,
+      "satellites": {
+        "sats": []
+      },
+      "size": 0,
+      "tech_level": 11,
+      "trade_classes": [
+        "NonIndustrial"
+      ],
+      "travel_zone": "Green"
+    }
+  ]
+}

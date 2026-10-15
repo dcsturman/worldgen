@@ -1701,7 +1701,7 @@ mod tests {
         .unwrap()
     }
 
-    /// Rulebook 13.3, Noricum, as far as stage 2 goes: the rolls it lists, in
+    /// Rulebook 13.2, Noricum, as far as stage 2 goes: the rolls it lists, in
     /// the order the generator makes them.
     #[test]
     fn noricum() {
@@ -1804,6 +1804,92 @@ mod tests {
         let fuel = layout.fuel.as_ref().unwrap();
         assert_eq!(fuel.transit, TransitFuel::GiantPlanet);
         assert!((fuel.local_days.unwrap() - days_at_thrust_1(2.0 * 150.0)).abs() < 1e-4);
+    }
+
+    /// Rulebook 13.1, a free system around a habitable main world (size 7,
+    /// atmosphere 6, hydrographics 7), replayed whole with the example's
+    /// rolls in the order the generator makes them.
+    #[test]
+    fn example_13_1_free_system() {
+        let _rng = crate::util::RngScope::new(131);
+        const SCRIPT: &[(crate::callisto::dice::Kind, i32)] = &[
+            // The primary first, then how many stars (the example narrates
+            // the count first; the dice are the same).
+            (D2, 10), // spectral class, habitable column: F
+            (D2, 2), // subtype: 0
+            (D2, 5), // number of stars: one
+            (D1, 4), // main world position: 1.0
+            (D2, 6), // orbits: 4
+            (D1, 5), // split: two inward, one outward
+            (D2, 6), (D2, 3), // inward ratios 1.65, 1.35
+            (D2, 5), // outward ratio 1.55
+            (D2, 5), // giants present
+            (D2, 3), // one giant
+            (D2, 9), (D1, 1), // gas giant, Saturn-class
+            (D1, 5), // placement: Cold, none free
+            (D2, 7), // so an orbit is added: 1.6 × 1.75 = 2.8 (the example
+                     // gives the ratio, not its roll)
+            (D2, 7), // ice (Table 19, 2D; the example's "1D = 1" predates
+                     // it): a charted belt, but no orbit lies beyond the giant
+            (D2, 8), (D2, 5), (D2, 7), // what fills 0.45, 0.61, 1.6: worlds
+            (D2, 11), (D1, 1), (D2, 10), // 0.45: 7-9-0, iron-rich
+            (D2, 3), (D1, 5), // 0.61: size 1, so no atmosphere or water
+            (D2, 6), (D1, 3), (D2, 11), (D2, 3), // 1.6: 4-8-0
+            (D1, 4), // main world composition: rocky
+        ];
+        let mut r = Scripted::then_rng(SCRIPT);
+        let mut cs = SystemConstraints::from_main_world("Main World", "X767000-0").unwrap();
+        cs.counts = PublishedCounts::None;
+        cs.rulebook_strict = true;
+        let system = generate(cs, &mut r).unwrap();
+        assert_eq!(r.remaining(), 0, "the example's rolls weren't all used");
+        let layout = system.callisto.as_deref().unwrap();
+        assert_eq!(system.star.star_type, StarType::F);
+        let positions: Vec<f32> = layout.orbits.iter().map(|o| o.position_hd).collect();
+        assert_eq!(positions, [0.45, 0.61, 1.0, 1.6, 2.8]);
+        let bodies: Vec<String> = system
+            .orbit_slots
+            .iter()
+            .map(|s| match s {
+                Some(OrbitContent::World(w)) => {
+                    let p = w.callisto.as_deref().unwrap();
+                    let kind = if w.is_mainworld() { "main" } else { p.class.name() };
+                    format!("{kind} {} {}", &w.to_uwp()[1..4], p.temperature.unwrap().band.name())
+                }
+                Some(OrbitContent::GasGiant(g)) => g.callisto.unwrap().name().to_string(),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            bodies,
+            [
+                "World 790 Roasting", // a Venus
+                "World 100 Hot",      // a large airless rock
+                "main 767 Temperate",
+                "World 480 Cold", // a cold desert under a heavy sky
+                "Gas giant, Saturn-class",
+            ]
+        );
+        // The example reads Table 25 at its nearest printed row (0.40 for the
+        // world at 0.45, 0.63 for 0.61), so it prints about 200 °C and 69 °C
+        // where the formula at the true positions gives 179 °C and 74 °C. At
+        // 1.0 and 1.6 the rows are the positions, and the figures agree.
+        let celsius = |i: usize| match &system.orbit_slots[i] {
+            Some(OrbitContent::World(w)) => w.callisto.as_deref().unwrap().temperature.unwrap().celsius.round(),
+            _ => unreachable!(),
+        };
+        assert_eq!((celsius(2), celsius(3)), (17.0, -5.0));
+        // Iron-rich at 1.14 g; the main world rocky at 0.88 g.
+        let gravity = |i: usize| match &system.orbit_slots[i] {
+            Some(OrbitContent::World(w)) => w.callisto.as_deref().unwrap().gravity.unwrap(),
+            _ => unreachable!(),
+        };
+        assert!((gravity(0) - 1.14).abs() < 0.01 && (gravity(2) - 0.88).abs() < 0.01);
+        // The refuelling line: the giant, 971 Mkm out, 7.3 days at thrust 1.
+        let fuel = layout.fuel.as_ref().unwrap();
+        assert_eq!(fuel.transit, crate::callisto::body::TransitFuel::GiantPlanet);
+        assert!((fuel.local_days.unwrap() - 7.3).abs() < 0.1, "{:?}", fuel.local_days);
+        assert_eq!(fuel.local_reach(), Some("reachable"));
     }
 
     #[test]

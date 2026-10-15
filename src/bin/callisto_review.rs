@@ -89,8 +89,20 @@ fn worlds(system: &System) -> Vec<&World> {
     out
 }
 
-fn review(sector: &str, rows: &[Row]) -> (Vec<Entry>, Vec<Entry>, Vec<String>) {
-    let (mut entries, mut odd, mut failures) = (Vec::new(), Vec::new(), Vec::new());
+/// What a sector's review found.
+#[derive(Default)]
+struct Review {
+    strained: Vec<Entry>,
+    odd: Vec<Entry>,
+    /// Systems where Callisto dropped a published fact that Book 6 kept
+    /// (IMPLEMENTATION.md §10): "system (hex): what".
+    dropped: Vec<String>,
+    failures: Vec<String>,
+}
+
+fn review(sector: &str, rows: &[Row]) -> Review {
+    let mut out = Review::default();
+    let (entries, odd, failures) = (&mut out.strained, &mut out.odd, &mut out.failures);
     for r in rows {
         let upstream = UpstreamSystem {
             sector,
@@ -101,11 +113,22 @@ fn review(sector: &str, rows: &[Row]) -> (Vec<Entry>, Vec<Entry>, Vec<String>) {
             stellar: &r.stars,
             worlds: r.worlds,
         };
-        let system = system_from_upstream(&upstream)
-            .map_err(|e| e.to_string())
-            .and_then(|(seed, cs)| {
-                Generator::Callisto.generate(seed, cs).map_err(|e| e.to_string())
-            });
+        let generated = system_from_upstream(&upstream).map_err(|e| e.to_string()).and_then(|(seed, cs)| {
+            let book6 = Generator::Book6.generate(seed, cs.clone()).ok();
+            Generator::Callisto
+                .generate(seed, cs)
+                .map(|s| (s, book6))
+                .map_err(|e| e.to_string())
+        });
+        let system = generated.map(|(s, book6)| {
+            let book6_dropped = book6.map_or(0, |b| b.dropped_constraints().len());
+            let dropped = s.dropped_constraints();
+            if !dropped.is_empty() && book6_dropped == 0 {
+                let what: Vec<String> = dropped.iter().map(|d| d.to_string()).collect();
+                out.dropped.push(format!("{} ({}): {}", r.name, r.hex, what.join("; ")));
+            }
+            s
+        });
         let system = match system {
             Ok(s) => s,
             Err(e) => {
@@ -131,10 +154,11 @@ fn review(sector: &str, rows: &[Row]) -> (Vec<Entry>, Vec<Entry>, Vec<String>) {
             }
         }
     }
-    (entries, odd, failures)
+    out
 }
 
-fn render(sector: &str, systems: usize, entries: &[Entry], odd: &[Entry], failures: &[String]) -> String {
+fn render(sector: &str, systems: usize, review: &Review) -> String {
+    let (entries, odd, failures) = (&review.strained, &review.odd, &review.failures);
     let mut out = String::new();
     let _ = writeln!(out, "# Callisto review: {sector}\n");
     let _ = writeln!(
@@ -176,6 +200,18 @@ fn render(sector: &str, systems: usize, entries: &[Entry], odd: &[Entry], failur
         let _ = writeln!(out, "## {} {who}\n", e.hex);
         let _ = writeln!(out, "- **Published:** {} around {}", e.uwp, e.stars);
         let _ = writeln!(out, "- **Story:** {}\n", e.story);
+    }
+    // IMPLEMENTATION.md §10: a system Book 6 generates with every published
+    // fact must not lose one under Callisto.
+    let _ = writeln!(out, "# Published facts dropped\n");
+    if review.dropped.is_empty() {
+        let _ = writeln!(out, "None: every published fact Book 6 keeps, Callisto keeps.\n");
+    }
+    for d in &review.dropped {
+        let _ = writeln!(out, "- {d}");
+    }
+    if !review.dropped.is_empty() {
+        let _ = writeln!(out);
     }
     if !failures.is_empty() {
         let _ = writeln!(out, "# Systems that did not generate\n");
@@ -244,18 +280,19 @@ async fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
-        let (entries, odd, failures) = review(sector, &rows);
+        let review = review(sector, &rows);
         let path = dir.join(format!("{}.md", slug(sector)));
-        if let Err(e) = std::fs::write(&path, render(sector, rows.len(), &entries, &odd, &failures)) {
+        if let Err(e) = std::fs::write(&path, render(sector, rows.len(), &review)) {
             eprintln!("could not write {}: {e}", path.display());
             return ExitCode::FAILURE;
         }
         println!(
-            "{sector}: {} systems, {} strained, {} odd, {} failed -> {}",
+            "{sector}: {} systems, {} strained, {} odd, {} dropped, {} failed -> {}",
             rows.len(),
-            entries.len(),
-            odd.len(),
-            failures.len(),
+            review.strained.len(),
+            review.odd.len(),
+            review.dropped.len(),
+            review.failures.len(),
             path.display()
         );
     }

@@ -12,7 +12,7 @@ use crate::callisto::temperature::{TempBand, Temperature};
 
 /// What a published UWP asks that the world-building rolls (Section 8)
 /// could not have produced, each with the story that makes it work. Section
-/// 13.2 calls these oddities with easy stories: on the record, not strained.
+/// 14.2 calls these oddities with easy stories: on the record, not strained.
 pub fn uwp_oddities(size: i32, atmosphere: i32, hydro: i32, zone: Zone) -> Vec<String> {
     let mut out = Vec::new();
     if size <= 1 && atmosphere > 0 {

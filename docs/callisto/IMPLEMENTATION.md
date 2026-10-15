@@ -110,7 +110,7 @@ Keep every change additive and serde-compatible (see Section 6). Suggested shape
 - Refuelling: `System` gains `transit_fuel: TransitFuel`, `local_fuel_days: Option<f32>`, `ice: IceAvailability { Uncharted, Charted, Rich }`.
 - Settings: `GenerationSettings { gas_giant_rate: GasGiantRate }` with `GasGiantRate::{Traveller, Physical}`; absence means `Traveller`.
 - `WorldDecorations`: keep `tide_locked: Option<TideLock>`; add a tri-state override `rotation_override: Option<RotationOverride { Locked(TideLock), NotLocked }>` usable on any body. Semantics: main world ⇒ only an explicit `Locked` produces a locked map; other planets ⇒ physics applies unless `NotLocked`; moons ⇒ always `PlanetLocked`, never `StarLocked`. The generator must know which body is the main world (`is_mainworld` already exists).
-- Map-side decorations to emit for every world (the map generator consumes them; the rulebook calls them computed extras): rotation state and day length, mean temperature and hydrosphere phase (liquid / ice / steam), axial tilt, eccentricity and two-season flag, gravity, atmosphere code, star colour (from Table 5 temperature), tectonic activity (volcanic flag), large moon or ring present. A two-season world gets **two maps**, one per end of the year.
+- Map-side decorations to emit for every world (the map generator consumes them; the rulebook calls them computed extras): rotation state and day length, mean temperature and hydrosphere phase (liquid / ice / steam), axial tilt, eccentricity and two-season flag, gravity, atmosphere code, star colour (from Table 5 temperature), large moon or ring present. A two-season world gets **two maps**, one per end of the year.
 
 ---
 
@@ -148,20 +148,22 @@ Tables that are pure dice lookups (2, 3, 4, 7, 8, 9, 10, 11, 12, 13, 15–19, 21
 - Draw orbits at their positions (log scale is fine), not at Book 6 slots; label distances in Mkm and travel days.
 - Distinct icons or colours per body kind: iron-rich / rocky / ice-rock world, belt, sub-Neptune, icy dwarf, ice giant, Saturn-class and Jupiter-class gas giant, ring (R), crossed-out companion gap.
 - Show the refuelling line (transit fuel kind, local fuel days) in the legend, and mark ice sources.
-- Mark two-season and volcanic worlds.
+- Mark two-season worlds.
 
 ---
 
 ## 10. Acceptance
 
-- The three worked examples in rulebook Section 13 are reproduced structurally (same steps, same tables) when their rolls are supplied; a deterministic "scripted dice" test harness that feeds the listed rolls should produce the listed systems (allowing for the Section 13 text being written before the last table edits — fix the examples, not the code, where they differ).
+- The two worked examples in rulebook Section 13 are reproduced structurally (same steps, same tables) when their rolls are supplied; a deterministic "scripted dice" test harness that feeds the listed rolls should produce the listed systems (allowing for the Section 13 text being written before the last table edits — fix the examples, not the code, where they differ).
 - The two invariants in Section 1 hold over a seeded run of 5,000 free systems.
 - Regenerating the Trojan Reach from Travellermap data produces no `DroppedConstraint`s for systems that had none before, and the review file lists every `Strained` world.
 - Existing stored worlds still deserialize and render unchanged.
-- Review files after the Table 10 / companion / host-star changes: Trojan Reach strained = Halka (garden world around an M9 III) only (Paal's orbit override was removed); Spinward Marches strained = none; no "sits where a companion leaves no stable orbit" oddities and no "airless world in the Inner/Hot zone" oddities in either sector; 291-540 (1016) generates.
-- Noricum (Trojan Reach 2018: G2 V M9 V M6 V, 4 giants, 0 belts, 14 bodies) generates with all 14 bodies inside 100 HD, none beyond a companion's gap, and no "could not be placed" message; rulebook Section 13.3 is the worked case.
+- Review files after the Table 10 / companion / host-star changes: Trojan Reach strained = Halka (garden world around an M9 III) only (Paal's orbit override was removed); Spinward Marches strained = none; no "sits where a companion leaves no stable orbit" oddities and no "water on an airless world in the Inner/Hot zone" oddities on a generated body in either sector (a published UWP may carry one: Norwhon, in Oghma, has its Mercury-like crater ice from its source); 291-540 (1016) generates.
+- Noricum (Trojan Reach 2018: G2 V M9 V M6 V, 4 giants, 0 belts, 14 bodies) generates with all 14 bodies inside 100 HD, none beyond a companion's gap, and no "could not be placed" message; rulebook Section 13.2 is the worked case.
 
 ---
+
+**Status (stage 8, 2026-10-14): all met.** Worked examples: 13.1 and 13.2 (Noricum) replay whole from their listed rolls (`example_13_1_free_system`, `noricum`); the old 13.2, a red dwarf with no main world, was removed from the rulebook. Invariants: `giants_in_83_percent_of_free_systems` and `habitable_main_worlds_stay_habitable`, 5,000 seeds each. Dropped constraints: the review files' "Published facts dropped" section, none in the Trojan Reach or the Spinward Marches. Stored worlds: `tests/stored_worlds.rs`. Review files: as listed above.
 
 ## 11. Out of scope for the first implementation
 

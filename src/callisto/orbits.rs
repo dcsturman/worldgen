@@ -641,10 +641,11 @@ mod tests {
         assert_eq!(r.remaining(), 0);
     }
 
-    /// Example 13.2's orbits: no main world around an M4 V, whose innermost
-    /// orbit is 0.14.
+    /// Orbits with no main world (Section 5.3, Table 11) around an M4 V:
+    /// the first orbit moves out to the star's innermost limit, 0.14, and the
+    /// rest multiply out from it.
     #[test]
-    fn example_12_2_orbits() {
+    fn orbits_without_a_main_world() {
         let mut r = Scripted::new(&[(D2, 5), (D2, 6), (D2, 8), (D2, 2)]);
         let n = number_of_orbits(0, &mut r);
         let plan = lay_out(n, None, 0.14, &[], false, None, &mut r);
@@ -653,7 +654,7 @@ mod tests {
         assert_eq!(r.remaining(), 0);
     }
 
-    /// Noricum's orbits (rulebook 13.3): fourteen known bodies, the M6
+    /// Noricum's orbits (rulebook 13.2): fourteen known bodies, the M6
     /// companion's gap from 2 to 18 HD, and the outward run stopping at 100
     /// nine orbits short of fourteen, so the five widest gaps are split.
     #[test]
