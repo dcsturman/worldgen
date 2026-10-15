@@ -66,7 +66,13 @@ pub struct WorldDecorations {
     /// The oceans have boiled (Callisto's steam check): the hydrographics is
     /// in the air, and the surface is dry.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub steam: bool,
+    pub steam: bool,    /// Fluid oceans (Callisto, atmosphere A+ with seas): the seas are not
+    /// water but ammonia-water, which freezes near −78 °C, not 0 °C. The
+    /// map reads its climate against that freezing point, so a −58 °C world
+    /// has open seas and polar ice, and its land is barren: nothing Earthly
+    /// grows under that sky.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub fluid_oceans: bool,
 }
 
 /// A tidal lock to the world's primary.
@@ -102,7 +108,7 @@ pub struct LatLon {
 /// Why a decoration string or value was rejected.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum DecorationError {
-    #[error("unknown decoration {0:?}; expected tl, t:°C, tilt:°, steam or none")]
+    #[error("unknown decoration {0:?}; expected tl, t:°C, tilt:°, steam, fl or none")]
     Unknown(String),
     #[error("decoration {0:?} needs one whole-number argument")]
     BadArgument(String),
@@ -164,6 +170,9 @@ impl WorldDecorations {
         if self.steam {
             tokens.push("steam".to_string());
         }
+        if self.fluid_oceans {
+            tokens.push("fl".to_string());
+        }
         tokens.join(",")
     }
 
@@ -214,6 +223,12 @@ impl WorldDecorations {
                         return Err(DecorationError::Duplicate(token.to_string()));
                     }
                     out.steam = true;
+                }
+                "fl" if args.is_empty() => {
+                    if out.fluid_oceans {
+                        return Err(DecorationError::Duplicate(token.to_string()));
+                    }
+                    out.fluid_oceans = true;
                 }
                 _ => return Err(DecorationError::Unknown(token.to_string())),
             }
@@ -360,8 +375,9 @@ mod tests {
             mean_temp_c: Some(-40),
             tilt_deg: Some(23),
             steam: true,
+            fluid_oceans: true,
         };
-        assert_eq!(d.to_query(), "tl,t:-40,tilt:23,steam");
+        assert_eq!(d.to_query(), "tl,t:-40,tilt:23,steam,fl");
         assert_eq!(WorldDecorations::parse_query(&d.to_query()), Ok(d));
         assert!(WorldDecorations::parse_query("t:hot").is_err());
         assert!(WorldDecorations::parse_query("t:1,t:2").is_err());

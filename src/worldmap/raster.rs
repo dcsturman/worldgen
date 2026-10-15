@@ -229,6 +229,7 @@ impl RasterJob {
                     );
                     h = apply_continentality(h, cont);
                 }
+                let h = map.climate.land_humidity(h);
                 self.color[i] = colormap::elevation_color(above, t, h);
             }
         }
