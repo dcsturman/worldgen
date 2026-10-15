@@ -45,6 +45,8 @@ yarn-error.log*
 # fails on any fresh clone.
 !data/overrides.json
 !docs/callisto/tables.json
+# Test fixtures: data a test loads, e.g. JSON stored before Callisto.
+!tests/fixtures/*.json
 
 # Per-machine deploy settings (see scripts/deploy.env.example).
 scripts/deploy.env

@@ -967,7 +967,7 @@ Finding an ice body when none is charted is a separate problem; the Deepnight Re
 
 ## 13. Worked examples
 
-Three systems generated with these rules, with every roll shown. The first two were rolled freely; the third is Noricum in the Trojan Reach, built around its published data. Positions are rounded to two figures as the rules say.
+Two systems generated with these rules, with every roll shown. The first was rolled freely; the second is Noricum in the Trojan Reach, built around its published data. Positions are rounded to two figures as the rules say.
 
 ### 13.1 A free system with a habitable main world
 
@@ -979,7 +979,7 @@ The core rules gave a main world of size 7, atmosphere 6, hydrographics 7, so th
 
 **Orbits.** Number of orbits (Section 5.2, 2D − 2): 2D = 6, minus 2, gives 4. Split (Section 5.3): 1D = 5, two thirds of the other three inward, so 2 inward and 1 outward. Inward ratios 2D = 6 (1.65) and 2D = 3 (1.35): 1.0 ÷ 1.65 = 0.61, then 0.61 ÷ 1.35 = 0.45. Outward ratio 2D = 5 (1.55): 1.0 × 1.55 = 1.6. Zones: 0.45 Inner, 0.61 Hot, 1.0 and 1.6 Temperate.
 
-**Giants.** Presence 2D = 5: yes. Number 2D = 3: one. No Cold or Outer orbit exists, so add one at 2.7 or 1.6 × 1.75 = 2.8, whichever is further: 2.8, Outer, 971 Mkm, 7.3 days. Kind 2D = 9: gas giant; 1D = 1: Saturn-class. Placement 1D = 5, Cold: none free, so the first free Cold or Outer orbit, 2.8. Ice belt 1D = 1: a belt beyond the last giant, but there is no orbit beyond it, so there is none; the giant's own moons carry the system's ice.
+**Giants.** Presence 2D = 5: yes. Number 2D = 3: one. No Cold or Outer orbit exists, so add one at 2.7 or 1.6 × 1.75 = 2.8, whichever is further: 2.8, Outer, 971 Mkm, 7.3 days. Kind 2D = 9: gas giant; 1D = 1: Saturn-class. Placement 1D = 5, Cold: none free, so the first free Cold or Outer orbit, 2.8. Ice (Table 19) 2D = 7: charted, a belt beyond the last giant, but there is no orbit beyond it, so there is none; the giant's own moons carry the system's ice.
 
 **Refuelling line.** Transit fuel: yes, gas giant. Local fuel: main world 347 Mkm, giant 971 Mkm; use 971, which is 7.3 days at thrust 1. Reachable on a normal fuel load, a week each way.
 
@@ -997,19 +997,7 @@ The core rules gave a main world of size 7, atmosphere 6, hydrographics 7, so th
 | 1.6 | 555 | 5.5 | Temperate | Rocky world | 4-8-0 | 0.50 g, Cold |
 | 2.8 | 971 | 7.3 | Outer | Gas giant, Saturn-class |  | 7 moons incl. a size 5 ice world; fuel |
 
-### 13.2 A red dwarf with no main world
-
-A scout survey of an unnamed M4 V. We take the star as given and roll the rest with no main world. Table 5, M4 V: 1 HD is 13 Mkm, days to 1 HD 0.8, jump shadow 36 Mkm, innermost orbit 0.14, lock limit 2.88, moon limit 16. Everything in this system is close: its position 1.0 is 13 Mkm out, a tenth of Mercury's distance from the Sun.
-
-**Orbits.** Number of orbits (Section 5.2, 2D − 2): 2D = 5, minus 2, gives 3. First orbit (Table 11): 2D = 6, 0.125, which is 1.6 Mkm; the shadow ÷ 20 is 1.8 Mkm, so the orbit moves out to 1.8 Mkm, position 0.14. Ratios 2D = 8 (1.90) and 2D = 2 (1.25): 0.27 and 0.34. All three are Inner: 1.8, 3.4 and 4.3 Mkm, each under half a day from the star.
-
-**Giants.** Presence 2D = 4: yes. Number 2D = 7: three. No Cold or Outer orbit, so add one at 2.7 (34 Mkm, 1.4 days) and drop the two giants that will not fit. Kind 2D = 10: gas giant; 1D = 1: Saturn-class. Placement 1D = 4: Outer, the new orbit. Ice belt 1D = 4: beyond the last giant, but there is nothing beyond it, so none.
-
-**Worlds.** All three Inner orbits get DM −1 for a star under 0.3 solar masses. Orbit 0.14: 2D = 8, minus 1: rocky. Size 2D = 9, minus 2, minus 2 Inner, minus 1 small star: 4. Composition 1D = 2, minus 1: iron-rich, 0.65 g. Atmosphere 2D = 5, minus 7, plus 4, plus 1, minus 2: 1, trace. Rock class at row 0.125: 494 °C, Roasting. Orbit 0.27: 2D = 6, minus 1: rocky. Size 2D = 7: 2. Composition 1D = 3, minus 1: rocky, 0.25 g. Atmosphere 2D = 9, minus 7, plus 2, minus 2 Inner, minus 2 size 2: 0. Row 0.25: 269 °C, Roasting. Orbit 0.34: 2D = 8, minus 1: rocky. Size 2D = 7: 2. Composition 1D = 6, minus 1: ice-rock, 0.15 g. Atmosphere 0. Row 0.32: 206 °C, Roasting. All three are below the lock limit, so each keeps one scorched face to the star; with eccentricity rolls of 2D = 3 and lower they are locked rather than in resonance.
-
-**What a ship sees.** The star's jump shadow is 36 Mkm and the giant orbits at 34 Mkm, inside it. A ship jumping in arrives at the shadow's edge and is eight hours from the cloud tops at thrust 1. Transit fuel: yes. There is no main world, so no local-fuel line. The three inner worlds are rocks at a few hundred degrees a few hours' flight from the giant: a refuelling stop and nothing more, unless the referee puts something in the giant's moons (2D for their number; a habitable one is not possible this far out, but a mining outpost is).
-
-### 13.3 Noricum (Trojan Reach 2018), from published data
+### 13.2 Noricum (Trojan Reach 2018), from published data
 
 Travellermap gives Noricum as D8867BB-1, stars **G2 V M9 V M6 V**, 4 gas giants, no planetoid belts, and 14 bodies in all counting the main world. Everything published is kept. The main world is size 8, atmosphere 8 (dense), hydrographics 6. This is a crowded system, and it shows how the published count is honoured when the orbits run short.
 

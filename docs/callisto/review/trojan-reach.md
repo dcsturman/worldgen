@@ -38,3 +38,7 @@ Worlds whose published data strains the physics, from `cargo run --bin callisto-
 - **Published:** E8B6787-8 around F4 V
 - **Story:** Hydrographics 6 under a corrosive or insidious atmosphere: the oceans are acid
 
+# Published facts dropped
+
+None: every published fact Book 6 keeps, Callisto keeps.
+
