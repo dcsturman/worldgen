@@ -7,6 +7,8 @@
 //! yet; giants, belts and other worlds arrive with the later stages, so the
 //! PBG and world counts only size the orbit list for now.
 
+use std::collections::HashSet;
+
 use crate::callisto::body::{BodyClass, Fit, GiantKind, IceAvailability, MoonInfo, NearFuel, Physics};
 use crate::callisto::moons::{MoonBand, Parent, period_hours};
 use crate::callisto::settle::MainWorld;
@@ -741,8 +743,46 @@ fn settle_world(w: &mut World, mw: &MainWorld, gas_giant_moon: bool, roller: &mu
 /// Settled bodies take names, as in Book 6: a planet with anyone living
 /// there, and a giant whose moons hold 100,000 or more (population 5). Only
 /// a generated numeral name is replaced, never one a source gave; belts keep
-/// theirs.
+/// theirs. A moon is named only if people live on it; the rest are
+/// designated from their planet, lettered outward ("Bulhai a"). No name is
+/// used twice in a system, companions' bodies included (`callisto::names`).
 fn name_the_settled(system: &mut System) {
+    let mut taken = HashSet::new();
+    collect_names(system, &mut taken);
+    name_bodies(system, &mut taken);
+}
+
+fn collect_names(system: &System, taken: &mut HashSet<String>) {
+    for slot in system.orbit_slots.iter().flatten() {
+        let (name, moons): (&str, &[World]) = match slot {
+            OrbitContent::World(w) => (&w.name, &w.satellites.sats),
+            OrbitContent::GasGiant(g) => (&g.name, g.satellites()),
+            _ => continue,
+        };
+        taken.insert(name.to_lowercase());
+        // A moon's generated name is a placeholder until it is named or
+        // designated below; only the names a source gave are kept.
+        taken.extend(moons.iter().filter(|m| !generated_moon(m)).map(|m| m.name.to_lowercase()));
+    }
+    for c in [system.secondary.as_deref(), system.tertiary.as_deref()]
+        .into_iter()
+        .flatten()
+    {
+        collect_names(c, taken);
+    }
+}
+
+/// A moon the rules made (not a ring, not one a source placed), whose name
+/// is ours to give.
+fn generated_moon(m: &World) -> bool {
+    m.callisto
+        .as_deref()
+        .and_then(|p| p.moon.as_ref())
+        .is_some_and(|info| info.ring.is_none())
+}
+
+fn name_bodies(system: &mut System, taken: &mut HashSet<String>) {
+    use crate::callisto::names;
     let prefix = format!("{} ", system.name);
     let numeral = |n: &str| {
         n.strip_prefix(&prefix)
@@ -750,14 +790,38 @@ fn name_the_settled(system: &mut System) {
     };
     let mut renamed: Vec<(String, String)> = Vec::new();
     for slot in system.orbit_slots.iter_mut().flatten() {
-        let name = match slot {
-            OrbitContent::World(w) if !w.is_mainworld() && w.get_population() >= 1 => &mut w.name,
-            OrbitContent::GasGiant(g) if g.satellites().iter().any(|m| m.get_population() >= 5) => &mut g.name,
+        let (name, settled) = match slot {
+            OrbitContent::World(w) => {
+                let settled = !w.is_mainworld() && w.get_population() >= 1;
+                (&mut w.name, settled)
+            }
+            OrbitContent::GasGiant(g) => {
+                let settled = g.satellites().iter().any(|m| m.get_population() >= 5);
+                (&mut g.name, settled)
+            }
             _ => continue,
         };
-        if numeral(name) {
-            let new = crate::systems::name_tables::gen_planet_name();
+        if settled && numeral(name) {
+            let new = names::fresh(taken);
             renamed.push((std::mem::replace(name, new.clone()), new));
+        }
+        let parent = name.clone();
+        let moons = match slot {
+            OrbitContent::World(w) => &mut w.satellites.sats,
+            OrbitContent::GasGiant(g) => &mut g.get_satellites_mut().sats,
+            _ => continue,
+        };
+        // Outward, by distance from the planet.
+        let mut order: Vec<usize> = (0..moons.len()).filter(|&i| generated_moon(&moons[i])).collect();
+        order.sort_by_key(|&i| moons[i].orbit);
+        let mut letters = 0;
+        for i in order {
+            moons[i].name = if moons[i].get_population() >= 1 {
+                names::fresh(taken)
+            } else {
+                letters += 1;
+                format!("{parent} {}", names::moon_letter(letters - 1))
+            };
         }
     }
     // The refuelling line names its source.
@@ -774,7 +838,7 @@ fn name_the_settled(system: &mut System) {
         .into_iter()
         .flatten()
     {
-        name_the_settled(c);
+        name_bodies(c, taken);
     }
 }
 

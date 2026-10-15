@@ -299,7 +299,7 @@ pub fn render_png_scaled(map: &WorldMap, scale: f32) -> Result<Vec<u8>, String> 
 /// painting the "Page Unresponsive" dialog while a regenerate is in
 /// flight.
 pub use raster::RasterJob;
-pub use render::{SVG_RASTER_H, SVG_RASTER_W, assemble_svg};
+pub use render::{Legend, SVG_RASTER_H, SVG_RASTER_W, assemble_svg};
 pub use globe::{
     ApngTiming, GlobeTexture, GlobeTextureJob, TexSize, build_equirect_texture, render_globe_apng,
     render_globe_png, render_globe_texture, starport_lonlat, substellar_lonlat,

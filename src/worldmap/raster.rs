@@ -338,18 +338,45 @@ impl RasterJob {
         }
     }
 
+    /// How many planet pixels took each base color, before hillshade and
+    /// the rest of post-processing: what the map actually paints, for its
+    /// legend. Valid once [`Self::step_color`] has run.
+    pub fn base_colors(&self) -> BaseColors {
+        let mut counts = std::collections::HashMap::new();
+        for (c, e) in self.color.iter().zip(&self.elev) {
+            if !e.is_nan() {
+                *counts.entry(*c).or_insert(0) += 1;
+            }
+        }
+        counts
+    }
+
     /// Take ownership of the finished RGBA8 buffer.
     pub fn into_rgba(self) -> Vec<u8> {
         self.rgba
     }
 }
 
+/// How many planet pixels took each base color: what a flat map paints.
+pub type BaseColors = std::collections::HashMap<(u8, u8, u8), u32>;
+
 pub fn render_terrain(map: &WorldMap, width: u32, height: u32) -> Vec<u8> {
+    render_terrain_counted(map, width, height).0
+}
+
+/// [`render_terrain`], with the base-color counts its legend is built from
+/// (see [`RasterJob::base_colors`]).
+pub fn render_terrain_counted(
+    map: &WorldMap,
+    width: u32,
+    height: u32,
+) -> (Vec<u8>, BaseColors) {
     let mut job = RasterJob::new(map, width, height);
     job.step_elevation(map);
     job.step_color(map);
+    let counts = job.base_colors();
     job.step_postprocess();
-    job.into_rgba()
+    (job.into_rgba(), counts)
 }
 
 fn nan_or(v: f32, fallback: f32) -> f32 {

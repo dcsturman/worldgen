@@ -206,11 +206,12 @@ pub fn WorldMap() -> impl IntoView {
                 job.step_elevation(&map);
                 yield_to_browser().await;
                 job.step_color(&map);
+                let legend = worldmap::Legend::for_map(&map, &job.base_colors());
                 yield_to_browser().await;
                 job.step_postprocess();
                 yield_to_browser().await;
                 let raster = job.into_rgba();
-                let svg = worldmap::assemble_svg(&map, &raster);
+                let svg = worldmap::assemble_svg(&map, &raster, &legend);
                 svg_html.set(svg);
                 pending_render.set(false);
             });

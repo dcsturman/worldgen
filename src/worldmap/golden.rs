@@ -49,59 +49,62 @@ const CASES: &[(&str, u64)] = &[
 /// Pinned from the pre-tide-lock tree (base commit 560525d plus the
 /// decoration plumbing, which renders identically — see
 /// `empty_decorations_generate_the_undecorated_map`).
+/// The flat SVG and PNG hashes were re-pinned when the legend started
+/// listing only the terrains a map paints (2026-10-15); the three globe
+/// hashes, which carry no legend, did not move, so the terrain is unchanged.
 const PINS: &[[u64; 5]] = &[
     [
-        0xcb360e9741ffb934,
-        0xb6e37cbd85d8555e,
+        0xa35dcf6a603df352,
+        0x762f936bb3ff1d39,
         0x410c2056997c5b4d,
         0xf49ad51743a719d4,
         0x3bae82ae0eec06cc,
     ],
     [
-        0x599f942d912ffdcd,
-        0x823ce7c63d227b8d,
+        0xd44277b0c03d5110,
+        0x8f00931a958ff8e5,
         0xc3b21a83b998699f,
         0xed80a0dad7f78a55,
         0xaa9631796afe59b1,
     ],
     [
-        0x780dbede093a9425,
-        0x875856cdd0875e93,
+        0x22a0646a1a09ebae,
+        0x306b8d03b6a20826,
         0x4587a8c1969bd062,
         0x62f5e032ca5a3662,
         0x1254ed5890cfac43,
     ],
     [
-        0x1008e54a23b55d8b,
-        0x55d9d7ddfda3364b,
+        0x8ed8e34e714b4ab9,
+        0x8a8234dc2ee7a56c,
         0xc09ae015443bc56c,
         0x3156dad431e2cfda,
         0x96ba5207b24342e5,
     ],
     [
-        0xeedec4b52698a7f1,
-        0xdd1e571b26698766,
+        0x34a29ebec61719f4,
+        0x5454cb682181b500,
         0x607a5903df87ad33,
         0x4df3f367d3d89bd7,
         0x4df3f367d3d89bd7,
     ],
     [
-        0xc9ef0111058bdd31,
-        0x2cd47de8c21a6d80,
+        0x197c47612e3991c5,
+        0xd7f2889e76b0be11,
         0xf2071feaa656e512,
         0x29d26fd9d4bc2a5a,
         0xf509c1acb5a234e0,
     ],
     [
-        0x8ba1f4fa633148e3,
-        0xaa39079ccf01dd69,
+        0x82704310989835cd,
+        0xf4cc87a1306f5c2d,
         0xa14d66877c4cec83,
         0xc71cb9860d75f58b,
         0xcf22965fa2f0d826,
     ],
     [
-        0x6a9162d65a5895d9,
-        0x3c940ac4fd3ab9f4,
+        0x4cd010df5149f63f,
+        0x50df9acbd93f0f9b,
         0xa1030f2ec2b1aedf,
         0x394b8c75a9b34abe,
         0xb475009d0ab42d08,

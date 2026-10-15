@@ -86,6 +86,12 @@ const PLANET_CANONICAL_SCALE: f32 = 2.0;
 /// lock), and the main-world placement moved, so every map can change.
 const PLANET_CACHE_PREFIX: &str = "world/v3";
 
+/// The flat map's own version, ahead of [`PLANET_CACHE_PREFIX`]: bumped to
+/// `v4` when its legend began listing only the terrains a map paints
+/// (2026-10-15). Only the flat map carries a legend, so the globe variants,
+/// costlier to re-render and unchanged, stay where they are.
+const FLAT_CACHE_PREFIX: &str = "world/v4";
+
 /// Extra object-path segment for renders of a *decorated* world (e.g. a
 /// tidal lock), placed after the variant: `world/v3/deco-v2/…`,
 /// `world/v3/globe/deco-v2/…`. Undecorated worlds keep their old paths.
@@ -1011,7 +1017,8 @@ fn planet_cache_object(variant: Option<&str>, key: u64, deco: &WorldDecorations)
     } else {
         format!("/{DECO_CACHE_VERSION}")
     };
-    format!("{PLANET_CACHE_PREFIX}{variant}{deco_segment}/{key:016x}.png")
+    let prefix = if variant.is_empty() { FLAT_CACHE_PREFIX } else { PLANET_CACHE_PREFIX };
+    format!("{prefix}{variant}{deco_segment}/{key:016x}.png")
 }
 
 /// The decorations a `/api/world` request renders with.
@@ -1665,7 +1672,7 @@ mod tests {
         assert_eq!(key, 0x44c4_61aa_baca_9b93);
 
         let none = WorldDecorations::default();
-        assert_eq!(planet_cache_object(None, key, &none), "world/v3/44c461aabaca9b93.png");
+        assert_eq!(planet_cache_object(None, key, &none), "world/v4/44c461aabaca9b93.png");
         for variant in ["globe", "globe-anim", "globe-tex", "globe-tex-clear"] {
             assert_eq!(
                 planet_cache_object(Some(variant), key, &none),
@@ -1691,7 +1698,7 @@ mod tests {
     #[test]
     fn decorated_paths_sit_under_the_deco_namespace() {
         let d = locked(None);
-        assert_eq!(planet_cache_object(None, 0xab, &d), "world/v3/deco-v2/00000000000000ab.png");
+        assert_eq!(planet_cache_object(None, 0xab, &d), "world/v4/deco-v2/00000000000000ab.png");
         assert_eq!(
             planet_cache_object(Some("globe-tex"), 0xab, &d),
             "world/v3/globe-tex/deco-v2/00000000000000ab.png",
