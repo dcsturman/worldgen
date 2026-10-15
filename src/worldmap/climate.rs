@@ -356,7 +356,17 @@ pub enum ClimateModel {
 pub struct WarmedClimate {
     pub bias: f64,
     pub gradient: f64,
+    /// Fluid oceans ([`WorldDecorations::fluid_oceans`]): temperatures are
+    /// read against the seas' own freezing point (see
+    /// [`FLUID_FREEZE_SHIFT_C`]) and the land is barren.
+    pub fluid: bool,
 }
+
+/// How far below water's 0 °C a fluid-ocean world's seas freeze: ammonia,
+/// at −78 °C. The map's ice and biome thresholds are water's, so a fluid
+/// world's climate is drawn this much warmer, which puts its sea ice where
+/// ammonia would freeze rather than where water would.
+pub const FLUID_FREEZE_SHIFT_C: f64 = 78.0;
 
 impl WarmedClimate {
     fn apply(&self, raw: f64) -> f64 {
@@ -563,16 +573,22 @@ impl ClimateModel {
     /// substellar point. Draws nothing from any RNG.
     pub fn from_decorations(decorations: &WorldDecorations, uwp: &Uwp, seed: u64) -> Self {
         // Callisto's mean temperature, where given, replaces the UWP's guess.
-        let bias = decorations
-            .mean_temp_c
-            .map_or_else(|| temperature_bias(uwp), |c| bias_for_mean_temp(f64::from(c)));
+        let shift = if decorations.fluid_oceans { FLUID_FREEZE_SHIFT_C } else { 0.0 };
+        let bias = decorations.mean_temp_c.map_or_else(
+            || temperature_bias(uwp) + shift * 0.01,
+            |c| bias_for_mean_temp(f64::from(c) + shift),
+        );
         let Some(lock) = &decorations.tide_locked else {
-            if decorations.mean_temp_c.is_none() && decorations.tilt_deg.is_none() {
+            if decorations.mean_temp_c.is_none()
+                && decorations.tilt_deg.is_none()
+                && !decorations.fluid_oceans
+            {
                 return Self::Rotating;
             }
             return Self::Warmed(WarmedClimate {
                 bias,
                 gradient: decorations.tilt_deg.map_or(1.0, |t| gradient_for_tilt(f64::from(t))),
+                fluid: decorations.fluid_oceans,
             });
         };
         let spread = locked_spread(uwp.atmosphere());
@@ -635,8 +651,19 @@ impl ClimateModel {
     /// substellar point; a rotating world's is the field as sampled.
     pub fn humidity(&self, p: &[f64; 3], field: &HumidityField, uwp: &Uwp) -> f64 {
         match self {
+            Self::Warmed(w) if w.fluid => 0.0,
             Self::Rotating | Self::Warmed(_) => field.sample(p, uwp),
             Self::TideLocked(tl) => tl.humidity(p, field.sample(p, uwp)),
+        }
+    }
+
+    /// The humidity that picks a land biome or colour, after rain shadow,
+    /// altitude and continentality have had their say: none on a
+    /// fluid-ocean world, whose land is barren rock and regolith.
+    pub fn land_humidity(&self, h: f64) -> f64 {
+        match self {
+            Self::Warmed(w) if w.fluid => 0.0,
+            _ => h,
         }
     }
 

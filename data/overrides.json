@@ -33,12 +33,12 @@
       "sector": "Trojan Reach",
       "hex": "2421",
       "world": "Blue",
-      "note": "Drinaxian Companion ch.7. Star (F9 V) and 2 gas giants match TravellerMap. Bulhai is 'the system's outer gas giant'; Bulhai Freeport sits on one of its moons, pop ~20,000 (code 4). Its UWP is now given in full as C300426-B rather than pinning the port and population and rolling the rest. That makes it a class C starport, not the class F spaceport recorded earlier on the reasoning that the book's 'may come to rival the main starport at Blue' put it below Blue's B. Size 3 and a vacuum read as the moon it is; population 4 is the ~20,000 the book gives; TL B matches Blue.",
+      "note": "Drinaxian Companion ch.7. Star (F9 V) and 2 gas giants match TravellerMap. Bulhai is 'the system's outer gas giant'; Bulhai Freeport sits on one of its moons, pop ~20,000 (code 4). Its UWP is now given in full as C300426-B rather than pinning the port and population and rolling the rest. That makes it a class C starport, not the class F spaceport recorded earlier on the reasoning that the book's 'may come to rival the main starport at Blue' put it below Blue's B. Size 3 and a vacuum read as the moon it is; population 4 is the ~20,000 the book gives; TL B matches Blue. Bulhai is pinned at Book 6 orbit 11 (23,038 Mkm), which Callisto reads as a distance: beyond its last orbit (100 HD, 18,000 Mkm), so the Freeport is at least 14 days from Blue even at thrust 6. A referee decision: the book says only 'outer', and Callisto's own giants sit near the frost line, under a week from Blue.",
       "bodies": [
         {
           "type": "gas_giant",
           "name": "Bulhai",
-          "position": "outermost"
+          "orbit": 11
         },
         {
           "type": "moon",
@@ -339,11 +339,12 @@
       "sector": "Trojan Reach",
       "hex": "2324",
       "world": "Pourne",
-      "note": "Traveller wiki, drawing on Mike Jackson's 1986 Tlaiowaha writeup in Third Imperium 02: Pourne has exactly one moon, Baen, 3,000 km across at 400,000 km. TravellerMap already supplies A9B2887-A, F3 V, PBG 902 and W=11, so only the moon is recorded. Both of Baen's numbers are derived, not quoted: satellite orbits are counted in parent diameters, and Pourne is size 9 (14,400 km), so 400,000 km is orbit 28; size 2 is the 3,000 km diameter in Traveller terms (size 2 is 3,200 km, size 1 is 1,600). Baen attaches by parent *name* rather than orbit because Pourne's own orbit is rolled, not pinned — atmosphere B puts it outside the habitable-zone rule, which is RAW and deliberate. moons is the main world's total, so the 1 here means one moon called Baen rather than a rolled moon plus Baen.",
+      "note": "Traveller wiki, drawing on Mike Jackson's 1986 Tlaiowaha writeup in Third Imperium 02: Pourne has exactly one moon, Baen, 3,000 km across at 400,000 km. TravellerMap already supplies A9B2887-A, F3 V, PBG 902 and W=11, so only the moon is recorded. Both of Baen's numbers are derived, not quoted: satellite orbits are counted in parent diameters, and Pourne is size 9 (14,400 km), so 400,000 km is orbit 28; size 2 is the 3,000 km diameter in Traveller terms (size 2 is 3,200 km, size 1 is 1,600). Baen attaches by parent *name* rather than orbit. Pourne's distance, 3,000 Mkm, is a referee decision: a mean of -58 C under Callisto, cold enough for ammonia ice at the poles over ammonia-water seas (Fl). Table 26's flat +150 C greenhouse for atmosphere B keeps it above -123 C at any distance, so it has no liquid methane. moons is the main world's total, so the 1 here means one moon called Baen rather than a rolled moon plus Baen.",
       "bodies": [
         {
           "type": "main_world",
-          "moons": 1
+          "moons": 1,
+          "distance_mkm": 3000
         },
         {
           "type": "moon",

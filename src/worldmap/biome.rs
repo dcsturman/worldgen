@@ -126,7 +126,7 @@ pub fn assign_biomes(
                 hum_v = apply_continentality(hum_v, cont);
             }
 
-            let biome = classify(above, temp_v, hum_v);
+            let biome = classify(above, temp_v, model.land_humidity(hum_v));
             counts[biome as usize] += 1;
 
             for tri2d in &face.unfolded_positions {
@@ -155,7 +155,7 @@ pub fn assign_biomes(
         if let Some(tec) = elev.tectonics() {
             hum = super::colormap::rain_shadow_adjustment(hum, tec.rain_shadow_at(&hex.sphere_pos));
         }
-        hex.humidity = climate::apply_altitude_drying(hum, above);
+        hex.humidity = model.land_humidity(climate::apply_altitude_drying(hum, above));
         hex.biome = dominant_biome(&counts);
     }
 }

@@ -3,7 +3,7 @@
 //!
 //! The map generator knows only a UWP, a seed and [`WorldDecorations`]; this
 //! turns a body's [`Physics`] into decorations: its mean temperature, its
-//! tilt, boiled oceans, and a tidal lock. A two-season world (Section 10.1)
+//! tilt, boiled oceans, fluid (non-water) oceans, and a tidal lock. A two-season world (Section 10.1)
 //! gets a map for each end of its year as well as its annual mean.
 //!
 //! [`Physics`]: crate::callisto::body::Physics
@@ -69,6 +69,10 @@ pub fn map_decorations(w: &World, season: Season) -> Option<WorldDecorations> {
     // mean (Section 8.5), never one end of it. A summer map is hot with its
     // seas, not dry.
     d.steam = p.temperature.is_some_and(|m| m.steam);
+    // Seas under an atmosphere of A or more aren't water (the Fl trade
+    // code; they never boil either, see `temperature`): drawn as
+    // ammonia-water against its own freezing point, on barren land.
+    d.fluid_oceans = w.atmosphere >= 10 && w.hydro >= 1;
     // A locked world has no meaningful tilt (Section 10.3).
     if d.tide_locked.is_none() {
         d.tilt_deg = spin.map(|s| s.tilt_deg.round().clamp(0.0, 90.0) as u8);
@@ -160,6 +164,28 @@ mod tests {
         let d = map_decorations(w, Season::Mean).unwrap();
         assert!(d.tide_locked.is_some());
         assert_eq!(d.tilt_deg, None);
+    }
+
+    /// Pourne's seas aren't water: under atmosphere B they're fluid oceans,
+    /// and the main world's map says so. Noricum's are water.
+    #[test]
+    fn fluid_oceans_under_an_exotic_sky() {
+        let (seed, cs) = system_from_upstream(&UpstreamSystem {
+            sector: "Trojan Reach",
+            hex: "2324",
+            name: "Pourne",
+            uwp: "A9B2887-A",
+            pbg: "902",
+            stellar: "F3 V",
+            worlds: Some(11),
+        })
+        .unwrap();
+        let s = crate::callisto::generate::generate_from_constraints_seeded(seed, cs).unwrap();
+        let d = map_decorations(find_world(&s, "Pourne", None).unwrap(), Season::Mean).unwrap();
+        assert!(d.fluid_oceans);
+        assert!(!d.steam, "fluid oceans never boil");
+        let n = noricum();
+        assert!(!map_decorations(find_world(&n, "Noricum", None).unwrap(), Season::Mean).unwrap().fluid_oceans);
     }
 
     #[test]

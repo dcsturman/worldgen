@@ -430,6 +430,7 @@ fn color_band(
                 hu = super::raster::apply_continentality(hu, cont);
             }
             let (mottle, grain) = detail.sample(&sphere);
+            let hu = map.climate.land_humidity(hu);
             c_row[tx] = orbital::surface_color(above, t, hu, mottle, grain);
         }
     }
