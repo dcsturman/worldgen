@@ -521,6 +521,11 @@ input[type="text"] {
   opacity: 0.3;
 }
 
+a.blue-button {
+  display: inline-block;
+  text-decoration: none;
+}
+
 .blue-button:hover {
   background-image: linear-gradient(#51a9ee, #147bcd);
   border-color: #1482d0;
@@ -1698,4 +1703,24 @@ datalist option {
 
 .switch input:focus-visible + .slider {
   box-shadow: rgba(131, 192, 253, 0.5) 0 0 0 3px;
+}
+
+/* What each tool does (seo/README.md): quiet text under the app. */
+.about-tool {
+  /* A dark band to match the app above it; the text column stays 60em. */
+  background: #05070c;
+  margin: 0;
+  padding: 2em max(1em, calc((100% - 60em) / 2));
+  color: #9aa4b2;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.about-tool h2 {
+  font-size: 1.1rem;
+  color: #c5ccd6;
+}
+
+.about-tool a {
+  color: #8ab4f8;
 }

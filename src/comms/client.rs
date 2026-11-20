@@ -9,7 +9,7 @@ use std::rc::Rc;
 use leptos::prelude::*;
 use log::{debug, error, info, warn};
 use wasm_bindgen::prelude::*;
-use web_sys::{CloseEvent, ErrorEvent, MessageEvent, WebSocket};
+use web_sys::{CloseEvent, Event, MessageEvent, WebSocket};
 
 use super::{ServerCommand, ServerMessage, TradeState};
 use crate::systems::world::World;
@@ -127,8 +127,12 @@ impl Client {
         onmessage_callback.forget();
 
         // Set up error handler
-        let onerror_callback = Closure::<dyn FnMut(_)>::new(move |e: ErrorEvent| {
-            error!("WebSocket error: {:?}", e.message());
+        // A WebSocket's error is a plain `Event`, never an `ErrorEvent`:
+        // browsers give no detail, by design. Reading `ErrorEvent.message`
+        // off it gets `undefined`, and turning that into a Rust string
+        // threw a TypeError of its own on every failed connection.
+        let onerror_callback = Closure::<dyn FnMut(_)>::new(move |e: Event| {
+            error!("WebSocket error ({}); the close event carries the reason", e.type_());
         });
         ws.set_onerror(Some(onerror_callback.as_ref().unchecked_ref()));
         onerror_callback.forget();

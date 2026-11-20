@@ -120,4 +120,12 @@ fn main() {
     console_error_panic_hook::set_once();
     logging::init_from_url();
     mount_to_body(App);
+    // index.html carries a paragraph about the tool for search engines and
+    // visitors without JavaScript (seo/README.md). The app mounts after it,
+    // so move it below the app, where it reads as a footer.
+    if let Some(doc) = web_sys::window().and_then(|w| w.document())
+        && let (Some(body), Some(about)) = (doc.body(), doc.get_element_by_id("about-tool"))
+    {
+        let _ = body.append_child(&about);
+    }
 }
