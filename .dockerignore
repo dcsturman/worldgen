@@ -26,6 +26,9 @@
 !data
 # The Callisto rulebook's tables (src/callisto/tables.rs), same story.
 !docs/callisto/tables.json
+# Per-page search text, spliced into dist/ after trunk build.
+!seo
+!scripts/seo-pages.sh
 
 # Re-exclude build artifacts that the broad re-includes above would pull
 # back in (e.g. a stray target/ inside src/ tooling, editor scratch).

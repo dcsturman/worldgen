@@ -49,29 +49,6 @@ const UPSTREAM_TRAVELLERMAP_URL: &str = "https://travellermap.com";
 /// Selector component that provides a user interface for selecting between different tools
 #[component]
 pub fn Selector() -> impl IntoView {
-    let navigate_to_trade = move |_| {
-        let _ = web_sys::window().unwrap().location().set_href("/trade");
-    };
-
-    let navigate_to_world = move |_| {
-        let _ = web_sys::window().unwrap().location().set_href("/world");
-    };
-
-    let navigate_to_simulator = move |_| {
-        let _ = web_sys::window().unwrap().location().set_href("/simulator");
-    };
-
-    let navigate_to_pirate = move |_| {
-        let _ = web_sys::window()
-            .unwrap()
-            .location()
-            .set_href("/pirate-simulator");
-    };
-
-    let navigate_to_worldmap = move |_| {
-        let _ = web_sys::window().unwrap().location().set_href("/worldmap");
-    };
-
     // Only surface the Traveller Map card when this build points at our own
     // self-hosted instance (a custom TRAVELLERMAP_URL). On a stock build that
     // targets the upstream https://travellermap.com there's nothing of ours to
@@ -104,37 +81,37 @@ pub fn Selector() -> impl IntoView {
                 <div class="tool-card">
                     <h2>"Trade Computer"</h2>
                     <p>"Calculate trade goods, passengers, and cargo opportunities between worlds. Input origin and destination worlds to see available goods, prices, and profit margins for your merchant adventures."</p>
-                    <button class="blue-button" on:click=navigate_to_trade>
+                    <a class="blue-button" href="/trade">
                         "Launch Trade Computer"
-                    </button>
+                    </a>
                 </div>
                 <div class="tool-card">
                     <h2>"Ship Simulator"</h2>
                     <p>"Simulate a trader plying multiple worlds for profit. Pick a home port, configure your ship and crew, and watch a greedy route planner make trade decisions across the stars."</p>
-                    <button class="blue-button" on:click=navigate_to_simulator>
+                    <a class="blue-button" href="/simulator">
                         "Launch Ship Simulator"
-                    </button>
+                    </a>
                 </div>
                 <div class="tool-card">
                     <h2>"Pirate Simulator"</h2>
                     <p>"Run a corsair instead of a merchant — pick a hideout, set your doctrine, raid prey, fence your loot, and build (or outrun) a reputation."</p>
-                    <button class="blue-button" on:click=navigate_to_pirate>
+                    <a class="blue-button" href="/pirate-simulator">
                         "Launch Pirate Simulator"
-                    </button>
+                    </a>
                 </div>
                 <div class="tool-card">
                     <h2>"Solar System Generator"</h2>
                     <p>"Generate complete solar systems with detailed world data, orbital mechanics, and system composition. Perfect for referees creating new systems or players exploring uncharted space."</p>
-                    <button class="blue-button" on:click=navigate_to_world>
+                    <a class="blue-button" href="/world">
                         "Launch System Generator"
-                    </button>
+                    </a>
                 </div>
                 <div class="tool-card">
                     <h2>"World Map Generator"</h2>
                     <p>"Generate an icosahedral hex map of a single world from its UWP. Procedural terrain (continents, biomes, mountains, ice caps, cities) rendered as both an interactive SVG and a PNG you can upload to roll20."</p>
-                    <button class="blue-button" on:click=navigate_to_worldmap>
+                    <a class="blue-button" href="/worldmap">
                         "Launch World Map"
-                    </button>
+                    </a>
                 </div>
                 {traveller_map_card}
             </div>

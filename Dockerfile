@@ -56,6 +56,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/web/target \
     trunk build --release
+# One crawlable page per tool, plus robots.txt and sitemap.xml (seo/README.md).
+COPY seo ./seo/
+COPY scripts/seo-pages.sh ./scripts/
+RUN ./scripts/seo-pages.sh dist
 
 FROM base AS build-server
 

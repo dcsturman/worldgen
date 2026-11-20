@@ -12,7 +12,7 @@ use std::rc::Rc;
 use leptos::prelude::*;
 use log::{error, info};
 use wasm_bindgen::prelude::*;
-use web_sys::{CloseEvent, ErrorEvent, MessageEvent, WebSocket};
+use web_sys::{CloseEvent, Event, MessageEvent, WebSocket};
 
 use crate::comms::captains_log::{
     ClientMessage as LogClientMessage, ServerMessage as LogServerMessage,
@@ -112,7 +112,7 @@ struct SimClient {
     on_open: Closure<dyn FnMut()>,
     on_message: Closure<dyn FnMut(MessageEvent)>,
     on_close: Closure<dyn FnMut(CloseEvent)>,
-    on_error: Closure<dyn FnMut(ErrorEvent)>,
+    on_error: Closure<dyn FnMut(Event)>,
 }
 
 impl SimClient {
@@ -217,8 +217,9 @@ impl SimClient {
         ws.set_onclose(Some(on_close.as_ref().unchecked_ref()));
 
         // ---- on_error: log; the close handler will set the error state ----
-        let on_error = Closure::<dyn FnMut(_)>::new(move |e: ErrorEvent| {
-            error!("Simulator WebSocket error: {:?}", e.message());
+        // A plain `Event`, not an `ErrorEvent`: see `comms::client`.
+        let on_error = Closure::<dyn FnMut(_)>::new(move |e: Event| {
+            error!("Simulator WebSocket error ({})", e.type_());
         });
         ws.set_onerror(Some(on_error.as_ref().unchecked_ref()));
 
@@ -258,7 +259,7 @@ struct LogClient {
     on_open: Closure<dyn FnMut()>,
     on_message: Closure<dyn FnMut(MessageEvent)>,
     on_close: Closure<dyn FnMut(CloseEvent)>,
-    on_error: Closure<dyn FnMut(ErrorEvent)>,
+    on_error: Closure<dyn FnMut(Event)>,
 }
 
 impl LogClient {
@@ -380,8 +381,9 @@ impl LogClient {
         });
         ws.set_onclose(Some(on_close.as_ref().unchecked_ref()));
 
-        let on_error = Closure::<dyn FnMut(_)>::new(move |e: ErrorEvent| {
-            error!("Captain's-log WebSocket error: {:?}", e.message());
+        // A plain `Event`, not an `ErrorEvent`: see `comms::client`.
+        let on_error = Closure::<dyn FnMut(_)>::new(move |e: Event| {
+            error!("Captain's-log WebSocket error ({})", e.type_());
         });
         ws.set_onerror(Some(on_error.as_ref().unchecked_ref()));
 

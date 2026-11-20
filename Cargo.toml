@@ -59,7 +59,7 @@ codee = { version = "0.3.2", optional = true }
 wasm-bindgen = { version = "0.2", features = ["serde-serialize"], optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 serde-wasm-bindgen = { version = "0.6", optional = true }
-web-sys = { version = "0.3", features = ["Request", "RequestInit", "RequestMode", "Response", "Window", "Headers", "Storage", "WebSocket", "MessageEvent", "CloseEvent", "ErrorEvent", "BinaryType", "Blob", "BlobPropertyBag", "Url", "HtmlAnchorElement", "Document", "Element", "HtmlCanvasElement", "CanvasRenderingContext2d", "ImageData"], optional = true }
+web-sys = { version = "0.3", features = ["Request", "RequestInit", "RequestMode", "Response", "Window", "Headers", "Storage", "WebSocket", "MessageEvent", "CloseEvent", "Event", "ErrorEvent", "BinaryType", "Blob", "BlobPropertyBag", "Url", "HtmlAnchorElement", "Document", "Element", "HtmlElement", "Node", "HtmlCanvasElement", "CanvasRenderingContext2d", "ImageData"], optional = true }
 js-sys = { version = "0.3", optional = true }
 wasm-logger = { version = "0.2", optional = true }
 
